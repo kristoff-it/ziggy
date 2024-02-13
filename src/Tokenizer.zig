@@ -22,6 +22,7 @@ pub const Tag = enum {
     // used elsewhere
     true,
     false,
+    eof,
 
     pub fn lexeme(self: Tag) []const u8 {
         return switch (self) {
@@ -41,6 +42,7 @@ pub const Tag = enum {
             .number => "(number)",
             .true => "true",
             .false => "false",
+            .eof => "EOF",
         };
     }
 };
@@ -148,7 +150,7 @@ const State = enum {
     string,
 };
 
-pub fn next(self: *Tokenizer, code: [:0]const u8) ?Token {
+pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
     var state: State = .start;
     var res: Token = .{
         .tag = .invalid,
@@ -162,7 +164,12 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) ?Token {
         const c = code[self.idx];
         switch (state) {
             .start => switch (c) {
-                0 => return null,
+                0 => {
+                    res.tag = .eof;
+                    res.loc.start = code.len - 1;
+                    res.loc.end = code.len;
+                    break;
+                },
                 ' ', '\n' => res.loc.start += 1,
                 '.' => {
                     self.idx += 1;
@@ -303,8 +310,9 @@ test "basics" {
 
     for (expected, 0..) |e, idx| {
         errdefer std.debug.print("failed at index: {}\n", .{idx});
-        const tok = t.next(case) orelse return error.Null;
+        const tok = t.next(case);
         errdefer std.debug.print("bad token: {any}\n", .{tok});
         try std.testing.expectEqual(e, tok.tag);
     }
+        try std.testing.expectEqual(t.next(case).tag, .eof);
 }
