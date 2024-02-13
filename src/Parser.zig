@@ -216,8 +216,8 @@ fn parseValue(
     switch (info) {
         .Pointer => |ptr| switch (ptr.size) {
             .Slice => switch (ptr.child) {
-                u8 => try self.parseString(T, val),
-                else => @compileError("TODO"),
+                u8 => try self.parseBytes(T, val),
+                else => try self.parseArray(T, val),
             },
             else => @compileError("TODO"),
         },
@@ -431,7 +431,7 @@ fn parseFloat(self: *Parser, comptime T: type, val: *T) !void {
     };
 }
 
-fn parseString(self: *Parser, comptime T: type, val: *T) !void {
+fn parseBytes(self: *Parser, comptime T: type, val: *T) !void {
     const str_or_at = try self.mustAny(&.{ .str, .at });
 
     const str = switch (str_or_at.tag) {
@@ -447,6 +447,25 @@ fn parseString(self: *Parser, comptime T: type, val: *T) !void {
     };
 
     val.* = str.loc.unquote(self.code) orelse @panic("TODO");
+}
+
+fn parseArray(self: *Parser, comptime T: type, val: *T) !void {
+    const info = @typeInfo(T).Pointer;
+    assert(info.size == .Slice);
+
+    var list: std.ArrayListUnmanaged(info.child) = .{};
+    errdefer list.deinit(self.gpa);
+
+    _ = try self.must(.lsb);
+
+    while (true) {
+        const next = try list.addOne(self.gpa);
+        try self.parseValue(info.child, next, false);
+        const tok = try self.mustAny(&.{ .comma, .rsb });
+        if (tok.tag == .rsb) break;
+    }
+
+    val.* = try list.toOwnedSlice(self.gpa);
 }
 
 pub fn must(self: *Parser, comptime tag: Tokenizer.Tag) !Tokenizer.Token {
@@ -697,4 +716,20 @@ test "float basics" {
 
     const result = try parse(f64, std.testing.allocator, case, opts);
     try std.testing.expectEqual(10.42, result);
+}
+
+test "array basics" {
+    const case =
+        \\
+        \\ [1, 2, 3] 
+        \\
+    ;
+
+    var diag: Diagnostics = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostics = &diag };
+
+    const result = try parse([]usize, std.testing.allocator, case, opts);
+    defer std.testing.allocator.free(result);
+
+    try std.testing.expectEqualSlices(usize, &.{ 1, 2, 3 }, result);
 }
