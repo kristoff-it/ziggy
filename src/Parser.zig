@@ -1,5 +1,6 @@
 const Parser = @This();
 const Tokenizer = @import("Tokenizer.zig");
+const Token = Tokenizer.Token;
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -29,7 +30,7 @@ pub const Diagnostics = struct {
     /// If not present, error positions will be printed as "line: XX col: XX".
     path: ?[]const u8,
 
-    tok: Tokenizer.Token = .{
+    tok: Token = .{
         .tag = .eof,
         .loc = .{ .start = 0, .end = 0 },
     },
@@ -37,20 +38,22 @@ pub const Diagnostics = struct {
         none,
         out_of_memory,
         eof: struct {
-            expected: []const Tokenizer.Tag,
+            expected: []const Token.Tag,
         },
         unexpected_token: struct {
-            expected: []const Tokenizer.Tag,
+            expected: []const Token.Tag,
         },
         syntax_error,
         duplicate_field: struct {
             name: []const u8,
-            first_loc: Tokenizer.Token.Loc,
+            first_loc: Token.Loc,
         },
         missing_field: struct {
             name: []const u8,
         },
-        unknown_field,
+        unknown_field: struct {
+            name: []const u8,
+        },
     } = .none,
 
     pub fn debug(self: Diagnostics) void {
@@ -82,7 +85,7 @@ pub const Diagnostics = struct {
 
         switch (self.err) {
             .none => {},
-            .syntax_error, .unknown_field => @panic("TODO"),
+            .syntax_error => @panic("TODO"),
             .out_of_memory => {
                 try out_stream.print("OutOfMemory\n", .{});
             },
@@ -153,6 +156,25 @@ pub const Diagnostics = struct {
                     });
                 }
             },
+            .unknown_field => |un| {
+                const selection = self.tok.loc.getSelection(self.code);
+                try out_stream.print(
+                    "unknown field '{s}' found here:",
+                    .{un.name},
+                );
+                if (self.path) |p| {
+                    try out_stream.print("\n{s}:{}:{}\n", .{
+                        p,
+                        selection.start.line,
+                        selection.start.col,
+                    });
+                } else {
+                    try out_stream.print(" line: {} col: {}\n", .{
+                        selection.start.line,
+                        selection.start.col,
+                    });
+                }
+            },
         }
     }
 };
@@ -162,6 +184,7 @@ pub const ParseError = error{
     UnexpectedToken,
     MissingField,
     DuplicateField,
+    UnknownField,
     Syntax,
 };
 
@@ -186,9 +209,18 @@ pub fn parse(
 ) ParseError!T {
     var parser: Parser = .{ .gpa = gpa, .code = code, .opts = opts };
     var result: T = undefined;
-    try parser.parseValue(T, &result, true);
 
-    const extra = parser.tokenizer.next(code);
+    const info = @typeInfo(T);
+
+    switch (info) {
+        .Struct => {
+            try parser.parseStruct(T, &result, parser.next());
+        },
+
+        else => try parser.parseValue(T, &result, parser.next()),
+    }
+
+    const extra = parser.next();
     if (extra.tag != .eof) {
         if (opts.diagnostics) |d| {
             d.tok = extra;
@@ -209,47 +241,24 @@ fn parseValue(
     self: *Parser,
     comptime T: type,
     val: *T,
-    top_level: bool,
+    first_tok: Token,
 ) ParseError!void {
     const info = @typeInfo(T);
 
     switch (info) {
         .Pointer => |ptr| switch (ptr.size) {
             .Slice => switch (ptr.child) {
-                u8 => try self.parseBytes(T, val),
-                else => try self.parseArray(T, val),
+                u8 => try self.parseBytes(T, val, first_tok),
+                else => try self.parseArray(T, val, first_tok),
             },
             else => @compileError("TODO"),
         },
-        .Bool => try self.parseBool(val),
-        .Int => try self.parseInt(T, val),
-        .Float => try self.parseFloat(T, val),
+        .Bool => try self.parseBool(val, first_tok),
+        .Int => try self.parseInt(T, val, first_tok),
+        .Float => try self.parseFloat(T, val, first_tok),
         .Struct => {
-            const tok = if (top_level)
-                try self.mustAny(&.{ .dot, .lb, .eof })
-            else
-                try self.must(.lb);
-
-            switch (tok.tag) {
-                .eof => {
-                    assert(top_level);
-                    self.container = .@"struct";
-                    self.state = .field_dot;
-                    return self.parseStruct(T, val);
-                },
-                .lb => {
-                    self.container = .@"struct";
-                    self.state = .struct_lb_or_comma;
-                    return self.parseStruct(T, val);
-                },
-                .dot => {
-                    assert(top_level);
-                    self.container = .@"struct";
-                    self.state = .field_dot;
-                    return self.parseStruct(T, val);
-                },
-                else => unreachable,
-            }
+            try self.must(first_tok.lb);
+            return self.parseStruct(T, val, first_tok);
         },
         else => @compileError("TODO"),
     }
@@ -258,101 +267,82 @@ fn parseStruct(
     self: *Parser,
     comptime T: type,
     val: *T,
+    first_tok: Token,
 ) ParseError!void {
-    assert(self.container == .@"struct");
-    assert(self.state == .field_dot or self.state == .struct_lb_or_comma);
-
-    // When a top-level struct omits curlies, we start
-    // in the .field_dot state, and we must not expect
-    // a final .rb
-    const need_closing_rb = self.state != .field_dot;
-
+    // When a top-level struct omits curlies, the first
+    // token will be a dot. Is such case we don't want
+    // to expect a closing right bracket.
+    const need_closing_rb = first_tok.tag == .lb;
     const info = @typeInfo(T).Struct;
+
+    var tok = first_tok;
+    if (first_tok.tag == .lb) {
+        tok = self.next();
+    }
 
     // TODO: optimization: turn this into an array of bools when
     //       diagnocstics are disabled
-    var fields_seen = [_]?Tokenizer.Token.Loc{null} ** info.fields.len;
-    while (true) switch (self.state) {
-        .start => unreachable,
-        .struct_lb_or_comma => {
-            const tok = if (need_closing_rb)
-                try self.mustAny(&.{ .dot, .rb })
-            else
-                try self.mustAny(&.{ .dot, .rb, .eof });
+    var fields_seen = [_]?Token.Loc{null} ** info.fields.len;
+    while (true) {
+        if (need_closing_rb) {
+            try self.mustAny(tok, &.{ .dot, .rb });
+        } else {
+            try self.mustAny(tok, &.{ .dot, .rb, .eof });
+        }
 
-            switch (tok.tag) {
-                .eof => {
-                    assert(!need_closing_rb);
-                    return self.finalizeStruct(
-                        T,
-                        info,
-                        val,
-                        &fields_seen,
-                        tok,
-                    );
-                },
-                .dot => self.state = .field_dot,
-                .rb => return self.finalizeStruct(
-                    T,
-                    info,
-                    val,
-                    &fields_seen,
-                    tok,
-                ),
-                else => unreachable,
-            }
-        },
-        .field_dot => {
-            const ident = try self.must(.ident);
-            _ = try self.must(.eql);
-            inline for (info.fields, 0..) |f, idx| {
-                if (std.mem.eql(u8, f.name, ident.loc.src(self.code))) {
-                    if (fields_seen[idx]) |first_loc| {
-                        if (self.opts.diagnostics) |d| {
-                            d.tok = ident;
-                            d.err = .{
-                                .duplicate_field = .{
-                                    .name = f.name,
-                                    .first_loc = first_loc,
-                                },
-                            };
-                        }
-                        return error.DuplicateField;
+        if (tok.tag != .dot) {
+            return self.finalizeStruct(
+                T,
+                info,
+                val,
+                &fields_seen,
+                tok,
+            );
+        }
+
+        // we found the start of a field
+        assert(tok.tag == .dot);
+
+        const ident = try self.nextMust(.ident);
+        _ = try self.nextMust(.eql);
+        const field_name = ident.loc.src(self.code);
+        inline for (info.fields, 0..) |f, idx| {
+            if (std.mem.eql(u8, f.name, field_name)) {
+                if (fields_seen[idx]) |first_loc| {
+                    if (self.opts.diagnostics) |d| {
+                        d.tok = ident;
+                        d.err = .{
+                            .duplicate_field = .{
+                                .name = f.name,
+                                .first_loc = first_loc,
+                            },
+                        };
                     }
-                    fields_seen[idx] = ident.loc;
-                    try self.parseValue(f.type, &@field(val, f.name), false);
-                    break;
+                    return error.DuplicateField;
                 }
+                fields_seen[idx] = ident.loc;
+                try self.parseValue(f.type, &@field(val, f.name), self.next());
+                break;
             }
-
-            const tok = if (need_closing_rb)
-                try self.mustAny(&.{ .comma, .rb })
-            else
-                try self.mustAny(&.{ .comma, .rb, .eof });
-
-            switch (tok.tag) {
-                .eof => {
-                    assert(!need_closing_rb);
-                    return self.finalizeStruct(
-                        T,
-                        info,
-                        val,
-                        &fields_seen,
-                        tok,
-                    );
-                },
-                .comma => self.state = .struct_lb_or_comma,
-                .rb => return self.finalizeStruct(
-                    T,
-                    info,
-                    val,
-                    &fields_seen,
-                    tok,
-                ),
-                else => unreachable,
+        } else {
+            if (self.opts.diagnostics) |d| {
+                d.tok = ident;
+                d.err = .{
+                    .unknown_field = .{
+                        .name = field_name,
+                    },
+                };
             }
-        },
-    };
+            return error.UnknownField;
+        }
+
+        tok = self.next();
+        switch (tok.tag) {
+            .comma => tok = self.next(),
+            .dot => try self.must(tok, .comma),
+            else => {},
+        }
+    }
 }
 
 // TODO: allocate memory to copy fields_seen and pass it all to diagnostics
@@ -361,8 +351,8 @@ fn finalizeStruct(
     comptime T: type,
     info: std.builtin.Type.Struct,
     val: *T,
-    fields_seen: []const ?Tokenizer.Token.Loc,
-    struct_end: Tokenizer.Token,
+    fields_seen: []const ?Token.Loc,
+    struct_end: Token,
 ) ParseError!void {
     inline for (info.fields, 0..) |field, idx| {
         if (fields_seen[idx] == null) {
@@ -384,8 +374,9 @@ fn finalizeStruct(
     }
 }
 
-fn parseBool(self: *Parser, val: *bool) !void {
-    const ident = try self.must(.ident);
+fn parseBool(self: *Parser, val: *bool, ident: Token) !void {
+    try self.must(ident, .ident);
+
     const src = ident.loc.src(self.code);
     if (std.mem.eql(u8, src, "true")) {
         val.* = true;
@@ -405,10 +396,10 @@ fn parseBool(self: *Parser, val: *bool) !void {
     }
 }
 
-fn parseInt(self: *Parser, comptime T: type, val: *T) !void {
+fn parseInt(self: *Parser, comptime T: type, val: *T, num: Token) !void {
     assert(@typeInfo(T) == .Int);
 
-    const num = try self.must(.number);
+    try self.must(num, .number);
     val.* = std.fmt.parseInt(T, num.loc.src(self.code), 10) catch {
         if (self.opts.diagnostics) |d| {
             d.tok = num;
@@ -418,10 +409,10 @@ fn parseInt(self: *Parser, comptime T: type, val: *T) !void {
     };
 }
 
-fn parseFloat(self: *Parser, comptime T: type, val: *T) !void {
+fn parseFloat(self: *Parser, comptime T: type, val: *T, num: Token) !void {
     assert(@typeInfo(T) == .Float);
 
-    const num = try self.must(.number);
+    try self.must(num, .number);
     val.* = std.fmt.parseFloat(T, num.loc.src(self.code)) catch {
         if (self.opts.diagnostics) |d| {
             d.tok = num;
@@ -431,16 +422,16 @@ fn parseFloat(self: *Parser, comptime T: type, val: *T) !void {
     };
 }
 
-fn parseBytes(self: *Parser, comptime T: type, val: *T) !void {
-    const str_or_at = try self.mustAny(&.{ .str, .at });
+fn parseBytes(self: *Parser, comptime T: type, val: *T, str_or_at: Token) !void {
+    try self.mustAny(str_or_at, &.{ .str, .at });
 
     const str = switch (str_or_at.tag) {
         .str => str_or_at,
         .at => blk: {
-            _ = try self.must(.ident);
-            _ = try self.must(.lp);
-            const str = try self.must(.str);
-            _ = try self.must(.rp);
+            _ = try self.nextMust(.ident);
+            _ = try self.nextMust(.lp);
+            const str = try self.nextMust(.str);
+            _ = try self.nextMust(.rp);
             break :blk str;
         },
         else => unreachable,
@@ -449,35 +440,61 @@ fn parseBytes(self: *Parser, comptime T: type, val: *T) !void {
     val.* = str.loc.unquote(self.code) orelse @panic("TODO");
 }
 
-fn parseArray(self: *Parser, comptime T: type, val: *T) !void {
+fn parseArray(self: *Parser, comptime T: type, val: *T, lsb: Token) !void {
     const info = @typeInfo(T).Pointer;
     assert(info.size == .Slice);
 
+    try self.must(lsb, .lsb);
+
+    var tok = self.next();
     var list: std.ArrayListUnmanaged(info.child) = .{};
     errdefer list.deinit(self.gpa);
-
-    _ = try self.must(.lsb);
-
     while (true) {
-        const next = try list.addOne(self.gpa);
-        try self.parseValue(info.child, next, false);
-        const tok = try self.mustAny(&.{ .comma, .rsb });
-        if (tok.tag == .rsb) break;
-    }
+        if (tok.tag == .rsb) {
+            val.* = try list.toOwnedSlice(self.gpa);
+            return;
+        }
 
-    val.* = try list.toOwnedSlice(self.gpa);
+        const next_item = try list.addOne(self.gpa);
+        try self.parseValue(info.child, next_item, tok);
+
+        tok = try self.nextMustAny(&.{ .comma, .rsb });
+        if (tok.tag == .comma) {
+            tok = self.next();
+        }
+    }
 }
 
-pub fn must(self: *Parser, comptime tag: Tokenizer.Tag) !Tokenizer.Token {
-    return self.mustAny(&.{tag});
+pub fn next(self: *Parser) Token {
+    return self.tokenizer.next(self.code);
+}
+
+pub fn nextMust(self: *Parser, comptime tag: Token.Tag) !Token {
+    return self.nextMustAny(&.{tag});
+}
+
+pub fn nextMustAny(
+    self: *Parser,
+    comptime tags: []const Token.Tag,
+) !Token {
+    const next_tok = self.next();
+    try self.mustAny(next_tok, tags);
+    return next_tok;
+}
+
+pub fn must(
+    self: *Parser,
+    tok: Token,
+    comptime tag: Token.Tag,
+) !void {
+    return self.mustAny(tok, &.{tag});
 }
 
 pub fn mustAny(
     self: *Parser,
-    comptime tags: []const Tokenizer.Tag,
-) !Tokenizer.Token {
-    const tok = self.tokenizer.next(self.code);
-
+    tok: Token,
+    comptime tags: []const Token.Tag,
+) !void {
     for (tags) |t| {
         if (t == tok.tag) break;
     } else {
@@ -492,8 +509,6 @@ pub fn mustAny(
 
         return error.UnexpectedToken;
     }
-
-    return tok;
 }
 
 test "struct - basics" {
@@ -596,7 +611,7 @@ test "struct - missing comma" {
     try std.testing.expectError(error.UnexpectedToken, result);
     try std.testing.expectFmt(
         \\line: 2 col: 1
-        \\unexpected token: '.', expected: ',' or '}' or 'EOF'
+        \\unexpected token: '.', expected: ','
         \\
     , "{}", .{diag});
 }
@@ -662,6 +677,30 @@ test "struct - duplicate field" {
     , "{}", .{diag});
 }
 
+test "struct - unknown field" {
+    const case =
+        \\.foo = "bar",
+        \\.bar = false,
+        \\.baz = "oops",
+    ;
+
+    const Case = struct {
+        foo: []const u8,
+        bar: bool,
+    };
+
+    var diag: Diagnostics = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostics = &diag };
+
+    const result = parse(Case, std.testing.allocator, case, opts);
+    try std.testing.expectError(error.UnknownField, result);
+    try std.testing.expectFmt(
+        \\line: 3 col: 2
+        \\unknown field 'baz' found here: line: 3 col: 2
+        \\
+    , "{}", .{diag});
+}
+
 test "string" {
     const case =
         \\
@@ -722,6 +761,22 @@ test "array basics" {
     const case =
         \\
         \\ [1, 2, 3] 
+        \\
+    ;
+
+    var diag: Diagnostics = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostics = &diag };
+
+    const result = try parse([]usize, std.testing.allocator, case, opts);
+    defer std.testing.allocator.free(result);
+
+    try std.testing.expectEqualSlices(usize, &.{ 1, 2, 3 }, result);
+}
+
+test "array trailing comma" {
+    const case =
+        \\
+        \\ [1, 2, 3, ] 
         \\
     ;
 
