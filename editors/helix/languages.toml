@@ -1,0 +1,25 @@
+# Add this for Ziggy support
+[[language]]
+name = "ziggy"
+scope = "source.ziggy"
+roots = []
+injection-regex = "ziggy|zgy"
+file-types = ["ziggy"]
+comment-token = "//"
+indent = { tab-width = 2, unit = "  " }
+
+[[grammar]]
+name = "ziggy"
+source = { git = "https://github.com/kristoff-it/tree-sitter-ziggy", rev = "" }
+# end of Ziggy
+
+
+# Add this for ZMD support (also requires Ziggy)
+[[language]]
+name = "ziggy markdown"
+scope = "source.zmd"
+file-types = ["zmd"]
+roots = [".marksman.toml"]
+language-servers = [ "marksman" ]
+indent = { tab-width = 2, unit = "  " }
+# end of ZMD
