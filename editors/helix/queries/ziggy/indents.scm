@@ -1,0 +1,9 @@
+[
+  (struct)
+  (map)
+] @indent
+
+[
+  "]"
+  "}"
+] @outdent
