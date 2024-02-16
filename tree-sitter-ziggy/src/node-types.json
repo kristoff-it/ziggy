@@ -325,15 +325,7 @@
     "named": false
   },
   {
-    "type": ".{",
-    "named": false
-  },
-  {
     "type": ":",
-    "named": false
-  },
-  {
-    "type": ":{",
     "named": false
   },
   {
@@ -375,6 +367,10 @@
   {
     "type": "true",
     "named": true
+  },
+  {
+    "type": "{",
+    "named": false
   },
   {
     "type": "}",

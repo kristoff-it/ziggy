@@ -41,12 +41,12 @@ module.exports = grammar({
 
     top_level_struct: $ => commaSep1($.struct_field),
 
-    struct: $ => seq(
-      '.{', commaSep($.struct_field), '}',
-    ),
+    struct: $ => prec(1, seq(
+      '{', commaSep($.struct_field), '}',
+    )),
 
     map: $ => seq(
-      ':{', commaSep($.map_field), '}',
+      '{', commaSep($.map_field), '}',
     ),
 
     array: $ => seq('[', commaSep($._value), ']'),
