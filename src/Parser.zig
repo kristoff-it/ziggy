@@ -788,3 +788,20 @@ test "array trailing comma" {
 
     try std.testing.expectEqualSlices(usize, &.{ 1, 2, 3 }, result);
 }
+
+test "comments are ignored" {
+    const case =
+        \\.foo = "bar",
+        \\// This is false because I say so
+        \\.bar = false,
+    ;
+
+    const Case = struct {
+        foo: []const u8,
+        bar: bool,
+    };
+
+    const c = try parse(Case, std.testing.allocator, case, .{});
+    try std.testing.expectEqualStrings("bar", c.foo);
+    try std.testing.expectEqual(false, c.bar);
+}

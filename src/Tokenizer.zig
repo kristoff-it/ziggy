@@ -148,6 +148,8 @@ const State = enum {
     ident,
     number,
     string,
+    comment_start,
+    comment,
 };
 
 pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
@@ -235,6 +237,7 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
                 'a'...'z', 'A'...'Z', '_' => state = .ident,
                 '-', '+', '0'...'9' => state = .number,
                 '"', '\'' => state = .string,
+                '/' => state = .comment_start,
                 else => {
                     res.tag = .invalid;
                     res.loc.end = self.idx;
@@ -274,6 +277,21 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
                 },
                 else => {},
             },
+            .comment_start => switch (c) {
+                '/' => state = .comment,
+                else => {
+                    res.tag = .invalid;
+                    res.loc.end = self.idx;
+                    break;
+                },
+            },
+            .comment => switch (c) {
+                0, '\n' => {
+                    state = .start;
+                    self.idx -= 1;
+                },
+                else => continue,
+            },
         }
     }
 
@@ -300,6 +318,63 @@ test "basics" {
 
     const expected: []const Token.Tag = &.{
         // zig fmt: off
+        .dot, .ident, .eql, .str, .comma,
+        .dot, .ident, .eql, .ident, .comma,
+        .dot, .ident, .eql, .lb, .dot, .ident, .eql, .ident, .rb, .comma,
+        // zig fmt: on
+    };
+
+    var t: Tokenizer = .{};
+
+    for (expected, 0..) |e, idx| {
+        errdefer std.debug.print("failed at index: {}\n", .{idx});
+        const tok = t.next(case);
+        errdefer std.debug.print("bad token: {any}\n", .{tok});
+        try std.testing.expectEqual(e, tok.tag);
+    }
+        try std.testing.expectEqual(t.next(case).tag, .eof);
+}
+
+test "comments are skipped" {
+    const case =
+        \\.foo = "bar", // comment can be inline
+        \\.bar = false,
+        \\// bax must be null
+        \\.baz = { .bax = null },
+        \\// can end with a comment
+        \\// or even two
+    ;
+
+    const expected: []const Token.Tag = &.{
+        // zig fmt: off
+        .dot, .ident, .eql, .str, .comma,
+        .dot, .ident, .eql, .ident, .comma,
+        .dot, .ident, .eql, .lb, .dot, .ident, .eql, .ident, .rb, .comma,
+        // zig fmt: on
+    };
+
+    var t: Tokenizer = .{};
+
+    for (expected, 0..) |e, idx| {
+        errdefer std.debug.print("failed at index: {}\n", .{idx});
+        const tok = t.next(case);
+        errdefer std.debug.print("bad token: {any}\n", .{tok});
+        try std.testing.expectEqual(e, tok.tag);
+    }
+        try std.testing.expectEqual(t.next(case).tag, .eof);
+}
+
+test "invalid comments" {
+    const case =
+        \\/invalid
+        \\.foo = "bar",
+        \\.bar = false,
+        \\.baz = { .bax = null },
+    ;
+
+    const expected: []const Token.Tag = &.{
+        // zig fmt: off
+        .invalid, .ident,
         .dot, .ident, .eql, .str, .comma,
         .dot, .ident, .eql, .ident, .comma,
         .dot, .ident, .eql, .lb, .dot, .ident, .eql, .ident, .rb, .comma,
