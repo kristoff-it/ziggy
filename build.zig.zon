@@ -1,7 +1,15 @@
 .{
     .name = "ziggy",
     .version = "0.0.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .@"known-folders" = .{
+            .url = "git+https://github.com/ziglibs/known-folders.git#2aa7f2e9855d45b20072e15107fb379b9380adbe",
+            .hash = "12209925016f4b5486a713828ead3bcc900fa4f039c93de1894aa7d5253f7633b92c",
+        },
+        .@"zig-lsp-kit" = .{
+          .path = "../zig-lsp-kit",  
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

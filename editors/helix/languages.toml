@@ -1,12 +1,17 @@
-# Add this for Ziggy support
+# Add these blocks for Ziggy support:
+[language-server.ziggy-lsp]
+command = "ziggy-lsp"
+
 [[language]]
 name = "ziggy"
-scope = "source.ziggy"
+scope = "text.ziggy"
 roots = []
 injection-regex = "ziggy|zgy"
 file-types = ["ziggy"]
 comment-token = "//"
-indent = { tab-width = 2, unit = "  " }
+auto-format = true
+formatter = { command = "ziggy" , args = ["fmt", "--stdin"] }
+language-servers = [ "ziggy-lsp" ]
 
 [[grammar]]
 name = "ziggy"
@@ -16,10 +21,15 @@ source = { git = "https://github.com/kristoff-it/tree-sitter-ziggy", rev = "" }
 
 # Add this for ZMD support (also requires Ziggy)
 [[language]]
-name = "ziggy markdown"
+name = "zmd"
 scope = "source.zmd"
 file-types = ["zmd"]
 roots = [".marksman.toml"]
 language-servers = [ "marksman" ]
 indent = { tab-width = 2, unit = "  " }
+
+[[grammar]]
+name = "zmd"
+source = { git = "https://github.com/kristoff-it/tree-sitter-zmd", rev = "ea22b83be77a491554866f15f6e3f2f532803c1b", subpath = "tree-sitter-zmd"}
 # end of ZMD
+
