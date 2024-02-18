@@ -1,4 +1,5 @@
 const Parser = @This();
+const Diagnostic = @import("Diagnostic.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
 
@@ -14,169 +15,13 @@ container: Container = .start,
 state: State = .start,
 
 pub const ParseOptions = struct {
-    diagnostics: ?*Diagnostics = null,
+    diagnostic: ?*Diagnostic = null,
     copy_strings: CopyStrings = .always,
 
     pub const CopyStrings = enum {
         to_unescape,
         always,
     };
-};
-
-pub const Diagnostics = struct {
-    /// The data being parsed.
-    code: []const u8,
-    /// A path to the file, used to display diagnostics.
-    /// If not present, error positions will be printed as "line: XX col: XX".
-    path: ?[]const u8,
-
-    tok: Token = .{
-        .tag = .eof,
-        .loc = .{ .start = 0, .end = 0 },
-    },
-    err: union(enum) {
-        none,
-        out_of_memory,
-        eof: struct {
-            expected: []const Token.Tag,
-        },
-        unexpected_token: struct {
-            expected: []const Token.Tag,
-        },
-        syntax_error,
-        duplicate_field: struct {
-            name: []const u8,
-            first_loc: Token.Loc,
-        },
-        missing_field: struct {
-            name: []const u8,
-        },
-        unknown_field: struct {
-            name: []const u8,
-        },
-    } = .none,
-
-    pub fn debug(self: Diagnostics) void {
-        std.debug.print("{}", .{self});
-    }
-
-    pub fn format(
-        self: Diagnostics,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        out_stream: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
-
-        const start = self.tok.loc.getSelection(self.code).start;
-        if (self.path) |p| {
-            try out_stream.print("{s}:{}:{}\n", .{
-                p,
-                start.line,
-                start.col,
-            });
-        } else {
-            try out_stream.print("line: {} col: {}\n", .{
-                start.line,
-                start.col,
-            });
-        }
-
-        switch (self.err) {
-            .none => {},
-            .syntax_error => @panic("TODO"),
-            .out_of_memory => {
-                try out_stream.print("OutOfMemory\n", .{});
-            },
-            .eof => |eof| {
-                try out_stream.print("unexpected EOF, expected: ", .{});
-
-                for (eof.expected, 0..) |tag, idx| {
-                    try out_stream.print("'{s}'", .{tag.lexeme()});
-                    if (idx != eof.expected.len - 1) {
-                        try out_stream.print(" or ", .{});
-                    }
-                }
-
-                try out_stream.print("\n", .{});
-            },
-            .unexpected_token => |u| {
-                if (self.tok.tag == .eof) {
-                    try out_stream.print("unexpected EOF, expected: ", .{});
-                } else {
-                    try out_stream.print("unexpected token: '{s}', expected: ", .{
-                        self.tok.loc.src(self.code),
-                    });
-                }
-
-                for (u.expected, 0..) |tag, idx| {
-                    try out_stream.print("'{s}'", .{tag.lexeme()});
-                    if (idx != u.expected.len - 1) {
-                        try out_stream.print(" or ", .{});
-                    }
-                }
-
-                try out_stream.print("\n", .{});
-            },
-            .duplicate_field => |dup| {
-                const first_sel = dup.first_loc.getSelection(self.code);
-                try out_stream.print("found duplicate field '{s}', first definition here:", .{
-                    dup.name,
-                });
-                if (self.path) |p| {
-                    try out_stream.print("\n{s}:{}:{}\n", .{
-                        p,
-                        first_sel.start.line,
-                        first_sel.start.col,
-                    });
-                } else {
-                    try out_stream.print(" line: {} col: {}\n", .{
-                        first_sel.start.line,
-                        first_sel.start.col,
-                    });
-                }
-            },
-            .missing_field => |miss| {
-                const struct_end = self.tok.loc.getSelection(self.code);
-                try out_stream.print(
-                    "missing field '{s}', struct ends here:",
-                    .{miss.name},
-                );
-                if (self.path) |p| {
-                    try out_stream.print("\n{s}:{}:{}\n", .{
-                        p,
-                        struct_end.start.line,
-                        struct_end.start.col,
-                    });
-                } else {
-                    try out_stream.print(" line: {} col: {}\n", .{
-                        struct_end.start.line,
-                        struct_end.start.col,
-                    });
-                }
-            },
-            .unknown_field => |un| {
-                const selection = self.tok.loc.getSelection(self.code);
-                try out_stream.print(
-                    "unknown field '{s}' found here:",
-                    .{un.name},
-                );
-                if (self.path) |p| {
-                    try out_stream.print("\n{s}:{}:{}\n", .{
-                        p,
-                        selection.start.line,
-                        selection.start.col,
-                    });
-                } else {
-                    try out_stream.print(" line: {} col: {}\n", .{
-                        selection.start.line,
-                        selection.start.col,
-                    });
-                }
-            },
-        }
-    }
 };
 
 pub const ParseError = error{
@@ -222,7 +67,7 @@ pub fn parse(
 
     const extra = parser.next();
     if (extra.tag != .eof) {
-        if (opts.diagnostics) |d| {
+        if (opts.diagnostic) |d| {
             d.tok = extra;
             d.err = .{
                 .unexpected_token = .{
@@ -259,6 +104,19 @@ fn parseValue(
         .Struct => {
             try self.must(first_tok.lb);
             return self.parseStruct(T, val, first_tok);
+        },
+        .Optional => |opt| {
+            if (first_tok.tag == .identifier) {
+                const src = first_tok.loc.src(self.code);
+                if (std.mem.eql(u8, src, Token.Tag.null.lexeme())) {
+                    val.* = null;
+                    return;
+                }
+            } else {
+                var temp: opt.child = undefined;
+                try self.parseValue(opt.child, &temp, first_tok);
+                val.* = temp;
+            }
         },
         else => @compileError("TODO"),
     }
@@ -303,13 +161,13 @@ fn parseStruct(
         // we found the start of a field
         assert(tok.tag == .dot);
 
-        const ident = try self.nextMust(.ident);
+        const ident = try self.nextMust(.identifier);
         _ = try self.nextMust(.eql);
         const field_name = ident.loc.src(self.code);
         inline for (info.fields, 0..) |f, idx| {
             if (std.mem.eql(u8, f.name, field_name)) {
                 if (fields_seen[idx]) |first_loc| {
-                    if (self.opts.diagnostics) |d| {
+                    if (self.opts.diagnostic) |d| {
                         d.tok = ident;
                         d.err = .{
                             .duplicate_field = .{
@@ -325,7 +183,7 @@ fn parseStruct(
                 break;
             }
         } else {
-            if (self.opts.diagnostics) |d| {
+            if (self.opts.diagnostic) |d| {
                 d.tok = ident;
                 d.err = .{
                     .unknown_field = .{
@@ -345,7 +203,7 @@ fn parseStruct(
     }
 }
 
-// TODO: allocate memory to copy fields_seen and pass it all to diagnostics
+// TODO: allocate memory to copy fields_seen and pass it all to diagnostic
 fn finalizeStruct(
     self: *Parser,
     comptime T: type,
@@ -360,7 +218,7 @@ fn finalizeStruct(
                 const dv_ptr: *field.type = @ptrCast(ptr);
                 @field(val, field.name) = dv_ptr.*;
             } else {
-                if (self.opts.diagnostics) |d| {
+                if (self.opts.diagnostic) |d| {
                     d.tok = struct_end;
                     d.err = .{
                         .missing_field = .{
@@ -375,7 +233,7 @@ fn finalizeStruct(
 }
 
 fn parseBool(self: *Parser, val: *bool, ident: Token) !void {
-    try self.must(ident, .ident);
+    try self.must(ident, .identifier);
 
     const src = ident.loc.src(self.code);
     if (std.mem.eql(u8, src, "true")) {
@@ -383,7 +241,7 @@ fn parseBool(self: *Parser, val: *bool, ident: Token) !void {
     } else if (std.mem.eql(u8, src, "false")) {
         val.* = false;
     } else {
-        if (self.opts.diagnostics) |d| {
+        if (self.opts.diagnostic) |d| {
             d.tok = ident;
             d.err = .{
                 .unexpected_token = .{
@@ -401,9 +259,9 @@ fn parseInt(self: *Parser, comptime T: type, val: *T, num: Token) !void {
 
     try self.must(num, .number);
     val.* = std.fmt.parseInt(T, num.loc.src(self.code), 10) catch {
-        if (self.opts.diagnostics) |d| {
+        if (self.opts.diagnostic) |d| {
             d.tok = num;
-            d.err = .syntax_error;
+            d.err = .invalid_token;
         }
         return error.Syntax;
     };
@@ -414,23 +272,23 @@ fn parseFloat(self: *Parser, comptime T: type, val: *T, num: Token) !void {
 
     try self.must(num, .number);
     val.* = std.fmt.parseFloat(T, num.loc.src(self.code)) catch {
-        if (self.opts.diagnostics) |d| {
+        if (self.opts.diagnostic) |d| {
             d.tok = num;
-            d.err = .syntax_error;
+            d.err = .invalid_token;
         }
         return error.Syntax;
     };
 }
 
 fn parseBytes(self: *Parser, comptime T: type, val: *T, str_or_at: Token) !void {
-    try self.mustAny(str_or_at, &.{ .str, .at });
+    try self.mustAny(str_or_at, &.{ .string, .at });
 
     const str = switch (str_or_at.tag) {
-        .str => str_or_at,
+        .string => str_or_at,
         .at => blk: {
-            _ = try self.nextMust(.ident);
+            _ = try self.nextMust(.identifier);
             _ = try self.nextMust(.lp);
-            const str = try self.nextMust(.str);
+            const str = try self.nextMust(.string);
             _ = try self.nextMust(.rp);
             break :blk str;
         },
@@ -498,7 +356,7 @@ pub fn mustAny(
     for (tags) |t| {
         if (t == tok.tag) break;
     } else {
-        if (self.opts.diagnostics) |d| {
+        if (self.opts.diagnostic) |d| {
             d.tok = tok;
             d.err = .{
                 .unexpected_token = .{
@@ -558,8 +416,8 @@ test "struct - missing bottom curly" {
         bar: bool,
     };
 
-    var diag: Diagnostics = .{ .code = case, .path = null };
-    const opts: ParseOptions = .{ .diagnostics = &diag };
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = parse(Case, std.testing.allocator, case, opts);
     try std.testing.expectError(error.UnexpectedToken, result);
@@ -581,8 +439,8 @@ test "struct - syntax error" {
         bar: bool,
     };
 
-    var diag: Diagnostics = .{ .code = case, .path = null };
-    const opts: ParseOptions = .{ .diagnostics = &diag };
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = parse(Case, std.testing.allocator, case, opts);
     try std.testing.expectError(error.UnexpectedToken, result);
@@ -604,8 +462,8 @@ test "struct - missing comma" {
         bar: bool,
     };
 
-    var diag: Diagnostics = .{ .code = case, .path = null };
-    const opts: ParseOptions = .{ .diagnostics = &diag };
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = parse(Case, std.testing.allocator, case, opts);
     try std.testing.expectError(error.UnexpectedToken, result);
@@ -641,8 +499,8 @@ test "struct - missing field" {
         bar: bool,
     };
 
-    var diag: Diagnostics = .{ .code = case, .path = null };
-    const opts: ParseOptions = .{ .diagnostics = &diag };
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = parse(Case, std.testing.allocator, case, opts);
     try std.testing.expectError(error.MissingField, result);
@@ -665,8 +523,8 @@ test "struct - duplicate field" {
         bar: bool,
     };
 
-    var diag: Diagnostics = .{ .code = case, .path = null };
-    const opts: ParseOptions = .{ .diagnostics = &diag };
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = parse(Case, std.testing.allocator, case, opts);
     try std.testing.expectError(error.DuplicateField, result);
@@ -689,8 +547,8 @@ test "struct - unknown field" {
         bar: bool,
     };
 
-    var diag: Diagnostics = .{ .code = case, .path = null };
-    const opts: ParseOptions = .{ .diagnostics = &diag };
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = parse(Case, std.testing.allocator, case, opts);
     try std.testing.expectError(error.UnknownField, result);
@@ -708,8 +566,8 @@ test "string" {
         \\
     ;
 
-    var diag: Diagnostics = .{ .code = case, .path = null };
-    const opts: ParseOptions = .{ .diagnostics = &diag };
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parse([]const u8, std.testing.allocator, case, opts);
     try std.testing.expectEqualStrings("foo", result);
@@ -722,8 +580,8 @@ test "custom string literal" {
         \\
     ;
 
-    var diag: Diagnostics = .{ .code = case, .path = null };
-    const opts: ParseOptions = .{ .diagnostics = &diag };
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parse([]const u8, std.testing.allocator, case, opts);
     try std.testing.expectEqualStrings("2020-07-06T00:00:00", result);
@@ -736,8 +594,8 @@ test "int basics" {
         \\
     ;
 
-    var diag: Diagnostics = .{ .code = case, .path = null };
-    const opts: ParseOptions = .{ .diagnostics = &diag };
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parse(usize, std.testing.allocator, case, opts);
     try std.testing.expectEqual(1042, result);
@@ -750,8 +608,8 @@ test "float basics" {
         \\
     ;
 
-    var diag: Diagnostics = .{ .code = case, .path = null };
-    const opts: ParseOptions = .{ .diagnostics = &diag };
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parse(f64, std.testing.allocator, case, opts);
     try std.testing.expectEqual(10.42, result);
@@ -764,8 +622,8 @@ test "array basics" {
         \\
     ;
 
-    var diag: Diagnostics = .{ .code = case, .path = null };
-    const opts: ParseOptions = .{ .diagnostics = &diag };
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parse([]usize, std.testing.allocator, case, opts);
     defer std.testing.allocator.free(result);
@@ -780,14 +638,15 @@ test "array trailing comma" {
         \\
     ;
 
-    var diag: Diagnostics = .{ .code = case, .path = null };
-    const opts: ParseOptions = .{ .diagnostics = &diag };
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parse([]usize, std.testing.allocator, case, opts);
     defer std.testing.allocator.free(result);
 
     try std.testing.expectEqualSlices(usize, &.{ 1, 2, 3 }, result);
 }
+
 
 test "comments are ignored" {
     const case =
@@ -804,4 +663,32 @@ test "comments are ignored" {
     const c = try parse(Case, std.testing.allocator, case, .{});
     try std.testing.expectEqualStrings("bar", c.foo);
     try std.testing.expectEqual(false, c.bar);
+}
+
+test "optional - string" {
+    const case =
+        \\
+        \\ "foo"
+        \\
+    ;
+
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
+
+    const result = try parse(?[]const u8, std.testing.allocator, case, opts);
+    try std.testing.expectEqualStrings("foo", result.?);
+}
+
+test "optional - null" {
+    const case =
+        \\
+        \\ null
+        \\
+    ;
+
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
+
+    const result = try parse(?[]const u8, std.testing.allocator, case, opts);
+    try std.testing.expect(result == null);
 }

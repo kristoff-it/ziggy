@@ -1,6 +1,7 @@
 [
   (struct)
   (map)
+  (array)
 ] @indent
 
 [
