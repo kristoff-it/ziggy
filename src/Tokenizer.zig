@@ -301,6 +301,7 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
             .comment => switch (c) {
                 0, '\n' => {
                     state = .start;
+                    res.loc.start = self.idx;
                     self.idx -= 1;
                 },
                 else => continue,
@@ -353,16 +354,19 @@ test "comments are skipped" {
         \\.foo = "bar", // comment can be inline
         \\.bar = false,
         \\// bax must be null
-        \\.baz = { .bax = null },
+        \\.baz = { 
+        \\   // comment inside struct 
+        \\   .bax = null 
+        \\},
         \\// can end with a comment
         \\// or even two
     ;
 
     const expected: []const Token.Tag = &.{
         // zig fmt: off
-        .dot, .ident, .eql, .str, .comma,
-        .dot, .ident, .eql, .ident, .comma,
-        .dot, .ident, .eql, .lb, .dot, .ident, .eql, .ident, .rb, .comma,
+        .dot, .identifier, .eql, .string, .comma,
+        .dot, .identifier, .eql, .identifier, .comma,
+        .dot, .identifier, .eql, .lb, .dot, .identifier, .eql, .identifier, .rb, .comma,
         // zig fmt: on
     };
 
@@ -387,10 +391,10 @@ test "invalid comments" {
 
     const expected: []const Token.Tag = &.{
         // zig fmt: off
-        .invalid, .ident,
-        .dot, .ident, .eql, .str, .comma,
-        .dot, .ident, .eql, .ident, .comma,
-        .dot, .ident, .eql, .lb, .dot, .ident, .eql, .ident, .rb, .comma,
+        .invalid, .identifier,
+        .dot, .identifier, .eql, .string, .comma,
+        .dot, .identifier, .eql, .identifier, .comma,
+        .dot, .identifier, .eql, .lb, .dot, .identifier, .eql, .identifier, .rb, .comma,
         // zig fmt: on
     };
 

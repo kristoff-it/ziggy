@@ -9,8 +9,9 @@
 module.exports = grammar({
   name: 'ziggy',
 
-  extras: _ => [
+  extras: $ => [
     /\s/,
+    $.comment,
   ],
 
   rules: {
@@ -117,6 +118,8 @@ module.exports = grammar({
     false: _ => 'false',
 
     null: _ => 'null',
+
+    comment: _ => token(seq('//', /.*/)),    
   }
 });
 
