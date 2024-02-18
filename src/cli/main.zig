@@ -13,7 +13,7 @@ pub const std_options: std.Options = .{
     .logFn = logging.logFn,
 };
 
-pub const Command = enum { lsp, query, fmt, convert };
+pub const Command = enum { lsp, query, fmt, check, convert, help };
 
 pub fn main() void {
     var gpa_impl: std.heap.GeneralPurposeAllocator(.{}) = .{};
@@ -34,6 +34,7 @@ pub fn main() void {
     _ = switch (cmd) {
         .lsp => lsp_exe.run(gpa, args[2..]),
         .fmt => fmt_exe.run(gpa, args[2..]),
+        .help => fatalHelp(),
         else => @panic("TODO"),
     } catch |err| fatal("{s}\n", .{@errorName(err)});
 }
@@ -48,9 +49,10 @@ fn fatalHelp() noreturn {
         \\Usage: ziggy COMMAND [OPTIONS]
         \\
         \\Commands: 
-        \\  fmt          Formats a Ziggy file      
-        \\  query, q     Queries a Ziggy file 
-        \\  convert      Converts JSON, YAML, TOML files to Ziggy
+        \\  fmt          Formats Ziggy files      
+        \\  query, q     Queries Ziggy files 
+        \\  check        Checks Ziggy files against a Ziggy schema 
+        \\  convert      Converts JSON, YAML, TOML files from and to Ziggy
         \\  lsp          Starts the Ziggy LSP
         \\  help         Shows this menu and exits
         \\

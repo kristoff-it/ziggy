@@ -135,6 +135,22 @@
         "type": "SEQ",
         "members": [
           {
+            "type": "FIELD",
+            "name": "name",
+            "content": {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "identifier"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          },
+          {
             "type": "STRING",
             "value": "{"
           },
@@ -310,6 +326,10 @@
       "type": "SEQ",
       "members": [
         {
+          "type": "STRING",
+          "value": "."
+        },
+        {
           "type": "FIELD",
           "name": "key",
           "content": {
@@ -336,10 +356,6 @@
       "content": {
         "type": "SEQ",
         "members": [
-          {
-            "type": "STRING",
-            "value": "."
-          },
           {
             "type": "PATTERN",
             "value": "[a-zA-Z_]"
@@ -396,8 +412,12 @@
           "value": "@"
         },
         {
-          "type": "SYMBOL",
-          "name": "tag"
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "tag"
+          }
         },
         {
           "type": "STRING",

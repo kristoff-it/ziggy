@@ -9,6 +9,9 @@
 
 (struct_field
   key: (_) @keyword)
+  
+(struct
+  name: (_) @keyword)
 
 (tag) @function
 

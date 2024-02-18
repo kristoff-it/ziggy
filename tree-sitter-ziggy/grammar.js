@@ -42,6 +42,7 @@ module.exports = grammar({
     top_level_struct: $ => commaSep1($.struct_field),
 
     struct: $ => prec(1, seq(
+      field('name', optional($.identifier)), 
       '{', commaSep($.struct_field), '}',
     )),
 
@@ -52,6 +53,7 @@ module.exports = grammar({
     array: $ => seq('[', commaSep($._value), ']'),
 
     struct_field: $ => seq(
+      '.',
       field('key', $.identifier),
       '=',
       field('value', $._value),
@@ -60,7 +62,7 @@ module.exports = grammar({
     identifier: (_) => {
       const identifier_start = /[a-zA-Z_]/;
       const identifier_part = choice(identifier_start, /[0-9]/);
-      return token(seq(".", identifier_start, repeat(identifier_part)));
+      return token(seq(identifier_start, repeat(identifier_part)));
     },
 
 
@@ -70,7 +72,7 @@ module.exports = grammar({
       field('value', $._value),
     ),
 
-    tag_string: $ => seq('@', $.tag, '(', $.string, ')'),
+    tag_string: $ => seq('@', field('name', $.tag), '(', $.string, ')'),
 
     tag: _ => repeat1(/[a-zA-Z_]/),
 

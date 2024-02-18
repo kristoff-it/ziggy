@@ -352,14 +352,27 @@ pub fn parse(
                 }
             },
 
-            .tag => {
-                node = node.parent(&ast.nodes);
-            },
-
             ._value => switch (token.tag) {
                 .lb => {
                     node.tag = .struct_or_map;
                     node.loc.start = token.loc.start;
+                    token = try ast.next();
+                },
+                .identifier => {
+                    node.tag = .@"struct";
+                    node.loc.start = token.loc.start;
+                    token = try ast.next();
+                    if (token.tag != .lb) {
+                        if (ast.diag) |d| {
+                            d.tok = token;
+                            d.err = .{
+                                .unexpected_token = .{
+                                    .expected = &.{.lb},
+                                },
+                            };
+                        }
+                        return error.Syntax;
+                    }
                     token = try ast.next();
                 },
                 .lsb => {
@@ -369,10 +382,12 @@ pub fn parse(
                 },
                 .at => {
                     node.tag = .tag;
-                    const t = try ast.next();
-                    if (t.tag != .identifier) {
+                    node.loc.start = token.loc.start;
+
+                    token = try ast.next();
+                    if (token.tag != .identifier) {
                         if (ast.diag) |d| {
-                            d.tok = t;
+                            d.tok = token;
                             d.err = .{
                                 .unexpected_token = .{
                                     .expected = &.{.identifier},
@@ -382,8 +397,52 @@ pub fn parse(
                         return error.Syntax;
                     }
 
-                    node.loc = t.loc;
-                    node = try node.addChild(&ast.nodes, ._value);
+                    node = try node.addChild(&ast.nodes, .identifier);
+                    node.loc = token.loc;
+                    node = node.parent(&ast.nodes);
+
+                    token = try ast.next();
+                    if (token.tag != .lp) {
+                        if (ast.diag) |d| {
+                            d.tok = token;
+                            d.err = .{
+                                .unexpected_token = .{
+                                    .expected = &.{.lp},
+                                },
+                            };
+                        }
+                        return error.Syntax;
+                    }
+
+                    token = try ast.next();
+                    if (token.tag != .string) {
+                        if (ast.diag) |d| {
+                            d.tok = token;
+                            d.err = .{
+                                .unexpected_token = .{
+                                    .expected = &.{.string},
+                                },
+                            };
+                        }
+                        return error.Syntax;
+                    }
+                    node = try node.addChild(&ast.nodes, .string);
+                    node.loc = token.loc;
+
+                    token = try ast.next();
+                    if (token.tag != .rp) {
+                        if (ast.diag) |d| {
+                            d.tok = token;
+                            d.err = .{
+                                .unexpected_token = .{
+                                    .expected = &.{.rp},
+                                },
+                            };
+                        }
+                        return error.Syntax;
+                    }
+
+                    node = node.parent(&ast.nodes).parent(&ast.nodes);
                     token = try ast.next();
                 },
                 .string => {
@@ -426,6 +485,7 @@ pub fn parse(
             // only set at .rsb
             .array_comma,
 
+            .tag,
             .identifier,
             .string,
             .number,
@@ -491,6 +551,12 @@ fn renderValue(
                 if (code[char] == ',') break :blk .vertical;
                 break :blk .horizontal;
             };
+            var t: Tokenizer = .{};
+            const name_code = code[node.loc.start..];
+            const name = t.next(name_code);
+            if (name.tag == .identifier) {
+                try w.print("{s} ", .{name.loc.src(name_code)});
+            }
             switch (mode) {
                 .vertical => try w.writeAll("{\n"),
                 .horizontal => try w.writeAll("{ "),
@@ -548,6 +614,14 @@ fn renderValue(
             try renderArray(indent + 1, .vertical, node.first_child_id, nodes, code, w);
             try printIndent(indent, w);
             try w.writeAll("]");
+        },
+
+        .tag => {
+            const tag_name = nodes[node.first_child_id].loc.src(code);
+            try w.print("@{s}(", .{tag_name});
+            const value = nodes[node.last_child_id];
+            try renderValue(indent, value, nodes, code, false, w);
+            try w.writeAll(")");
         },
 
         else => {
