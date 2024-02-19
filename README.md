@@ -184,10 +184,11 @@ As an example, look at this JSON:
 In this example dependencies can either be local (`path` field) or remote 
 (`url` and `hash`). 
 
-Unfortunately this shape makes it hard for users to define a tagged union of
-(`Remote`, `Local`) and have a type-driven parser automatically figure out the 
-parsing code, especially because shape-matching is error prone and different
-types could be indistinguishable.
+Unfortunately this layout makes it hard for users to define a tagged union of
+(`Remote`, `Local`) types and have a type-driven parser automatically figure 
+out the parsing code, as that would rely on shape-matching (ie selecting
+candidate output types based on presence/absence of fields in the JSON object).
+
 
 People who are aware of these problems will do the following:
 ```json
@@ -227,18 +228,18 @@ Here's the same example as above, but in Ziggy:
 },
 ```
 
-A Ziggy parser will be able to see the struct name and select which is the
-correct type to use for deserialization without the need to rely on shape-matching.
+A Ziggy parser will be able to use struct names to select the correct type to 
+use for deserialization without the need to rely on shape-matching.
 
 This is not a silver-bullet by itself, though. 
 
-Users are not *required* to use struct names, so somebody could write a Ziggy
+Users are not *required* to use struct names, so somebody could still write a Ziggy
 file with a hard-to-recognize union, but the hope is by making it a first-class
 feature of the language people will be steered naturally towards creating better 
 data types.
 
-To enforce the presence of struct names when it matters, one will be able to 
-rely on Ziggy schemas (see below).
+To enforce the presence of struct names when it matters, see below the section
+about Ziggy Schemas.
 
 ### Tagged String Literals
 Ziggy allows you to add a tag to string literals in order to mark them as 
