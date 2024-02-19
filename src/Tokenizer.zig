@@ -346,7 +346,7 @@ test "basics" {
         // zig fmt: on
     };
 
-    var t: Tokenizer = .{};
+    var t: Tokenizer = .{ .want_comments = false };
 
     for (expected, 0..) |e, idx| {
         errdefer std.debug.print("failed at index: {}\n", .{idx});
@@ -378,7 +378,7 @@ test "comments are skipped" {
         // zig fmt: on
     };
 
-    var t: Tokenizer = .{};
+    var t: Tokenizer = .{ .want_comments = false };
 
     for (expected, 0..) |e, idx| {
         errdefer std.debug.print("failed at index: {}\n", .{idx});
@@ -406,7 +406,7 @@ test "invalid comments" {
         // zig fmt: on
     };
 
-    var t: Tokenizer = .{};
+    var t: Tokenizer = .{ .want_comments = false };
 
     for (expected, 0..) |e, idx| {
         errdefer std.debug.print("failed at index: {}\n", .{idx});

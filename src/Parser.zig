@@ -9,7 +9,7 @@ const assert = std.debug.assert;
 gpa: std.mem.Allocator,
 code: [:0]const u8,
 opts: ParseOptions,
-tokenizer: Tokenizer = .{},
+tokenizer: Tokenizer,
 parents: std.ArrayListUnmanaged(Container) = .{},
 container: Container = .start,
 state: State = .start,
@@ -52,7 +52,12 @@ pub fn parse(
     code: [:0]const u8,
     opts: ParseOptions,
 ) ParseError!T {
-    var parser: Parser = .{ .gpa = gpa, .code = code, .opts = opts };
+    var parser: Parser = .{
+        .gpa = gpa,
+        .code = code,
+        .opts = opts,
+        .tokenizer = .{ .want_comments = false },
+    };
     var result: T = undefined;
 
     const info = @typeInfo(T);
@@ -473,6 +478,7 @@ test "struct - missing comma" {
         \\
     , "{}", .{diag});
 }
+
 test "struct - optional comma" {
     const case =
         \\.foo = "bar",
@@ -646,7 +652,6 @@ test "array trailing comma" {
 
     try std.testing.expectEqualSlices(usize, &.{ 1, 2, 3 }, result);
 }
-
 
 test "comments are ignored" {
     const case =
