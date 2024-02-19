@@ -5,7 +5,11 @@
 
 (null) @constant.builtin
 
-(number) @constant.numeric
+[
+  (integer)
+  (float)
+] @constant.numeric
+
 
 (struct_field
   key: (_) @keyword)
@@ -15,9 +19,12 @@
 
 (tag) @function
 
-(comment) @comment.line
+[
+  (string) 
+  (line_string)*
+] @string
 
-(string) @string
+(comment) @comment.line
 
 (escape_sequence) @constant.character.escape
 
