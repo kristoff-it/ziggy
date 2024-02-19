@@ -111,7 +111,7 @@ fn parseValue(
             return self.parseStruct(T, val, first_tok);
         },
         .Optional => |opt| {
-            if (first_tok.tag == .identifier) {
+            if (first_tok.tag == .null) {
                 const src = first_tok.loc.src(self.code);
                 if (std.mem.eql(u8, src, Token.Tag.null.lexeme())) {
                     val.* = null;
@@ -237,25 +237,12 @@ fn finalizeStruct(
     }
 }
 
-fn parseBool(self: *Parser, val: *bool, ident: Token) !void {
-    try self.must(ident, .identifier);
-
-    const src = ident.loc.src(self.code);
-    if (std.mem.eql(u8, src, "true")) {
-        val.* = true;
-    } else if (std.mem.eql(u8, src, "false")) {
-        val.* = false;
-    } else {
-        if (self.opts.diagnostic) |d| {
-            d.tok = ident;
-            d.err = .{
-                .unexpected_token = .{
-                    .expected = &.{ .true, .false },
-                },
-            };
-        }
-
-        return error.UnexpectedToken;
+fn parseBool(self: *Parser, val: *bool, true_or_false: Token) !void {
+    try self.mustAny(true_or_false, &.{ .true, .false });
+    switch (true_or_false.tag) {
+        .true => val.* = true,
+        .false => val.* = false,
+        else => unreachable,
     }
 }
 
@@ -451,7 +438,7 @@ test "struct - syntax error" {
     try std.testing.expectError(error.UnexpectedToken, result);
     try std.testing.expectFmt(
         \\line: 2 col: 8
-        \\unexpected token: '.', expected: '(identifier)'
+        \\unexpected token: '.', expected: 'true' or 'false'
         \\
     , "{}", .{diag});
 }

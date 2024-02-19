@@ -265,7 +265,7 @@
         "required": false,
         "types": [
           {
-            "type": "identifier",
+            "type": "struct_name",
             "named": true
           }
         ]
@@ -353,6 +353,11 @@
         }
       ]
     }
+  },
+  {
+    "type": "struct_name",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "tag",

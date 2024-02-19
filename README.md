@@ -241,6 +241,9 @@ data types.
 To enforce the presence of struct names when it matters, see below the section
 about Ziggy Schemas.
 
+
+Note: struct names must be capitalized (ie start with an uppercase letter).
+
 #### Multiline String Literals
 Ziggy supports multiline string literals using the same notation used by Zig.
 
@@ -309,6 +312,8 @@ Improvements in the Ziggy version:
 - Clear distinction between fixed schema and custom fields.
 - Clear tagging of the `date` field as having a required structure.
 - Ability to define date fields even when not part of the fixed schema.
+
+Note: tag names must contain only lowercase letters, underscores and numbers.
 
 ### Schema Language
 **Note: this part is still vaporware**

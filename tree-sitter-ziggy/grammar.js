@@ -31,19 +31,14 @@ module.exports = grammar({
     top_level_struct: $ => seq(commaSep1($.struct_field), optional($.comment)),
 
     struct: $ => prec(1, seq(
-      field('name', optional($.identifier)), 
+      field('name', optional($.struct_name)), 
       '{', 
         commaSep($.struct_field), 
         optional($.comment),
       '}',
     )),
-
-    map: $ => seq(
-      '{', 
-        commaSep($.map_field), 
-        optional($.comment),
-      '}',
-    ),
+    
+    struct_name: $ => seq(/[A-Z]/, repeat(/[a-zA-Z0-9_]/)),
     
     struct_field: $ => seq(
       optional($.comment),
@@ -51,6 +46,13 @@ module.exports = grammar({
       field('key', $.identifier),
       '=',
       field('value', $._value),
+    ),
+
+    map: $ => seq(
+      '{', 
+        commaSep($.map_field), 
+        optional($.comment),
+      '}',
     ),
 
     map_field: $ => seq(
@@ -69,7 +71,7 @@ module.exports = grammar({
 
     tag_string: $ => seq('@', field('name', $.tag), '(', $.string, ')'),
 
-    tag: _ => repeat1(/[a-zA-Z_]/),
+    tag: _ => seq(/[a-z]/, repeat(/[a-z_0-9]/)),
 
  
     string: $ => choice(
@@ -100,6 +102,7 @@ module.exports = grammar({
       return token(seq(identifier_start, repeat(identifier_part)));
     },
 
+    
     number: _ => {
       const decimal_digits = /\d+/;
       const signed_integer = seq(optional('-'), decimal_digits);

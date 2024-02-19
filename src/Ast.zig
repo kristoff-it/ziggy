@@ -397,6 +397,23 @@ pub fn init(
                     token = try ast.next();
                 },
                 .identifier => {
+                    {
+                        const src = token.loc.src(code);
+                        switch (src[0]) {
+                            'A'...'Z' => {},
+                            else => {
+                                if (ast.diag) |d| {
+                                    d.tok = token;
+                                    d.err = .{
+                                        .unexpected_token = .{
+                                            .expected = &.{.value},
+                                        },
+                                    };
+                                }
+                                return error.Syntax;
+                            },
+                        }
+                    }
                     node.tag = .@"struct";
                     node.loc.start = token.loc.start;
                     token = try ast.next();
@@ -433,6 +450,23 @@ pub fn init(
                             };
                         }
                         return error.Syntax;
+                    }
+                    const src = token.loc.src(code);
+                    for (src) |ch| {
+                        switch (ch) {
+                            else => {},
+                            'A'...'Z' => {
+                                if (ast.diag) |d| {
+                                    d.tok = token;
+                                    d.err = .{
+                                        .unexpected_token = .{
+                                            .expected = &.{.tag_name},
+                                        },
+                                    };
+                                }
+                                return error.Syntax;
+                            },
+                        }
                     }
 
                     node = try node.addChild(&ast.nodes, .identifier);
@@ -591,11 +625,21 @@ fn renderValue(
         },
 
         .@"struct" => {
-            // empty struct literals are .struct_or_map nodes
-            std.debug.assert(node.first_child_id != 0);
+            {
+                var t: Tokenizer = .{ .want_comments = false };
+                const name_code = code[node.loc.start..];
+                const name = t.next(name_code);
+                if (name.tag == .identifier) {
+                    try w.print("{s} ", .{name.loc.src(name_code)});
+                }
+            }
+            if (node.first_child_id == 0) {
+                try w.writeAll("{}");
+                return;
+            }
             const mode: RenderMode = blk: {
                 if (is_top_value or
-                    hasCommentSiblings(node.first_child_id, nodes))
+                    hasMultilineSiblings(node.first_child_id, nodes))
                 {
                     break :blk .vertical;
                 }
@@ -605,14 +649,6 @@ fn renderValue(
                 if (code[char] == ',') break :blk .vertical;
                 break :blk .horizontal;
             };
-            {
-                var t: Tokenizer = .{ .want_comments = false };
-                const name_code = code[node.loc.start..];
-                const name = t.next(name_code);
-                if (name.tag == .identifier) {
-                    try w.print("{s} ", .{name.loc.src(name_code)});
-                }
-            }
             switch (mode) {
                 .vertical => try w.writeAll("{\n"),
                 .horizontal => try w.writeAll("{ "),
@@ -631,7 +667,7 @@ fn renderValue(
             // empty map literals are .struct_or_map nodes
             std.debug.assert(node.first_child_id != 0);
             const mode: RenderMode = blk: {
-                if (hasCommentSiblings(node.first_child_id, nodes)) {
+                if (hasMultilineSiblings(node.first_child_id, nodes)) {
                     break :blk .vertical;
                 }
                 std.debug.assert(node.last_child_id != 0);
@@ -661,7 +697,7 @@ fn renderValue(
                 try w.writeAll("[]");
                 return;
             }
-            const mode: RenderMode = if (hasCommentSiblings(node.first_child_id, nodes)) blk: {
+            const mode: RenderMode = if (hasMultilineSiblings(node.first_child_id, nodes)) blk: {
                 break :blk .vertical;
             } else .horizontal;
 
@@ -721,11 +757,15 @@ fn printIndent(indent: usize, w: anytype) !void {
     for (0..indent) |_| try w.writeAll("    ");
 }
 
-fn hasCommentSiblings(idx: u32, nodes: []const Node) bool {
+fn hasMultilineSiblings(idx: u32, nodes: []const Node) bool {
     var current_idx = idx;
     while (current_idx != 0) {
         const node = nodes[current_idx];
-        if (node.tag == .comment) return true;
+        if (node.tag == .comment or
+            node.tag == .multiline_string)
+        {
+            return true;
+        }
         current_idx = node.next_id;
     }
     return false;
