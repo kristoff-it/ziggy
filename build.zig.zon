@@ -7,7 +7,8 @@
             .hash = "12209925016f4b5486a713828ead3bcc900fa4f039c93de1894aa7d5253f7633b92c",
         },
         .@"zig-lsp-kit" = .{
-          .path = "../zig-lsp-kit",  
+            .url = "git+https://github.com/kristoff-it/zig-lsp-kit.git#9efbd913672be612b19e0c8932bf145b47b10b87",
+            .hash = "1220e7de02c34269ceb849818c3d66c6a745647345c34b968df6df7ac7e84b077917",
         },
     },
     .paths = .{

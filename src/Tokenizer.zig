@@ -78,31 +78,29 @@ pub const Token = struct {
                 col: usize,
             };
         };
+
         pub fn getSelection(self: Loc, code: []const u8) Selection {
-            //TODO: see if we can avoid re-parsing the same text twice
-            return .{
-                .start = getPos(code[0..self.start]),
-                .end = getPos(code[0..self.end]),
-            };
-        }
-
-        fn getPos(code: []const u8) Selection.Position {
-            var res: Selection.Position = .{
-                .line = 0,
-                .col = undefined,
+            //TODO: ziglyph
+            var selection: Selection = .{
+                .start = .{ .line = 1, .col = 1 },
+                .end = undefined,
             };
 
-            var it = std.mem.splitScalar(u8, code, '\n');
-            var last_line: []const u8 = "";
-
-            while (it.next()) |line| {
-                last_line = line;
-                res.line += 1;
+            for (code[0..self.start]) |c| {
+                if (c == '\n') {
+                    selection.start.line += 1;
+                    selection.start.col = 1;
+                } else selection.start.col += 1;
             }
 
-            //TODO: ziglyph
-            res.col = last_line.len + 1;
-            return res;
+            selection.end = selection.start;
+            for (code[self.start..self.end]) |c| {
+                if (c == '\n') {
+                    selection.end.line += 1;
+                    selection.end.col = 1;
+                } else selection.end.col += 1;
+            }
+            return selection;
         }
 
         pub fn unquote(self: Loc, code: []const u8) ?[]const u8 {
