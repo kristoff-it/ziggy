@@ -1,4 +1,3 @@
-
 /* eslint-disable 80001 */
 /* eslint-disable arrow-parens */
 /* eslint-disable camelcase */
@@ -9,23 +8,12 @@
 module.exports = grammar({
   name: 'ziggy',
 
-  extras: $ => [
-    /\s/,
-    $.comment,
-  ],
+  extras: $ => [/\s/],
 
   rules: {
-    // TODO: add the actual grammar rules
     document: $ => optional(choice(
       $.top_level_struct,
-      $.struct,
-      $.map,
-      $.array,
-      $.string,
-      $.number,
-      $.true,
-      $.false,
-      $.null,
+      $._value,
     )),
 
     _value: $ => choice(
@@ -40,37 +28,43 @@ module.exports = grammar({
       $.null,
     ),
 
-    top_level_struct: $ => commaSep1($.struct_field),
+    top_level_struct: $ => seq(commaSep1($.struct_field), optional($.comment)),
 
     struct: $ => prec(1, seq(
       field('name', optional($.identifier)), 
-      '{', commaSep($.struct_field), '}',
+      '{', 
+        commaSep($.struct_field), 
+        optional($.comment),
+      '}',
     )),
 
     map: $ => seq(
-      '{', commaSep($.map_field), '}',
+      '{', 
+        commaSep($.map_field), 
+        optional($.comment),
+      '}',
     ),
-
-    array: $ => seq('[', commaSep($._value), ']'),
-
+    
     struct_field: $ => seq(
+      optional($.comment),
       '.',
       field('key', $.identifier),
       '=',
       field('value', $._value),
     ),
 
-    identifier: (_) => {
-      const identifier_start = /[a-zA-Z_]/;
-      const identifier_part = choice(identifier_start, /[0-9]/);
-      return token(seq(identifier_start, repeat(identifier_part)));
-    },
-
-
     map_field: $ => seq(
+      optional($.comment),
       field('key', $.string),
       ':',
       field('value', $._value),
+    ),
+
+    array: $ => seq('[', commaSep($.array_elem), optional($.comment),']'),
+
+    array_elem: $ => seq(
+      optional($.comment),
+      $._value,
     ),
 
     tag_string: $ => seq('@', field('name', $.tag), '(', $.string, ')'),
@@ -91,6 +85,12 @@ module.exports = grammar({
       '\\',
       /(\"|\\|\/|b|f|n|r|t|u)/,
     )),
+
+    identifier: (_) => {
+      const identifier_start = /[a-zA-Z_]/;
+      const identifier_part = choice(identifier_start, /[0-9]/);
+      return token(seq(identifier_start, repeat(identifier_part)));
+    },
 
     number: _ => {
       const decimal_digits = /\d+/;
@@ -119,7 +119,7 @@ module.exports = grammar({
 
     null: _ => 'null',
 
-    comment: _ => token(seq('//', /.*/)),    
+    comment: _ => repeat1(token(seq('//', /.*/))),    
   }
 });
 

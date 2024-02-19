@@ -156,7 +156,7 @@ const Handler = struct {
 
         var diag: ziggy.Diagnostic = .{};
 
-        const ast = ziggy.Ast.parse(self.gpa, new_text, null, &diag) catch undefined;
+        const ast = ziggy.Ast.init(self.gpa, new_text, null, true, &diag) catch undefined;
         defer if (std.meta.activeTag(diag.err) == .none) ast.deinit();
 
         if (std.meta.activeTag(diag.err) != .none) {

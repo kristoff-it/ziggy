@@ -16,16 +16,17 @@ $ ziggy help
 Usage: ziggy COMMAND [OPTIONS]
 
 Commands: 
-  fmt          Formats Ziggy files      
-  query, q     Queries Ziggy files 
-  check        Checks Ziggy files against a Ziggy schema
-  convert      Converts JSON, YAML, TOML files from and to Ziggy
-  lsp          Starts the Ziggy LSP
-  help         Shows this menu and exits
+  fmt          Format Ziggy files      
+  query, q     Query Ziggy files 
+  check        Check Ziggy files against a Ziggy schema 
+  convert      Convert between JSON, YAML, TOML files and Ziggy
+  lsp          Start the Ziggy LSP
+  help         Show this menu and exit
 
 General Options:
- --help, -h    Print command specific usage
+  --help, -h   Print command specific usage
 ```
+
 Development status: 
 - [x] fmt 
 - [ ] query 
@@ -126,24 +127,25 @@ braces and reclaim one level of indentation.
 
 This makes Ziggy a good language for configuration files and markdown frontmatter.
 
-
-Improved hypotetical `package.ziggy`:
-
+#### Frontmatter example
+With outer curlies
 ```ziggy
-.private = true,
-.name = "bun",
-.dependencies = {
-  "react": "next",
-},
-.devDependencies = {
-  "@types/react": "^18.0.25",
-},
-.scripts = {
-  "setup": "./scripts/setup.sh",
-}  
+---
+{
+    .title = "My Post #1",
+    .date = "2024-02-18T10:00:00",
+    .draft = true,
+    .tags = ["tag1", "tag2"],
+    .custom = {
+        "bar": true,
+        "baz": 123,
+    },
+}
+---
+Markdown content.
 ```
 
-Frontmatter example:
+Without: 
 ```ziggy
 ---
 .title = "My Post #1",
@@ -157,6 +159,87 @@ Frontmatter example:
 ---
 Markdown content.
 ```
+### Tagged Unions Of Structs
+JSON and similar formats don't help you design your data types in a user-frieldy
+manner. 
+
+In this context user-friendly means making it easier for the user to match the 
+data to a type in their language. For example tagged unions are famously annoying
+to parse from JSON because there is no standardized way to express a tagged union.
+
+As an example, look at this JSON:
+```json
+{
+  "dependencies": {
+    "foo": {
+      "url": "(...)",
+      "hash": "(...)"
+    },
+    "bar": {
+      "path": "foo/bar/baz" 
+    }
+  }
+}
+```
+In this example dependencies can either be local (`path` field) or remote 
+(`url` and `hash`). 
+
+Unfortunately this shape makes it hard for users to define a tagged union of
+(`Remote`, `Local`) and have a type-driven parser automatically figure out the 
+parsing code, especially because shape-matching is error prone and different
+types could be indistinguishable.
+
+People who are aware of these problems will do the following:
+```json
+{
+  "dependencies": {
+    "foo": {
+      "remote": {
+        "url": "(...)",
+        "hash": "(...)"
+      }
+    },
+    "bar": {
+      "local": {
+        "path": "foo/bar/baz" 
+      }
+    }
+  }
+}
+```
+This works but steals one indentation level and it doesn't make it immediately
+clear that what you're looking at is a union of two different structs (ie key-value 
+data structure where the application controls key names).
+
+Ziggy allows you to specify struct names which can help both producers and consumers
+come to an understanding about the shape of the data without sacrificing indentation.
+
+Here's the same example as above, but in Ziggy:
+```ziggy
+.dependencies = {
+    "foo": Remote {
+        .url = "(...)",
+        .hash = "(...)",  
+    },
+    "bar": Local {
+        .path = "foo/bar/baz",
+    }
+},
+```
+
+A Ziggy parser will be able to see the struct name and select which is the
+correct type to use for deserialization without the need to rely on shape-matching.
+
+This is not a silver-bullet by itself, though. 
+
+Users are not *required* to use struct names, so somebody could write a Ziggy
+file with a hard-to-recognize union, but the hope is by making it a first-class
+feature of the language people will be steered naturally towards creating better 
+data types.
+
+To enforce the presence of struct names when it matters, one will be able to 
+rely on Ziggy schemas (see below).
+
 ### Tagged String Literals
 Ziggy allows you to add a tag to string literals in order to mark them as 
 having a special meaning. What those tags are, and what they are supposed to 
@@ -208,7 +291,7 @@ format:
 },
 ```
 
-Impovements in the Ziggy version:
+Improvements in the Ziggy version:
 - Clear distinction between fixed schema and custom fields.
 - Clear tagging of the `date` field as having a required structure.
 - Ability to define date fields even when not part of the fixed schema.
@@ -259,6 +342,36 @@ strings.
 
 ### Comments 
 Ziggy supports single-line comments using `//`.
+
+Comments can be placed directly inside structs and arrays.
+
+This allows you to document individual fields / array values as well as toggle
+them off by commenting them out
+
+Example:
+```ziggy
+.name = "zine",
+
+// version must be a semver string
+.version = "0.0.0",
+.dependencies = {
+    // here I've commented out .url and .hash temporarily to work on a local
+    // checkout of the dependency
+    "gfm": Remote {
+        // .url = "git+https://github.com/kristoff-it/cmark-gfm.git#9b659dada64964c993be6d6ec16b64f1ca1e8f5a",
+        // .hash = "1220a2d62d1de13c424c79d281c273156083b5232199ff68780c146b9441015ab51c",
+        .path = "../gfm",
+    },
+    
+    // "super": Local {
+    //     .path = "super",
+    // },
+},
+.paths = [
+    ".",
+],
+```
+
 
 ### Trailing commas
 Ziggy supports trailing commas, which can also be used to interact with the 

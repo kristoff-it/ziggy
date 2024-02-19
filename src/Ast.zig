@@ -32,6 +32,7 @@ pub const Node = struct {
         bool,
         null,
         tag,
+        comment,
         _value,
     };
 
@@ -75,22 +76,24 @@ pub const Node = struct {
 
 code: [:0]const u8,
 nodes: std.ArrayList(Node),
-tokenizer: Tokenizer = .{},
+tokenizer: Tokenizer,
 diag: ?*Diagnostic,
 
 pub fn deinit(self: Ast) void {
     self.nodes.deinit();
 }
 
-pub fn parse(
+pub fn init(
     gpa: std.mem.Allocator,
     code: [:0]const u8,
     path: ?[]const u8,
+    want_comments: bool,
     diag: ?*Diagnostic,
 ) !Ast {
     var ast: Ast = .{
         .code = code,
         .diag = diag,
+        .tokenizer = .{ .want_comments = want_comments },
         .nodes = std.ArrayList(Node).init(gpa),
     };
     errdefer ast.nodes.clearAndFree();
@@ -107,8 +110,9 @@ pub fn parse(
     var token = try ast.next();
     while (true) {
         switch (node.tag) {
+            .comment => unreachable,
             .root => switch (token.tag) {
-                .dot => {
+                .dot, .comment => {
                     node = try node.addChild(&ast.nodes, .braceless_struct);
                     node.loc.start = token.loc.start;
                 },
@@ -119,6 +123,12 @@ pub fn parse(
             },
             .braceless_struct => switch (token.tag) {
                 .eof => return ast,
+                .comment => {
+                    node = try node.addChild(&ast.nodes, .comment);
+                    node.loc = token.loc;
+                    node = node.parent(&ast.nodes);
+                    token = try ast.next();
+                },
                 .dot => {
                     node = try node.addChild(&ast.nodes, .struct_field);
                     node.loc.start = token.loc.start;
@@ -138,6 +148,12 @@ pub fn parse(
             },
 
             .struct_or_map => switch (token.tag) {
+                .comment => {
+                    node = try node.addChild(&ast.nodes, .comment);
+                    node.loc = token.loc;
+                    node = node.parent(&ast.nodes);
+                    token = try ast.next();
+                },
                 .rb => {
                     node.loc.end = token.loc.end;
                     node = node.parent(&ast.nodes);
@@ -165,6 +181,12 @@ pub fn parse(
             },
 
             .@"struct" => switch (token.tag) {
+                .comment => {
+                    node = try node.addChild(&ast.nodes, .comment);
+                    node.loc = token.loc;
+                    node = node.parent(&ast.nodes);
+                    token = try ast.next();
+                },
                 .dot => {
                     node = try node.addChild(&ast.nodes, .struct_field);
                     node.loc.start = token.loc.start;
@@ -245,6 +267,12 @@ pub fn parse(
             },
 
             .map => switch (token.tag) {
+                .comment => {
+                    node = try node.addChild(&ast.nodes, .comment);
+                    node.loc = token.loc;
+                    node = node.parent(&ast.nodes);
+                    token = try ast.next();
+                },
                 .string => {
                     node = try node.addChild(&ast.nodes, .map_field);
                     node.loc.start = token.loc.start;
@@ -322,7 +350,9 @@ pub fn parse(
                 }
             },
             .array => {
-                if (node.last_child_id != 0) {
+                if (node.last_child_id != 0 and
+                    ast.nodes.items[node.last_child_id].tag != .comment)
+                {
                     if (token.tag == .comma) {
                         token = try ast.next();
                         if (token.tag == .rsb) {
@@ -341,6 +371,12 @@ pub fn parse(
                             return error.Syntax;
                         }
                     }
+                }
+
+                while (token.tag == .comment) : (token = try ast.next()) {
+                    node = try node.addChild(&ast.nodes, .comment);
+                    node.loc = token.loc;
+                    node = node.parent(&ast.nodes);
                 }
 
                 if (token.tag == .rsb) {
@@ -544,18 +580,24 @@ fn renderValue(
             // empty struct literals are .struct_or_map nodes
             std.debug.assert(node.first_child_id != 0);
             const mode: RenderMode = blk: {
-                if (is_top_value) break :blk .vertical;
+                if (is_top_value or
+                    hasCommentSiblings(node.first_child_id, nodes))
+                {
+                    break :blk .vertical;
+                }
 
                 std.debug.assert(node.last_child_id != 0);
                 const char = nodes[node.last_child_id].loc.end - 1;
                 if (code[char] == ',') break :blk .vertical;
                 break :blk .horizontal;
             };
-            var t: Tokenizer = .{};
-            const name_code = code[node.loc.start..];
-            const name = t.next(name_code);
-            if (name.tag == .identifier) {
-                try w.print("{s} ", .{name.loc.src(name_code)});
+            {
+                var t: Tokenizer = .{ .want_comments = false };
+                const name_code = code[node.loc.start..];
+                const name = t.next(name_code);
+                if (name.tag == .identifier) {
+                    try w.print("{s} ", .{name.loc.src(name_code)});
+                }
             }
             switch (mode) {
                 .vertical => try w.writeAll("{\n"),
@@ -575,6 +617,9 @@ fn renderValue(
             // empty map literals are .struct_or_map nodes
             std.debug.assert(node.first_child_id != 0);
             const mode: RenderMode = blk: {
+                if (hasCommentSiblings(node.first_child_id, nodes)) {
+                    break :blk .vertical;
+                }
                 std.debug.assert(node.last_child_id != 0);
                 const char = nodes[node.last_child_id].loc.end - 1;
                 if (code[char] == ',') break :blk .vertical;
@@ -602,9 +647,12 @@ fn renderValue(
                 try w.writeAll("[]");
                 return;
             }
+            const mode: RenderMode = if (hasCommentSiblings(node.first_child_id, nodes)) blk: {
+                break :blk .vertical;
+            } else .horizontal;
 
             try w.writeAll("[");
-            try renderArray(indent + 1, .horizontal, node.first_child_id, nodes, code, w);
+            try renderArray(indent + 1, mode, node.first_child_id, nodes, code, w);
             try w.writeAll("]");
         },
         .array_comma => {
@@ -634,6 +682,40 @@ fn printIndent(indent: usize, w: anytype) !void {
     for (0..indent) |_| try w.writeAll("    ");
 }
 
+fn hasCommentSiblings(idx: u32, nodes: []const Node) bool {
+    var current_idx = idx;
+    while (current_idx != 0) {
+        const node = nodes[current_idx];
+        if (node.tag == .comment) return true;
+        current_idx = node.next_id;
+    }
+    return false;
+}
+
+fn printComments(
+    indent: usize,
+    node: Node,
+    nodes: []const Node,
+    code: [:0]const u8,
+    w: anytype,
+) !?Node {
+    std.debug.assert(node.tag == .comment);
+
+    var comment = node;
+    while (comment.tag == .comment) {
+        try printIndent(indent, w);
+        try w.writeAll(comment.loc.src(code));
+        try w.writeAll("\n");
+        if (comment.next_id != 0) {
+            comment = nodes[comment.next_id];
+        } else {
+            return null;
+        }
+    }
+
+    return comment;
+}
+
 fn renderArray(
     indent: usize,
     mode: RenderMode,
@@ -642,8 +724,18 @@ fn renderArray(
     code: [:0]const u8,
     w: anytype,
 ) !void {
+    var seen_values = false;
     var maybe_value: ?Node = nodes[idx];
     while (maybe_value) |value| {
+        if (value.tag == .comment) {
+            if (seen_values) {
+                try printIndent(indent, w);
+                try w.writeAll("\n");
+            }
+            maybe_value = try printComments(indent, value, nodes, code, w);
+            continue;
+        }
+        seen_values = true;
         if (mode == .vertical) {
             try printIndent(indent, w);
         }
@@ -676,8 +768,19 @@ fn renderFields(
     code: [:0]const u8,
     w: anytype,
 ) !void {
+    var seen_fields = false;
     var maybe_field: ?Node = nodes[idx];
     while (maybe_field) |field| {
+        if (field.tag == .comment) {
+            if (seen_fields) {
+                try printIndent(indent, w);
+                try w.writeAll("\n");
+            }
+            maybe_field = try printComments(indent, field, nodes, code, w);
+            continue;
+        }
+        seen_fields = true;
+
         const field_name = nodes[field.first_child_id].loc.src(code);
         if (mode == .vertical) {
             try printIndent(indent, w);
@@ -711,7 +814,7 @@ test "basics" {
 
     var diag: Diagnostic = .{};
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try parse(std.testing.allocator, case, null, &diag);
+    const ast = try Ast.init(std.testing.allocator, case, null, true, &diag);
     defer ast.deinit();
     try std.testing.expectFmt(case, "{}", .{ast});
 }
@@ -729,7 +832,7 @@ test "vertical" {
 
     var diag: Diagnostic = .{};
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try parse(std.testing.allocator, case, null, &diag);
+    const ast = try Ast.init(std.testing.allocator, case, null, true, &diag);
     defer ast.deinit();
     try std.testing.expectFmt(case, "{}", .{ast});
 }
@@ -750,7 +853,7 @@ test "complex" {
 
     var diag: Diagnostic = .{};
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try parse(std.testing.allocator, case, null, &diag);
+    const ast = try Ast.init(std.testing.allocator, case, null, true, &diag);
     defer ast.deinit();
     try std.testing.expectFmt(case, "{}", .{ast});
 }

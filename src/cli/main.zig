@@ -49,15 +49,15 @@ fn fatalHelp() noreturn {
         \\Usage: ziggy COMMAND [OPTIONS]
         \\
         \\Commands: 
-        \\  fmt          Formats Ziggy files      
-        \\  query, q     Queries Ziggy files 
-        \\  check        Checks Ziggy files against a Ziggy schema 
-        \\  convert      Converts JSON, YAML, TOML files from and to Ziggy
-        \\  lsp          Starts the Ziggy LSP
-        \\  help         Shows this menu and exits
+        \\  fmt          Format Ziggy files      
+        \\  query, q     Query Ziggy files 
+        \\  check        Check Ziggy files against a Ziggy schema 
+        \\  convert      Convert between JSON, YAML, TOML files and Ziggy
+        \\  lsp          Start the Ziggy LSP
+        \\  help         Show this menu and exit
         \\
         \\General Options:
-        \\ --help, -h    Print command specific usage
+        \\  --help, -h   Print command specific usage
         \\
         \\
     , .{});

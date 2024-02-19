@@ -8,7 +8,30 @@
       "required": false,
       "types": [
         {
+          "type": "array_elem",
+          "named": true
+        },
+        {
+          "type": "comment",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "array_elem",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
           "type": "array",
+          "named": true
+        },
+        {
+          "type": "comment",
           "named": true
         },
         {
@@ -47,6 +70,11 @@
     }
   },
   {
+    "type": "comment",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "document",
     "named": true,
     "fields": {},
@@ -83,6 +111,10 @@
           "named": true
         },
         {
+          "type": "tag_string",
+          "named": true
+        },
+        {
           "type": "top_level_struct",
           "named": true
         },
@@ -101,6 +133,10 @@
       "multiple": true,
       "required": false,
       "types": [
+        {
+          "type": "comment",
+          "named": true
+        },
         {
           "type": "map_field",
           "named": true
@@ -164,6 +200,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "comment",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -215,6 +261,10 @@
       "multiple": true,
       "required": false,
       "types": [
+        {
+          "type": "comment",
+          "named": true
+        },
         {
           "type": "struct_field",
           "named": true
@@ -278,6 +328,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "comment",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -319,6 +379,10 @@
       "multiple": true,
       "required": true,
       "types": [
+        {
+          "type": "comment",
+          "named": true
+        },
         {
           "type": "struct_field",
           "named": true
@@ -365,10 +429,6 @@
   {
     "type": "]",
     "named": false
-  },
-  {
-    "type": "comment",
-    "named": true
   },
   {
     "type": "escape_sequence",
