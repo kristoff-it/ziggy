@@ -5,6 +5,19 @@
 /// <reference types="tree-sitter-cli/dsl"/>
 //@ts-check
 
+bin = /[01]/;
+bin_ = seq(optional("_"), bin);
+oct = /[0-7]/;
+oct_ = seq(optional("_"), oct);
+hex = /[0-9a-fA-F]/;
+hex_ = seq(optional("_"), hex);
+dec = /[0-9]/;
+dec_ = seq(optional("_"), dec);
+bin_int = seq(bin, repeat(bin_));
+oct_int = seq(oct, repeat(oct_));
+dec_int = seq(dec, repeat(dec_));
+hex_int = seq(hex, repeat(hex_));
+
 module.exports = grammar({
   name: 'ziggy',
 
@@ -22,7 +35,8 @@ module.exports = grammar({
       $.array,
       $.tag_string,
       $.string,
-      $.number,
+      $.float,
+      $.integer,
       $.true,
       $.false,
       $.null,
@@ -102,27 +116,22 @@ module.exports = grammar({
       return token(seq(identifier_start, repeat(identifier_part)));
     },
 
-    
-    number: _ => {
-      const decimal_digits = /\d+/;
-      const signed_integer = seq(optional('-'), decimal_digits);
-      const exponent_part = seq(choice('e', 'E'), signed_integer);
-
-      const decimal_integer_literal = seq(
-        optional('-'),
-        choice(
-          '0',
-          seq(/[1-9]/, optional(decimal_digits)),
+    float: (_) => choice(
+        token(
+            seq(/[-]?/,"0x", hex_int, ".", hex_int, optional(seq(/[pP][-+]?/, dec_int)))
         ),
-      );
+        token(seq(/[-]?/,dec_int, ".", dec_int, optional(seq(/[eE][-+]?/, dec_int)))),
+        token(seq(/[-]?/,"0x", hex_int, /[pP][-+]?/, dec_int)),
+        token(seq(/[-]?/,dec_int, /[eE][-+]?/, dec_int))
+    ),
 
-      const decimal_literal = choice(
-        seq(decimal_integer_literal, '.', optional(decimal_digits), optional(exponent_part)),
-        seq(decimal_integer_literal, optional(exponent_part)),
-      );
-
-      return token(decimal_literal);
-    },
+    integer: (_) => choice(
+        token(seq(/[-]?/,"0b", bin_int)),
+        token(seq(/[-]?/,"0o", oct_int)),
+        token(seq(/[-]?/,"0x", hex_int)),
+        token(seq(/[-]?/,dec_int))
+    ),
+    
 
     true: _ => 'true',
 

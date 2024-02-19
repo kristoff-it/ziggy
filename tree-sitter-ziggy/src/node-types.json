@@ -39,15 +39,19 @@
           "named": true
         },
         {
+          "type": "float",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
           "type": "map",
           "named": true
         },
         {
           "type": "null",
-          "named": true
-        },
-        {
-          "type": "number",
           "named": true
         },
         {
@@ -91,15 +95,19 @@
           "named": true
         },
         {
+          "type": "float",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
           "type": "map",
           "named": true
         },
         {
           "type": "null",
-          "named": true
-        },
-        {
-          "type": "number",
           "named": true
         },
         {
@@ -127,6 +135,16 @@
   },
   {
     "type": "escape_sequence",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "float",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "integer",
     "named": true,
     "fields": {}
   },
@@ -181,15 +199,19 @@
             "named": true
           },
           {
+            "type": "float",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
             "type": "map",
             "named": true
           },
           {
             "type": "null",
-            "named": true
-          },
-          {
-            "type": "number",
             "named": true
           },
           {
@@ -313,15 +335,19 @@
             "named": true
           },
           {
+            "type": "float",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
             "type": "map",
             "named": true
           },
           {
             "type": "null",
-            "named": true
-          },
-          {
-            "type": "number",
             "named": true
           },
           {
@@ -467,10 +493,6 @@
   },
   {
     "type": "null",
-    "named": true
-  },
-  {
-    "type": "number",
     "named": true
   },
   {
