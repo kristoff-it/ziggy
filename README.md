@@ -65,7 +65,7 @@ Ziggy values can be of the following types:
 - `struct`
 - `map`
 - `array`
-- `bytes`
+- `string`
 - `number`
 - `bool` (`true`, `false`)
 - `null`
@@ -240,6 +240,19 @@ data types.
 
 To enforce the presence of struct names when it matters, see below the section
 about Ziggy Schemas.
+
+#### Multiline String Literals
+Ziggy supports multiline string literals using the same notation used by Zig.
+
+```ziggy
+.title = "Lorem Ipsum",
+.description = 
+    \\Lorem Ipsum has been the industry's standard 
+    \\dummy text ever since the 1500s, when an 
+    \\unknown printer took a galley of type and 
+    \\scrambled it to make a type specimen book. 
+,
+```
 
 ### Tagged String Literals
 Ziggy allows you to add a tag to string literals in order to mark them as 

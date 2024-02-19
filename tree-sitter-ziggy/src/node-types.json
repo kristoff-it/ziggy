@@ -126,6 +126,16 @@
     }
   },
   {
+    "type": "escape_sequence",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "line_string",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "map",
     "named": true,
     "fields": {},
@@ -213,22 +223,7 @@
     }
   },
   {
-    "type": "string",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": false,
-      "types": [
-        {
-          "type": "string_content",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "string_content",
+    "type": "quoted_string",
     "named": true,
     "fields": {},
     "children": {
@@ -237,6 +232,25 @@
       "types": [
         {
           "type": "escape_sequence",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "string",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "line_string",
+          "named": true
+        },
+        {
+          "type": "quoted_string",
           "named": true
         }
       ]
@@ -427,12 +441,16 @@
     "named": false
   },
   {
-    "type": "]",
+    "type": "\\",
     "named": false
   },
   {
-    "type": "escape_sequence",
-    "named": true
+    "type": "\\\\",
+    "named": false
+  },
+  {
+    "type": "]",
+    "named": false
   },
   {
     "type": "false",

@@ -15,6 +15,8 @@
 
 (tag) @function
 
+(comment) @comment.line
+
 (string) @string
 
 (escape_sequence) @constant.character.escape

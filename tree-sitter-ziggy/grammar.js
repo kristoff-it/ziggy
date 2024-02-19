@@ -71,20 +71,28 @@ module.exports = grammar({
 
     tag: _ => repeat1(/[a-zA-Z_]/),
 
+ 
     string: $ => choice(
-      seq('"', '"'),
-      seq('"', $.string_content, '"'),
+      $.quoted_string,
+      repeat1($.line_string),
+    ),
+    
+    line_string: $ => seq("\\\\", /[^\n]*/),
+          
+    quoted_string: $ => seq(
+      '"',
+      repeat(choice(
+        token.immediate(prec(1, /[^"\\]+/)),
+        $.escape_sequence,
+      )),
+      '"',
     ),
 
-    string_content: $ => repeat1(choice(
-      token.immediate(prec(1, /[^\\"\n]+/)),
-      $.escape_sequence,
-    )),
-
-    escape_sequence: _ => token.immediate(seq(
-      '\\',
-      /(\"|\\|\/|b|f|n|r|t|u)/,
-    )),
+            
+    escape_sequence: _ => seq(
+      "\\",
+      choice(/x[0-9a-fA-f]{2}/, /u\{[0-9a-fA-F]+\}/, /[nr\\t'"]/)
+    ),
 
     identifier: (_) => {
       const identifier_start = /[a-zA-Z_]/;

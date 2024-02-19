@@ -28,6 +28,8 @@ pub const Node = struct {
         array,
         array_comma,
         string,
+        multiline_string,
+        line_string,
         number,
         bool,
         null,
@@ -110,7 +112,7 @@ pub fn init(
     var token = try ast.next();
     while (true) {
         switch (node.tag) {
-            .comment => unreachable,
+            .comment, .multiline_string, .line_string => unreachable,
             .root => switch (token.tag) {
                 .dot, .comment => {
                     node = try node.addChild(&ast.nodes, .braceless_struct);
@@ -487,6 +489,18 @@ pub fn init(
                     node = node.parent(&ast.nodes);
                     token = try ast.next();
                 },
+                .line_string => {
+                    node.tag = .multiline_string;
+                    node.loc.start = token.loc.start;
+                    while (token.tag == .line_string) {
+                        node = try node.addChild(&ast.nodes, .line_string);
+                        node.loc = token.loc;
+                        node = node.parent(&ast.nodes);
+                        token = try ast.next();
+                    }
+
+                    node = node.parent(&ast.nodes);
+                },
                 .number => {
                     node.tag = .number;
                     node.loc = token.loc;
@@ -672,6 +686,31 @@ fn renderValue(
             try w.writeAll(")");
         },
 
+        .multiline_string => {
+            var idx = node.first_child_id;
+            std.debug.assert(idx != 0);
+            const parent = nodes[node.parent_id];
+            const in_array = parent.tag != .struct_field and
+                parent.tag != .map_field;
+            if (!in_array) {
+                try w.writeAll("\n");
+            }
+
+            var array_first_loop = in_array;
+            while (idx != 0) {
+                if (array_first_loop) {
+                    try printIndent(1, w);
+                } else {
+                    try printIndent(indent + 1, w);
+                }
+                array_first_loop = false;
+                const line = nodes[idx];
+                try w.print("{s}\n", .{line.loc.src(code)});
+
+                idx = line.next_id;
+            }
+            try printIndent(indent, w);
+        },
         else => {
             try w.print("{s}", .{node.loc.src(code)});
         },
