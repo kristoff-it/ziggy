@@ -18,8 +18,8 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
 
     const code = try buf.toOwnedSliceSentinel(0);
 
-    var diag: Diagnostic = .{};
-    const ast = Ast.init(gpa, code, null, true, &diag) catch {
+    var diag: Diagnostic = .{ .path = null };
+    const ast = Ast.init(gpa, code, true, &diag) catch {
         std.debug.print("{}", .{diag});
         std.process.exit(1);
     };

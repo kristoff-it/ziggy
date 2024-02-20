@@ -154,9 +154,9 @@ const Handler = struct {
         var buf = std.ArrayList(u8).init(self.gpa);
         defer buf.deinit();
 
-        var diag: ziggy.Diagnostic = .{};
+        var diag: ziggy.Diagnostic = .{ .path = null };
 
-        const ast = ziggy.Ast.init(self.gpa, new_text, null, true, &diag) catch undefined;
+        const ast = ziggy.Ast.init(self.gpa, new_text, true, &diag) catch undefined;
         defer if (std.meta.activeTag(diag.err) == .none) ast.deinit();
 
         if (std.meta.activeTag(diag.err) != .none) {
