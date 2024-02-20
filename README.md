@@ -107,7 +107,7 @@ where instead it's up to the user what to put as key values (eg `dependencies`,
   "name": "foo",
   "dependencies": {
     "react": "next",
-    "leftpad": "next",
+    "leftpad": "1.0.0",
   },
   "scripts": {
     "setup": "./scripts/setup.sh",
@@ -118,11 +118,10 @@ where instead it's up to the user what to put as key values (eg `dependencies`,
 This is how it would look like in Ziggy instead:
 ```ziggy
 {
-  .private = true,
-  .name = "bun",
+  .name = "foo",
   .dependencies = {
     "react": "next",
-    "leftpad": "next",
+    "leftpad": "1.0.0",
   },
   .scripts = {
     "setup": "./scripts/setup.sh",
@@ -140,7 +139,7 @@ braces and reclaim one level of indentation.
 This makes Ziggy a good language for **configuration files** and markdown frontmatter.
 
 #### Frontmatter example
-With outer curlies:
+With outer curlies (worse):
 ```ziggy
 ---
 {
@@ -157,10 +156,10 @@ With outer curlies:
 Markdown content.
 ```
 
-Without: 
+Without outer curlies (better): 
 ```ziggy
 ---
-.title = "My Post #1",
+.title = "My Post",
 .date = "2024-02-18T10:00:00",
 .draft = true,
 .tags = ["tag1", "tag2"],
@@ -244,7 +243,26 @@ Here's the same example as above, but in Ziggy:
 A Ziggy parser will be able to use struct names to select the correct type to 
 use for deserialization without the need to rely on shape-matching.
 
-This is not a silver-bullet by itself, though. 
+Here's how the parsing code looks like in Zig:
+```zig
+const Project = struct {
+    name: []const u8,
+    dependencies: Map(Dependency),
+    pub const Dependency = union(enum) {
+        Remote: struct {
+            url: []const u8,
+            hash: []const u8,
+        },
+        Local: struct {
+            path: []const u8,
+        },
+    };
+};
+
+var result = try Parser.parseLeaky(Project, arena, data, .{});
+```
+
+Named structs are not a silver-bullet by itself, though. 
 
 Users are not *required* to use struct names, so somebody could still write a Ziggy
 file with a hard-to-recognize union, but the hope is by making it a first-class
@@ -255,7 +273,7 @@ To enforce the presence of struct names when it matters, see below the section
 about Ziggy Schemas.
 
 
-Note: struct names must be capitalized (ie start with an uppercase letter).
+Note: at the moment struct names must be capitalized (ie start with an uppercase letter), this might change in the future.
 
 #### Multiline String Literals
 Ziggy supports multiline string literals using the same notation used by Zig.
@@ -282,20 +300,18 @@ static site:
 ---
 title: "Tickets"
 date: "2020-10-01T00:00:00"
-early_bird_end: "2020-11-01T00:00:00"
 sales_end: "2020-12-01T00:00:00"
 draft: false
 ---
 (...)
 ```
 When trying to access the frontmatter data from a Hugo template, you will find
-that `.Data.date` is a Go `Time` instance, but `.Data.early_bird_end` and 
-`.Data.sales_end` will be interpreted a strings.
+that `.Data.date` is a Go `Time` instance, .Data.sales_end` will be interpreted 
+as a string.
 
 This happens because `date` is part of the Hugo frontmatter schema and so it is
-parsed as a `Time` automatically, while in the case of `early_bird_end` and 
-`sales_end`, Hugo has no way of knowing that the provided string was intended to
-be a date.
+parsed as a `Time` automatically, while in the case of `sales_end`, Hugo has no 
+way of knowing that the provided string was intended to be a date.
 
 The end result is that you will have to parse a date out of those strings in 
 your templates (potentially multiple times) and if an error is encountered, 
@@ -326,7 +342,8 @@ Improvements in the Ziggy version:
 - Clear tagging of the `date` field as having a required structure.
 - Ability to define date fields even when not part of the fixed schema.
 
-Note: tag names must contain only lowercase letters, underscores and numbers.
+Note: at the moment tag names must contain only lowercase letters, underscores and numbers, 
+this might change in the future.
 
 ### Schema Language
 **Note: this part is still vaporware**
