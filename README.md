@@ -245,6 +245,9 @@ use for deserialization without the need to rely on shape-matching.
 
 Here's how the parsing code looks like in Zig:
 ```zig
+const ziggy = @import("ziggy");
+const data = @embedFile("data.ziggy");
+
 const Project = struct {
     name: []const u8,
     dependencies: Map(Dependency),
@@ -259,7 +262,10 @@ const Project = struct {
     };
 };
 
-var result = try Parser.parseLeaky(Project, arena, data, .{});
+pub fn main() !void {
+    const gpa = std.testing.allocator; // TODO: change to an arena
+    var result = try ziggy.parseLeaky(Project, gpa, data, .{});
+}
 ```
 
 Named structs are not a silver-bullet by itself, though. 
