@@ -58,6 +58,11 @@ want something more lean than Tree Sitter.
 The other is a type-driven parser that allows parsing a Ziggy file direcly
 into a destination Type avoiding any unnecessary allocation.
 
+Development status:
+- [x] AST parser
+- [x] Type-driven Zig parser
+- [ ] Serializer (https://github.com/kristoff-it/ziggy/issues/6)
+- [ ] AST parser as a C library
 
 ### Value Types
 Ziggy values can be of the following types:
@@ -72,8 +77,9 @@ Ziggy values can be of the following types:
 
 
 ### Structs vs Maps
-Visual distinction between key-value container where the keys are expected 
-to follow a schema vs when the user should be free do define them dynamically.
+Visual distinction between key-value container where **the application** controls
+key names (ie key names must follow a schema) vs where **the user** is in control
+of key names.
 
 Struct: 
 ```
@@ -90,17 +96,18 @@ Map:
   "bar": true, 
 }
 ```
+As an example let's look at [NPM's `package.json`](https://docs.npmjs.com/cli/v10/configuring-npm/package-json). 
 
-Together they help users understand at a glance when they're expected to control
-key names and when they're not.
+A `package.json` file has a top-level object with a fixed schema and some keys
+where instead it's up to the user what to put as key values (eg `dependencies`,
+`scripts`).
 
-Contrast `package.json` and an hypotetical ziggy version:
 ```json
 {
-  "private": true,
   "name": "foo",
   "dependencies": {
     "react": "next",
+    "leftpad": "next",
   },
   "scripts": {
     "setup": "./scripts/setup.sh",
@@ -108,12 +115,14 @@ Contrast `package.json` and an hypotetical ziggy version:
 }  
 ```
 
+This is how it would look like in Ziggy instead:
 ```ziggy
 {
   .private = true,
   .name = "bun",
   .dependencies = {
     "react": "next",
+    "leftpad": "next",
   },
   .scripts = {
     "setup": "./scripts/setup.sh",
@@ -121,18 +130,21 @@ Contrast `package.json` and an hypotetical ziggy version:
 }  
 ```
 
+As you can see it's immediately clear at a glance what the user is expected to
+do at each level.
+
 ### Braceless Top-Level Struct
 If the top-level element of your document is a struct, you can omit its curly 
 braces and reclaim one level of indentation.
 
-This makes Ziggy a good language for configuration files and markdown frontmatter.
+This makes Ziggy a good language for **configuration files** and markdown frontmatter.
 
 #### Frontmatter example
-With outer curlies
+With outer curlies:
 ```ziggy
 ---
 {
-    .title = "My Post #1",
+    .title = "My Post",
     .date = "2024-02-18T10:00:00",
     .draft = true,
     .tags = ["tag1", "tag2"],
@@ -159,6 +171,7 @@ Without:
 ---
 Markdown content.
 ```
+
 ### Tagged Unions Of Structs
 JSON and similar formats don't help you design your data types in a user-frieldy
 manner. 

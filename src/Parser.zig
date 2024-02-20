@@ -1,17 +1,16 @@
 const Parser = @This();
-const Diagnostic = @import("Diagnostic.zig");
-const Tokenizer = @import("Tokenizer.zig");
-const Token = Tokenizer.Token;
 
 const std = @import("std");
 const assert = std.debug.assert;
+const Diagnostic = @import("Diagnostic.zig");
+const Tokenizer = @import("Tokenizer.zig");
+const Token = Tokenizer.Token;
+const Value = @import("Value.zig");
 
 gpa: std.mem.Allocator,
 code: [:0]const u8,
 opts: ParseOptions,
 tokenizer: Tokenizer,
-parents: std.ArrayListUnmanaged(Container) = .{},
-container: Container = .start,
 state: State = .start,
 
 pub const ParseOptions = struct {
@@ -24,7 +23,7 @@ pub const ParseOptions = struct {
     };
 };
 
-pub const ParseError = error{
+pub const Error = error{
     OutOfMemory,
     UnexpectedToken,
     MissingField,
@@ -46,29 +45,22 @@ const State = enum {
     field_dot,
 };
 
-pub fn parse(
+/// Use an arena allocator to avoid leaking allocations when complex types
+/// are involved.
+pub fn parseLeaky(
     comptime T: type,
     gpa: std.mem.Allocator,
     code: [:0]const u8,
     opts: ParseOptions,
-) ParseError!T {
+) Error!T {
     var parser: Parser = .{
         .gpa = gpa,
         .code = code,
         .opts = opts,
         .tokenizer = .{ .want_comments = false },
     };
-    var result: T = undefined;
 
-    const info = @typeInfo(T);
-
-    switch (info) {
-        .Struct => {
-            try parser.parseStruct(T, &result, parser.next());
-        },
-
-        else => try parser.parseValue(T, &result, parser.next()),
-    }
+    const result = try parser.parseValue(T, parser.next());
 
     const extra = parser.next();
     if (extra.tag != .eof) {
@@ -87,80 +79,133 @@ pub fn parse(
     return result;
 }
 
-fn parseValue(
+/// Used when implementng `ziggy.parse()` for a type
+pub fn parseValue(
     self: *Parser,
     comptime T: type,
-    val: *T,
     first_tok: Token,
-) ParseError!void {
+) Error!T {
     const info = @typeInfo(T);
 
     switch (info) {
         .Pointer => |ptr| switch (ptr.size) {
             .Slice => switch (ptr.child) {
-                u8 => try self.parseBytes(T, val, first_tok),
-                else => try self.parseArray(T, val, first_tok),
+                u8 => return self.parseBytes(T, first_tok),
+                else => return self.parseArray(T, first_tok),
             },
             else => @compileError("TODO"),
         },
-        .Bool => try self.parseBool(val, first_tok),
-        .Int => try self.parseInt(T, val, first_tok),
-        .Float => try self.parseFloat(T, val, first_tok),
+        .Bool => return self.parseBool(first_tok),
+        .Int => return self.parseInt(T, first_tok),
+        .Float => return self.parseFloat(T, first_tok),
         .Struct => {
-            try self.must(first_tok.lb);
-            return self.parseStruct(T, val, first_tok);
+            if (@hasDecl(T, "ziggy") and @hasDecl(T.ziggy, "parse")) {
+                return T.ziggy.parse(self, first_tok);
+            }
+            return self.parseStruct(T, first_tok);
+        },
+        .Union => {
+            if (@hasDecl(T, "ziggy") and @hasDecl(T.ziggy, "parse")) {
+                return T.ziggy.parse(self, first_tok);
+            }
+            return self.parseUnion(T, first_tok);
         },
         .Optional => |opt| {
             if (first_tok.tag == .null) {
-                const src = first_tok.loc.src(self.code);
-                if (std.mem.eql(u8, src, Token.Tag.null.lexeme())) {
-                    val.* = null;
-                    return;
-                }
+                return null;
             } else {
-                var temp: opt.child = undefined;
-                try self.parseValue(opt.child, &temp, first_tok);
-                val.* = temp;
+                // this *has* to be a return try
+                return try self.parseValue(opt.child, first_tok);
             }
         },
         else => @compileError("TODO"),
     }
 }
-fn parseStruct(
+
+fn parseUnion(
     self: *Parser,
     comptime T: type,
-    val: *T,
     first_tok: Token,
-) ParseError!void {
+) Error!T {
     // When a top-level struct omits curlies, the first
     // token will be a dot. Is such case we don't want
     // to expect a closing right bracket.
-    const need_closing_rb = first_tok.tag == .lb;
+    const info = @typeInfo(T).Union;
+    comptime {
+        if (info.tag_type == null) {
+            @compileError("union '" ++ @typeName(T) ++ "' must be tagged");
+        }
+
+        for (info.fields) |f| {
+            switch (@typeInfo(f.type)) {
+                .Struct => {},
+                else => {
+                    @compileError("all the cases of union '" ++ @typeName(T) ++ "' must be of struct type");
+                },
+            }
+        }
+    }
+
+    // TODO: check identifier for conformance
+    try self.must(first_tok, .identifier);
+    const case_name = first_tok.loc.src(self.code);
+
+    inline for (info.fields) |f| {
+        if (std.mem.eql(u8, f.name, case_name)) {
+            return @unionInit(
+                T,
+                f.name,
+                try self.parseStruct(f.type, self.next()),
+            );
+        }
+    }
+
+    if (self.opts.diagnostic) |d| {
+        d.tok = first_tok;
+        d.err = .unknown_field;
+    }
+    return error.UnknownField;
+}
+fn parseStruct(
+    self: *Parser,
+    comptime T: type,
+    first_tok: Token,
+) Error!T {
+    // When a top-level struct omits curlies, the first
+    // token will be a dot. Is such case we don't want
+    // to expect a closing right bracket.
+    const need_closing_rb = first_tok.tag != .dot;
     const info = @typeInfo(T).Struct;
 
     var tok = first_tok;
-    if (first_tok.tag == .lb) {
+    if (tok.tag == .identifier) {
+        // TODO: check identifier for conformance
+        tok = self.next();
+    }
+    if (tok.tag == .lb) {
         tok = self.next();
     }
 
     // TODO: optimization: turn this into an array of bools when
     //       diagnocstics are disabled
     var fields_seen = [_]?Token.Loc{null} ** info.fields.len;
+    var val: T = undefined;
     while (true) {
         if (need_closing_rb) {
             try self.mustAny(tok, &.{ .dot, .rb });
         } else {
-            try self.mustAny(tok, &.{ .dot, .rb, .eof });
+            try self.mustAny(tok, &.{ .dot, .eof });
         }
 
         if (tok.tag != .dot) {
-            return self.finalizeStruct(
+            try self.finalizeStruct(
                 T,
                 info,
-                val,
+                &val,
                 &fields_seen,
                 tok,
             );
+            return val;
         }
 
         // we found the start of a field
@@ -184,26 +229,26 @@ fn parseStruct(
                     return error.DuplicateField;
                 }
                 fields_seen[idx] = ident.loc;
-                try self.parseValue(f.type, &@field(val, f.name), self.next());
+                @field(val, f.name) = try self.parseValue(f.type, self.next());
                 break;
             }
         } else {
             if (self.opts.diagnostic) |d| {
                 d.tok = ident;
-                d.err = .{
-                    .unknown_field = .{
-                        .name = field_name,
-                    },
-                };
+                d.err = .unknown_field;
             }
             return error.UnknownField;
         }
 
         tok = self.next();
-        switch (tok.tag) {
-            .comma => tok = self.next(),
-            .dot => try self.must(tok, .comma),
-            else => {},
+        if (tok.tag == .comma) {
+            tok = self.next();
+        } else {
+            if (need_closing_rb) {
+                try self.mustAny(tok, &.{ .comma, .rb });
+            } else {
+                try self.mustAny(tok, &.{ .comma, .rb, .eof });
+            }
         }
     }
 }
@@ -216,7 +261,7 @@ fn finalizeStruct(
     val: *T,
     fields_seen: []const ?Token.Loc,
     struct_end: Token,
-) ParseError!void {
+) Error!void {
     inline for (info.fields, 0..) |field, idx| {
         if (fields_seen[idx] == null) {
             if (field.default_value) |ptr| {
@@ -237,60 +282,74 @@ fn finalizeStruct(
     }
 }
 
-fn parseBool(self: *Parser, val: *bool, true_or_false: Token) !void {
+fn parseBool(self: *Parser, true_or_false: Token) !bool {
     try self.mustAny(true_or_false, &.{ .true, .false });
-    switch (true_or_false.tag) {
-        .true => val.* = true,
-        .false => val.* = false,
+    return switch (true_or_false.tag) {
+        .true => true,
+        .false => false,
+        else => unreachable,
+    };
+}
+
+fn parseInt(self: *Parser, comptime T: type, num: Token) !T {
+    assert(@typeInfo(T) == .Int);
+
+    try self.must(num, .integer);
+    return std.fmt.parseInt(T, num.loc.src(self.code), 10) catch {
+        if (self.opts.diagnostic) |d| {
+            d.tok = num;
+            d.err = .overflow;
+        }
+        return error.Syntax;
+    };
+}
+
+fn parseFloat(self: *Parser, comptime T: type, num: Token) !T {
+    assert(@typeInfo(T) == .Float);
+
+    try self.must(num, .float);
+    return std.fmt.parseFloat(T, num.loc.src(self.code)) catch {
+        if (self.opts.diagnostic) |d| {
+            d.tok = num;
+            d.err = .overflow;
+        }
+        return error.Syntax;
+    };
+}
+
+fn parseBytes(self: *Parser, comptime T: type, token: Token) !T {
+    try self.mustAny(token, &.{ .string, .at, .line_string });
+
+    switch (token.tag) {
+        .string => return token.loc.unescape(self.gpa, self.code),
+        .at => {
+            _ = try self.nextMust(.identifier);
+            // todo identifier validation
+            _ = try self.nextMust(.lp);
+            const str = try self.nextMust(.string);
+            _ = try self.nextMust(.rp);
+
+            return str.loc.unescape(self.gpa, self.code);
+        },
+        .line_string => {
+            var str = std.ArrayList(u8).init(self.gpa);
+            errdefer str.deinit();
+
+            var current = token;
+            while (token.tag == .line_string) {
+                try str.appendSlice(current.loc.src(self.code)[2..]);
+                current = self.next();
+                if (current.tag == .line_string) {
+                    try str.append('\n');
+                }
+            }
+            return str.toOwnedSlice();
+        },
         else => unreachable,
     }
 }
 
-fn parseInt(self: *Parser, comptime T: type, val: *T, num: Token) !void {
-    assert(@typeInfo(T) == .Int);
-
-    try self.must(num, .number);
-    val.* = std.fmt.parseInt(T, num.loc.src(self.code), 10) catch {
-        if (self.opts.diagnostic) |d| {
-            d.tok = num;
-            d.err = .invalid_token;
-        }
-        return error.Syntax;
-    };
-}
-
-fn parseFloat(self: *Parser, comptime T: type, val: *T, num: Token) !void {
-    assert(@typeInfo(T) == .Float);
-
-    try self.must(num, .number);
-    val.* = std.fmt.parseFloat(T, num.loc.src(self.code)) catch {
-        if (self.opts.diagnostic) |d| {
-            d.tok = num;
-            d.err = .invalid_token;
-        }
-        return error.Syntax;
-    };
-}
-
-fn parseBytes(self: *Parser, comptime T: type, val: *T, str_or_at: Token) !void {
-    try self.mustAny(str_or_at, &.{ .string, .at });
-
-    const str = switch (str_or_at.tag) {
-        .string => str_or_at,
-        .at => blk: {
-            _ = try self.nextMust(.identifier);
-            _ = try self.nextMust(.lp);
-            const str = try self.nextMust(.string);
-            _ = try self.nextMust(.rp);
-            break :blk str;
-        },
-        else => unreachable,
-    };
-
-    val.* = str.loc.unquote(self.code) orelse @panic("TODO");
-}
-
-fn parseArray(self: *Parser, comptime T: type, val: *T, lsb: Token) !void {
+fn parseArray(self: *Parser, comptime T: type, lsb: Token) !T {
     const info = @typeInfo(T).Pointer;
     assert(info.size == .Slice);
 
@@ -299,18 +358,22 @@ fn parseArray(self: *Parser, comptime T: type, val: *T, lsb: Token) !void {
     var tok = self.next();
     var list: std.ArrayListUnmanaged(info.child) = .{};
     errdefer list.deinit(self.gpa);
+
     while (true) {
         if (tok.tag == .rsb) {
-            val.* = try list.toOwnedSlice(self.gpa);
-            return;
+            return list.toOwnedSlice(self.gpa);
         }
 
-        const next_item = try list.addOne(self.gpa);
-        try self.parseValue(info.child, next_item, tok);
+        try list.append(
+            self.gpa,
+            try self.parseValue(info.child, tok),
+        );
 
-        tok = try self.nextMustAny(&.{ .comma, .rsb });
+        tok = self.next();
         if (tok.tag == .comma) {
             tok = self.next();
+        } else {
+            try self.must(tok, .rsb);
         }
     }
 }
@@ -372,7 +435,7 @@ test "struct - basics" {
         bar: bool,
     };
 
-    const c = try parse(Case, std.testing.allocator, case, .{});
+    const c = try parseLeaky(Case, std.testing.allocator, case, .{});
     try std.testing.expectEqualStrings("bar", c.foo);
     try std.testing.expectEqual(false, c.bar);
 }
@@ -390,7 +453,7 @@ test "struct - top level curlies" {
         bar: bool,
     };
 
-    const c = try parse(Case, std.testing.allocator, case, .{});
+    const c = try parseLeaky(Case, std.testing.allocator, case, .{});
     try std.testing.expectEqualStrings("bar", c.foo);
     try std.testing.expectEqual(false, c.bar);
 }
@@ -411,7 +474,7 @@ test "struct - missing bottom curly" {
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = parse(Case, std.testing.allocator, case, opts);
+    const result = parseLeaky(Case, std.testing.allocator, case, opts);
     try std.testing.expectError(error.UnexpectedToken, result);
     try std.testing.expectFmt(
         \\line: 3 col: 17
@@ -434,7 +497,7 @@ test "struct - syntax error" {
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = parse(Case, std.testing.allocator, case, opts);
+    const result = parseLeaky(Case, std.testing.allocator, case, opts);
     try std.testing.expectError(error.UnexpectedToken, result);
     try std.testing.expectFmt(
         \\line: 2 col: 8
@@ -457,11 +520,11 @@ test "struct - missing comma" {
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = parse(Case, std.testing.allocator, case, opts);
+    const result = parseLeaky(Case, std.testing.allocator, case, opts);
     try std.testing.expectError(error.UnexpectedToken, result);
     try std.testing.expectFmt(
         \\line: 2 col: 1
-        \\unexpected token: '.', expected: ','
+        \\unexpected token: '.', expected: ',' or '}' or 'EOF'
         \\
     , "{}", .{diag});
 }
@@ -477,7 +540,7 @@ test "struct - optional comma" {
         bar: bool,
     };
 
-    const c = try parse(Case, std.testing.allocator, case, .{});
+    const c = try parseLeaky(Case, std.testing.allocator, case, .{});
     try std.testing.expectEqualStrings("bar", c.foo);
     try std.testing.expectEqual(false, c.bar);
 }
@@ -495,7 +558,7 @@ test "struct - missing field" {
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = parse(Case, std.testing.allocator, case, opts);
+    const result = parseLeaky(Case, std.testing.allocator, case, opts);
     try std.testing.expectError(error.MissingField, result);
     try std.testing.expectFmt(
         \\line: 1 col: 13
@@ -519,7 +582,7 @@ test "struct - duplicate field" {
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = parse(Case, std.testing.allocator, case, opts);
+    const result = parseLeaky(Case, std.testing.allocator, case, opts);
     try std.testing.expectError(error.DuplicateField, result);
     try std.testing.expectFmt(
         \\line: 3 col: 2
@@ -543,7 +606,7 @@ test "struct - unknown field" {
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = parse(Case, std.testing.allocator, case, opts);
+    const result = parseLeaky(Case, std.testing.allocator, case, opts);
     try std.testing.expectError(error.UnknownField, result);
     try std.testing.expectFmt(
         \\line: 3 col: 2
@@ -562,7 +625,7 @@ test "string" {
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = try parse([]const u8, std.testing.allocator, case, opts);
+    const result = try parseLeaky([]const u8, std.testing.allocator, case, opts);
     try std.testing.expectEqualStrings("foo", result);
 }
 
@@ -576,7 +639,7 @@ test "custom string literal" {
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = try parse([]const u8, std.testing.allocator, case, opts);
+    const result = try parseLeaky([]const u8, std.testing.allocator, case, opts);
     try std.testing.expectEqualStrings("2020-07-06T00:00:00", result);
 }
 
@@ -590,7 +653,7 @@ test "int basics" {
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = try parse(usize, std.testing.allocator, case, opts);
+    const result = try parseLeaky(usize, std.testing.allocator, case, opts);
     try std.testing.expectEqual(1042, result);
 }
 
@@ -604,21 +667,21 @@ test "float basics" {
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = try parse(f64, std.testing.allocator, case, opts);
+    const result = try parseLeaky(f64, std.testing.allocator, case, opts);
     try std.testing.expectEqual(10.42, result);
 }
 
 test "array basics" {
     const case =
         \\
-        \\ [1, 2, 3] 
+        \\ [1, 2, 3]
         \\
     ;
 
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = try parse([]usize, std.testing.allocator, case, opts);
+    const result = try parseLeaky([]usize, std.testing.allocator, case, opts);
     defer std.testing.allocator.free(result);
 
     try std.testing.expectEqualSlices(usize, &.{ 1, 2, 3 }, result);
@@ -627,14 +690,14 @@ test "array basics" {
 test "array trailing comma" {
     const case =
         \\
-        \\ [1, 2, 3, ] 
+        \\ [1, 2, 3, ]
         \\
     ;
 
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = try parse([]usize, std.testing.allocator, case, opts);
+    const result = try parseLeaky([]usize, std.testing.allocator, case, opts);
     defer std.testing.allocator.free(result);
 
     try std.testing.expectEqualSlices(usize, &.{ 1, 2, 3 }, result);
@@ -652,7 +715,7 @@ test "comments are ignored" {
         bar: bool,
     };
 
-    const c = try parse(Case, std.testing.allocator, case, .{});
+    const c = try parseLeaky(Case, std.testing.allocator, case, .{});
     try std.testing.expectEqualStrings("bar", c.foo);
     try std.testing.expectEqual(false, c.bar);
 }
@@ -667,7 +730,7 @@ test "optional - string" {
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = try parse(?[]const u8, std.testing.allocator, case, opts);
+    const result = try parseLeaky(?[]const u8, std.testing.allocator, case, opts);
     try std.testing.expectEqualStrings("foo", result.?);
 }
 
@@ -681,6 +744,53 @@ test "optional - null" {
     var diag: Diagnostic = .{ .code = case, .path = null };
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
-    const result = try parse(?[]const u8, std.testing.allocator, case, opts);
+    const result = try parseLeaky(?[]const u8, std.testing.allocator, case, opts);
     try std.testing.expect(result == null);
+}
+
+test "tagged string" {
+    const case =
+        \\
+        \\ @tagname("foo")
+        \\
+    ;
+
+    var diag: Diagnostic = .{ .code = case, .path = null };
+    const opts: ParseOptions = .{ .diagnostic = &diag };
+
+    const result = try parseLeaky([]const u8, std.testing.allocator, case, opts);
+    try std.testing.expectEqualStrings("foo", result);
+}
+
+test "unions" {
+    const case =
+        \\.dep1 = Remote {
+        \\    .url = "https://github.com",
+        \\    .hash = @sha512("123..."),
+        \\},
+        \\.dep2 =  Local {
+        \\    .path = "../super"
+        \\},
+    ;
+
+    const Project = struct {
+        dep1: Dependency,
+        dep2: Dependency,
+        pub const Dependency = union(enum) {
+            Remote: struct {
+                url: []const u8,
+                hash: []const u8,
+            },
+            Local: struct {
+                path: []const u8,
+            },
+        };
+    };
+
+    const c = try parseLeaky(Project, std.testing.allocator, case, .{});
+    try std.testing.expect(c.dep1 == .Remote);
+    try std.testing.expectEqualStrings("https://github.com", c.dep1.Remote.url);
+    try std.testing.expectEqualStrings("123...", c.dep1.Remote.hash);
+    try std.testing.expect(c.dep2 == .Local);
+    try std.testing.expectEqualStrings("../super", c.dep2.Local.path);
 }

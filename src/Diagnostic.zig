@@ -4,11 +4,13 @@ const std = @import("std");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
 
-/// The data being parsed.
+/// The data being parsed, this field should not be set manually by users.
 code: [:0]const u8 = "",
+
 /// A path to the file, used to display diagnostics.
 /// If not present, error positions will be printed as "line: XX col: XX".
-path: ?[]const u8 = null,
+/// This field should be set as needed by users.
+path: ?[]const u8,
 
 tok: Token = .{
     .tag = .eof,
@@ -18,7 +20,7 @@ err: Error = .none,
 
 pub const Error = union(enum) {
     none,
-    out_of_memory,
+    overflow,
     eof: struct {
         expected: []const Token.Tag,
     },
@@ -35,9 +37,7 @@ pub const Error = union(enum) {
     missing_field: struct {
         name: []const u8,
     },
-    unknown_field: struct {
-        name: []const u8,
-    },
+    unknown_field,
 };
 
 pub fn debug(self: Diagnostic) void {
@@ -72,8 +72,13 @@ pub fn format(
 
     switch (self.err) {
         .none => {},
-        .out_of_memory => {
-            try out_stream.print("OutOfMemory\n", .{});
+        .overflow => {
+            try out_stream.print("overflow", .{});
+            if (!lsp) {
+                try out_stream.print(": '{s}'", .{
+                    self.tok.loc.src(self.code),
+                });
+            }
         },
         .invalid_token => {
             try out_stream.print("invalid token", .{});
@@ -170,17 +175,18 @@ pub fn format(
                 }
             }
         },
-        .unknown_field => |un| {
+        .unknown_field => {
+            const name = self.tok.loc.src(self.code);
             if (lsp) {
                 try out_stream.print(
                     "unknown field '{s}'",
-                    .{un.name},
+                    .{name},
                 );
             } else {
                 const selection = self.tok.loc.getSelection(self.code);
                 try out_stream.print(
                     "unknown field '{s}' found here:",
-                    .{un.name},
+                    .{name},
                 );
                 if (self.path) |p| {
                     try out_stream.print("\n{s}:{}:{}\n", .{

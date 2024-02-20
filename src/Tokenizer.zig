@@ -24,7 +24,8 @@ pub const Token = struct {
         identifier,
         string,
         line_string,
-        number,
+        integer,
+        float,
         null,
         true,
         false,
@@ -55,7 +56,8 @@ pub const Token = struct {
                 .tag_name => "(tag name)",
                 .string => "(string)",
                 .line_string => "(line string)",
-                .number => "(number)",
+                .integer => "(integer)",
+                .float => "(float)",
                 .value => "(value)",
                 .null => "null",
                 .true => "true",
@@ -256,7 +258,7 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
                 },
 
                 'a'...'z', 'A'...'Z', '_' => state = .identifier,
-                '-', '+', '0'...'9' => state = .number,
+                '-', '0'...'9' => state = .number,
                 '"', '\'' => state = .string,
                 '\\' => state = .line_string_start,
                 '/' => state = .comment_start,
@@ -284,10 +286,16 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
                 },
             },
             .number => switch (c) {
-                '0'...'9', '.', '_' => continue,
+                '0'...'9', '.', '_', '-', '+', 'e', 'E' => continue,
                 else => {
-                    res.tag = .number;
                     res.loc.end = self.idx;
+                    // TODO: implement this natively
+                    const check = std.zig.parseNumberLiteral(res.loc.src(code));
+                    res.tag = switch (check) {
+                        .failure => .invalid,
+                        .int, .big_int => .integer,
+                        .float => .float,
+                    };
                     break;
                 },
             },

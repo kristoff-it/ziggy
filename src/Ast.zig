@@ -30,7 +30,8 @@ pub const Node = struct {
         string,
         multiline_string,
         line_string,
-        number,
+        integer,
+        float,
         bool,
         null,
         tag,
@@ -88,7 +89,6 @@ pub fn deinit(self: Ast) void {
 pub fn init(
     gpa: std.mem.Allocator,
     code: [:0]const u8,
-    path: ?[]const u8,
     want_comments: bool,
     diag: ?*Diagnostic,
 ) !Ast {
@@ -102,7 +102,6 @@ pub fn init(
 
     if (ast.diag) |d| {
         d.code = code;
-        d.path = path;
     }
 
     const root_node = try ast.nodes.addOne();
@@ -535,8 +534,14 @@ pub fn init(
 
                     node = node.parent(&ast.nodes);
                 },
-                .number => {
-                    node.tag = .number;
+                .integer => {
+                    node.tag = .integer;
+                    node.loc = token.loc;
+                    node = node.parent(&ast.nodes);
+                    token = try ast.next();
+                },
+                .float => {
+                    node.tag = .float;
                     node.loc = token.loc;
                     node = node.parent(&ast.nodes);
                     token = try ast.next();
@@ -572,7 +577,8 @@ pub fn init(
             .tag,
             .identifier,
             .string,
-            .number,
+            .integer,
+            .float,
             .bool,
             .null,
             => unreachable,
@@ -891,9 +897,9 @@ test "basics" {
         \\
     ;
 
-    var diag: Diagnostic = .{};
+    var diag: Diagnostic = .{ .path = null };
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try Ast.init(std.testing.allocator, case, null, true, &diag);
+    const ast = try Ast.init(std.testing.allocator, case, true, &diag);
     defer ast.deinit();
     try std.testing.expectFmt(case, "{}", .{ast});
 }
@@ -909,9 +915,9 @@ test "vertical" {
         \\
     ;
 
-    var diag: Diagnostic = .{};
+    var diag: Diagnostic = .{ .path = null };
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try Ast.init(std.testing.allocator, case, null, true, &diag);
+    const ast = try Ast.init(std.testing.allocator, case, true, &diag);
     defer ast.deinit();
     try std.testing.expectFmt(case, "{}", .{ast});
 }
@@ -930,9 +936,9 @@ test "complex" {
         \\
     ;
 
-    var diag: Diagnostic = .{};
+    var diag: Diagnostic = .{ .path = null };
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try Ast.init(std.testing.allocator, case, null, true, &diag);
+    const ast = try Ast.init(std.testing.allocator, case, true, &diag);
     defer ast.deinit();
     try std.testing.expectFmt(case, "{}", .{ast});
 }
