@@ -1,14 +1,7 @@
-const Parser = @import("Parser.zig");
-
-pub const Value = @import("Value.zig");
-pub const Ast = @import("Ast.zig");
-pub const Diagnostic = @import("Diagnostic.zig");
-pub const parse = Parser.parse;
+pub const schema = @import("schema/schema.zig");
+pub usingnamespace @import("ziggy/ziggy.zig");
 
 test {
-    _ = @import("Tokenizer.zig");
-    _ = Parser;
-    _ = Diagnostic;
-    _ = Ast;
-    _ = Value;
+    _ = @import("schema/schema.zig");
+    _ = @import("ziggy/ziggy.zig");
 }

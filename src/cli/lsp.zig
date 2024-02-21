@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const ziggy = @import("ziggy");
+const schema = ziggy.schema;
 const lsp = @import("lsp");
 const types = lsp.types;
 const offsets = lsp.offsets;
@@ -12,7 +13,7 @@ const log = std.log.scoped(.ziggy_lsp);
 const ZiggyLsp = lsp.server.Server(Handler);
 
 pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
-    _ = args;
+    const schema_mode = args.len > 0 and std.mem.eql(u8, args[0], "--schema");
 
     log.debug("Ziggy LSP started!", .{});
 
@@ -23,7 +24,11 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
     transport.message_tracing = false;
 
     var server: ZiggyLsp = undefined;
-    var handler: Handler = .{ .gpa = gpa, .server = &server };
+    var handler: Handler = .{
+        .gpa = gpa,
+        .server = &server,
+        .schema = schema_mode,
+    };
     server = try ZiggyLsp.init(gpa, &transport, &handler);
 
     try server.loop();
@@ -32,6 +37,7 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
 const Handler = struct {
     gpa: std.mem.Allocator,
     server: *ZiggyLsp,
+    schema: bool,
     documents: std.StringHashMapUnmanaged([:0]u8) = .{},
 
     pub fn initialize(
@@ -154,30 +160,58 @@ const Handler = struct {
         var buf = std.ArrayList(u8).init(self.gpa);
         defer buf.deinit();
 
-        var diag: ziggy.Diagnostic = .{ .path = null };
+        if (self.schema) {
+            var diag: schema.Diagnostic = .{ .path = null };
 
-        const ast = ziggy.Ast.init(self.gpa, new_text, true, &diag) catch undefined;
-        defer if (std.meta.activeTag(diag.err) == .none) ast.deinit();
+            const ast = schema.Ast.init(self.gpa, new_text, &diag) catch undefined;
+            defer if (diag.err == .none) ast.deinit();
 
-        if (std.meta.activeTag(diag.err) != .none) {
-            try buf.writer().print("{lsp}", .{diag});
-            const range = diag.tok.loc.getSelection(new_text);
-            res.diagnostics = &.{
-                .{
-                    .range = .{
-                        .start = .{
-                            .line = @intCast(range.start.line - 1),
-                            .character = @intCast(range.start.col - 1),
+            if (diag.err != .none) {
+                try buf.writer().print("{lsp}", .{diag});
+                const range = diag.tok.loc.getSelection(new_text);
+                res.diagnostics = &.{
+                    .{
+                        .range = .{
+                            .start = .{
+                                .line = @intCast(range.start.line - 1),
+                                .character = @intCast(range.start.col - 1),
+                            },
+                            .end = .{
+                                .line = @intCast(range.end.line - 1),
+                                .character = @intCast(range.end.col - 1),
+                            },
                         },
-                        .end = .{
-                            .line = @intCast(range.end.line - 1),
-                            .character = @intCast(range.end.col - 1),
-                        },
+                        .severity = .Error,
+                        .message = buf.items,
                     },
-                    .severity = .Error,
-                    .message = buf.items,
-                },
-            };
+                };
+            }
+        } else {
+            var diag: ziggy.Diagnostic = .{ .path = null };
+
+            const ast = ziggy.Ast.init(self.gpa, new_text, true, &diag) catch undefined;
+            defer if (std.meta.activeTag(diag.err) == .none) ast.deinit();
+
+            if (std.meta.activeTag(diag.err) != .none) {
+                try buf.writer().print("{lsp}", .{diag});
+                const range = diag.tok.loc.getSelection(new_text);
+                res.diagnostics = &.{
+                    .{
+                        .range = .{
+                            .start = .{
+                                .line = @intCast(range.start.line - 1),
+                                .character = @intCast(range.start.col - 1),
+                            },
+                            .end = .{
+                                .line = @intCast(range.end.line - 1),
+                                .character = @intCast(range.end.col - 1),
+                            },
+                        },
+                        .severity = .Error,
+                        .message = buf.items,
+                    },
+                };
+            }
         }
 
         const msg = try self.server.sendToClientNotification(

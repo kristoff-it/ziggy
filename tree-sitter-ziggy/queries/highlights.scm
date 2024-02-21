@@ -15,7 +15,7 @@
   key: (_) @keyword)
   
 (struct
-  name: (_) @keyword)
+  name: (_) @type)
 
 (tag) @function
 

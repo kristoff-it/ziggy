@@ -351,27 +351,30 @@ Improvements in the Ziggy version:
 Note: at the moment tag names must contain only lowercase letters, underscores and numbers, 
 this might change in the future.
 
-### Schema Language
-**Note: this part is still vaporware**
-
-Ziggy schemas should help you autogenerate type definitions across different 
+### Ziggy Schemas 
+Ziggy Schemas help you autogenerate type definitions across different 
 programming languages and validate Ziggy files for schema adherence.
 
-```ziggy-schema
+Additionally, Ziggy Schemas can be used in combination with `ziggy convert`
+to create high-quality Ziggy files from JSON / YAML / TOML.
+
+```zs
+root = Project
+
 struct Project {
     name: bytes,
     version: bytes,
     dependencies: map[Remote | Local],
-
-    struct Remote {
-       url: bytes,
-       hash: bytes,   
-    }
-
-    struct Local {
-      path: bytes,
-    } 
 }
+
+struct Remote {
+   url: bytes,
+   hash: bytes,   
+}
+
+struct Local {
+  path: bytes,
+} 
 ```
 Example that adheres to the schema:
 ```ziggy
@@ -388,6 +391,15 @@ Example that adheres to the schema:
 },
 .paths = ["."],
 ```
+
+Development status:
+- [x] Tree Sitter parser for syntax highlighting
+- [x] Handwritten AST Parser 
+- [x] Formatter (`ziggy fmt --schema --stdin`)
+- [x] LSP (`ziggy lsp --schema`)
+- [ ] Analysis of Schema files
+- [ ] Schema compliance for Ziggy files (`ziggy check`)
+- [ ] Schema file support in `ziggy convert`
 
 ### Binary Format
 **Note: this part is still vaporware**
@@ -424,6 +436,7 @@ Example:
 },
 .paths = [
     ".",
+    //"src",
 ],
 ```
 

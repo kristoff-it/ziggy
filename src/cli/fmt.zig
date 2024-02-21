@@ -1,5 +1,6 @@
 const std = @import("std");
 const ziggy = @import("ziggy");
+const schema = ziggy.schema;
 const Diagnostic = ziggy.Diagnostic;
 const Ast = ziggy.Ast;
 
@@ -18,21 +19,32 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
 
     const code = try buf.toOwnedSliceSentinel(0);
 
-    var diag: Diagnostic = .{ .path = null };
-    const ast = Ast.init(gpa, code, true, &diag) catch {
-        std.debug.print("{}", .{diag});
-        std.process.exit(1);
-    };
-
     var out_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
     const out = out_buffer.writer();
 
-    try out.print("{}", .{ast});
+    if (cmd.schema) {
+        var diag: schema.Diagnostic = .{ .path = null };
+        const ast = schema.Ast.init(gpa, code, &diag) catch {
+            std.debug.print("{}", .{diag});
+            std.process.exit(1);
+        };
+
+        try out.print("{}", .{ast});
+    } else {
+        var diag: Diagnostic = .{ .path = null };
+        const ast = Ast.init(gpa, code, true, &diag) catch {
+            std.debug.print("{}", .{diag});
+            std.process.exit(1);
+        };
+
+        try out.print("{}", .{ast});
+    }
     try out_buffer.flush();
 }
 
 pub const Command = struct {
     check: bool = false,
+    schema: bool = false,
     mode: union(enum) {
         unknown,
         stdin,
@@ -57,6 +69,16 @@ pub const Command = struct {
                 }
 
                 cmd.check = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "--schema")) {
+                if (cmd.check) {
+                    std.debug.print("error: duplicate '--schema' flag\n\n", .{});
+                    std.process.exit(1);
+                }
+
+                cmd.schema = true;
                 continue;
             }
 
@@ -113,10 +135,14 @@ pub const Command = struct {
             \\
             \\Options:
             \\
-            \\--help, -h       Prints this help and extits
             \\--stdin, -       Format bytes from stdin; ouptut to stdout 
+            \\--schema         Set the file format to Ziggy Schema. When
+            \\                 not specified, the file format is inferred
+            \\                 from the file extension. Required when 
+            \\                 formatting Ziggy Schema files with '--stdin'.
             \\--check          List non-conforming files and exit with an
             \\                 error if the list is not empty
+            \\--help, -h       Prints this help and extits
         , .{});
 
         std.process.exit(1);
