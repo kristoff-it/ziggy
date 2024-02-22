@@ -163,8 +163,22 @@ const Handler = struct {
         if (self.schema) {
             var diag: schema.Diagnostic = .{ .path = null };
 
+            log.debug("schema: parsing", .{});
             const ast = schema.Ast.init(self.gpa, new_text, &diag) catch undefined;
             defer if (diag.err == .none) ast.deinit();
+
+            if (diag.err == .none) blk: {
+                log.debug("schema: analysis", .{});
+                var rules = schema.Schema.init(
+                    self.gpa,
+                    ast.nodes.items,
+                    new_text,
+                    &diag,
+                ) catch break :blk;
+
+                rules.deinit(self.gpa);
+            }
+            log.debug("schema: done", .{});
 
             if (diag.err != .none) {
                 try buf.writer().print("{lsp}", .{diag});

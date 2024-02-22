@@ -14,7 +14,7 @@ language-servers = [ "ziggy-lsp" ]
 
 [[grammar]]
 name = "ziggy"
-source = { git = "https://github.com/kristoff-it/ziggy", rev = "", subpath = "tree-sitter-ziggy" }
+source = { git = "https://github.com/kristoff-it/ziggy", rev = "0e46579ed878bb28a78cf624c2e593eb39301648", subpath = "tree-sitter-ziggy" }
 
 [[language]]
 name = "ziggy_schema"
@@ -30,7 +30,7 @@ language-servers = [ "ziggy-schema-lsp" ]
 
 [[grammar]]
 name = "ziggy_schema"
-source = { git = "https://github.com/kristoff-it/ziggy", rev = "", subpath = "tree-sitter-ziggy-schema" }
+source = { git = "https://github.com/kristoff-it/ziggy", rev = "0e46579ed878bb28a78cf624c2e593eb39301648", subpath = "tree-sitter-ziggy-schema" }
 
 [language-server.ziggy-schema-lsp]
 command = "ziggy"

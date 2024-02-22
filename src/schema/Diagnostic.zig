@@ -20,18 +20,12 @@ err: Error = .none,
 
 pub const Error = union(enum) {
     none,
-    overflow,
-    eof: struct {
-        expected: []const Token.Tag,
-    },
     unexpected_token: struct {
         expected: []const Token.Tag,
     },
     invalid_token,
 
-    // Only returned by the type-driven parser
     duplicate_field: struct {
-        name: []const u8,
         first_loc: Token.Loc,
     },
     missing_field: struct {
@@ -72,14 +66,6 @@ pub fn format(
 
     switch (self.err) {
         .none => {},
-        .overflow => {
-            try out_stream.print("overflow", .{});
-            if (!lsp) {
-                try out_stream.print(": '{s}'", .{
-                    self.tok.loc.src(self.code),
-                });
-            }
-        },
         .invalid_token => {
             try out_stream.print("invalid token", .{});
             if (!lsp) {
@@ -87,21 +73,6 @@ pub fn format(
                     self.tok.loc.src(self.code),
                 });
             }
-        },
-        .eof => |eof| {
-            if (!lsp) {
-                try out_stream.print("unexpected EOF, ", .{});
-            }
-            try out_stream.print("expected: ", .{});
-
-            for (eof.expected, 0..) |tag, idx| {
-                try out_stream.print("'{s}'", .{tag.lexeme()});
-                if (idx != eof.expected.len - 1) {
-                    try out_stream.print(" or ", .{});
-                }
-            }
-
-            try out_stream.print("\n", .{});
         },
         .unexpected_token => |u| {
             if (self.tok.tag == .eof) {
@@ -133,7 +104,7 @@ pub fn format(
             } else {
                 const first_sel = dup.first_loc.getSelection(self.code);
                 try out_stream.print("found duplicate field '{s}', first definition here:", .{
-                    dup.name,
+                    self.tok.loc.src(self.code),
                 });
                 if (self.path) |p| {
                     try out_stream.print("\n{s}:{}:{}\n", .{
