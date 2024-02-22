@@ -14,4 +14,24 @@ language-servers = [ "ziggy-lsp" ]
 
 [[grammar]]
 name = "ziggy"
-source = { git = "https://github.com/kristoff-it/tree-sitter-ziggy", rev = "" }
+source = { git = "https://github.com/kristoff-it/ziggy", rev = "", subpath = "tree-sitter-ziggy" }
+
+[[language]]
+name = "ziggy_schema"
+scope = "text.ziggy_schema"
+roots = []
+injection-regex = "ziggy-schema|zs"
+file-types = ["zs"]
+comment-token = "///"
+indent = { tab-width = 4, unit = "    " }
+formatter = { command = "ziggy" , args = ["fmt", "--schema", "--stdin"] }
+auto-format = true
+language-servers = [ "ziggy-schema-lsp" ]
+
+[[grammar]]
+name = "ziggy_schema"
+source = { git = "https://github.com/kristoff-it/ziggy", rev = "", subpath = "tree-sitter-ziggy-schema" }
+
+[language-server.ziggy-schema-lsp]
+command = "ziggy"
+args = ["lsp", "--schema"]

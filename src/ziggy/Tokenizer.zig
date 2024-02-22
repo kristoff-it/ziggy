@@ -290,7 +290,11 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
                 else => {
                     res.loc.end = self.idx;
                     // TODO: implement this natively
-                    const check = std.zig.parseNumberLiteral(res.loc.src(code));
+                    var minus_minus = res.loc;
+                    if (minus_minus.src(code)[0] == '-') {
+                        minus_minus.start += 1;
+                    }
+                    const check = std.zig.parseNumberLiteral(minus_minus.src(code));
                     res.tag = switch (check) {
                         .failure => .invalid,
                         .int, .big_int => .integer,

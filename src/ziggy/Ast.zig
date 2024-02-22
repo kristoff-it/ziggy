@@ -1,6 +1,7 @@
 const Ast = @This();
 
 const std = @import("std");
+const assert = std.debug.assert;
 const Diagnostic = @import("Diagnostic.zig");
 const Tokenizer = @import("Tokenizer.zig");
 
@@ -162,11 +163,9 @@ pub fn init(
                 },
                 .dot => {
                     node.tag = .@"struct";
-                    node.loc.start = token.loc.start;
                 },
                 .string => {
                     node.tag = .map;
-                    node.loc.start = token.loc.start;
                 },
                 else => {
                     if (ast.diag) |d| {
@@ -413,8 +412,11 @@ pub fn init(
                             },
                         }
                     }
-                    node.tag = .@"struct";
+                    node.tag = .struct_or_map;
                     node.loc.start = token.loc.start;
+                    node = try node.addChild(&ast.nodes, .identifier);
+                    node.loc = token.loc;
+                    node = node.parent(&ast.nodes);
                     token = try ast.next();
                     if (token.tag != .lb) {
                         if (ast.diag) |d| {
@@ -611,6 +613,7 @@ pub fn format(
 }
 
 const RenderMode = enum { horizontal, vertical };
+const ContainerLayout = enum { @"struct", map };
 pub fn render(nodes: []const Node, code: [:0]const u8, w: anytype) anyerror!void {
     try renderValue(0, nodes[1], nodes, code, true, w);
 }
@@ -627,25 +630,23 @@ fn renderValue(
         .root => return,
         .braceless_struct => {
             std.debug.assert(node.first_child_id != 0);
-            try renderFields(indent, .vertical, ".", " =", node.first_child_id, nodes, code, w);
+            try renderFields(indent, .vertical, .@"struct", node.first_child_id, nodes, code, w);
         },
 
         .@"struct" => {
-            {
-                var t: Tokenizer = .{ .want_comments = false };
-                const name_code = code[node.loc.start..];
-                const name = t.next(name_code);
-                if (name.tag == .identifier) {
-                    try w.print("{s} ", .{name.loc.src(name_code)});
-                }
-            }
             if (node.first_child_id == 0) {
                 try w.writeAll("{}");
                 return;
             }
+
+            var idx = node.first_child_id;
+            if (nodes[idx].tag == .identifier) {
+                try w.print("{s} ", .{nodes[idx].loc.src(code)});
+                idx = nodes[idx].next_id;
+            }
             const mode: RenderMode = blk: {
                 if (is_top_value or
-                    hasMultilineSiblings(node.first_child_id, nodes))
+                    hasMultilineSiblings(idx, nodes))
                 {
                     break :blk .vertical;
                 }
@@ -659,7 +660,7 @@ fn renderValue(
                 .vertical => try w.writeAll("{\n"),
                 .horizontal => try w.writeAll("{ "),
             }
-            try renderFields(indent + 1, mode, ".", " =", node.first_child_id, nodes, code, w);
+            try renderFields(indent + 1, mode, .@"struct", idx, nodes, code, w);
             switch (mode) {
                 .vertical => {
                     try printIndent(indent, w);
@@ -672,8 +673,16 @@ fn renderValue(
         .map => {
             // empty map literals are .struct_or_map nodes
             std.debug.assert(node.first_child_id != 0);
+
+            var idx = node.first_child_id;
+            const layout: ContainerLayout = if (nodes[idx].tag == .identifier) blk: {
+                try w.print("{s} ", .{nodes[idx].loc.src(code)});
+                idx = nodes[idx].next_id;
+                break :blk .@"struct";
+            } else .map;
+
             const mode: RenderMode = blk: {
-                if (hasMultilineSiblings(node.first_child_id, nodes)) {
+                if (hasMultilineSiblings(idx, nodes)) {
                     break :blk .vertical;
                 }
                 std.debug.assert(node.last_child_id != 0);
@@ -687,7 +696,7 @@ fn renderValue(
                 .horizontal => try w.writeAll("{ "),
             }
 
-            try renderFields(indent + 1, mode, "", ":", node.first_child_id, nodes, code, w);
+            try renderFields(indent + 1, mode, layout, idx, nodes, code, w);
 
             switch (mode) {
                 .vertical => {
@@ -846,31 +855,42 @@ fn renderArray(
 fn renderFields(
     indent: usize,
     mode: RenderMode,
-    dot: []const u8,
-    sep: []const u8,
+    layout: ContainerLayout,
     idx: u32,
     nodes: []const Node,
     code: [:0]const u8,
     w: anytype,
 ) !void {
+    assert(idx != 0);
     var seen_fields = false;
     var maybe_field: ?Node = nodes[idx];
     while (maybe_field) |field| {
         if (field.tag == .comment) {
-            if (seen_fields) {
-                try printIndent(indent, w);
-                try w.writeAll("\n");
-            }
+            // if (seen_fields) {
+            //     try printIndent(indent, w);
+            //     try w.writeAll("\n");
+            // }
             maybe_field = try printComments(indent, field, nodes, code, w);
             continue;
         }
         seen_fields = true;
 
-        const field_name = nodes[field.first_child_id].loc.src(code);
+        assert(field.tag == .struct_field or field.tag == .map_field);
+        const field_name = if (layout == .@"struct" and field.tag == .map_field)
+            nodes[field.first_child_id].loc.unquote(code) orelse @panic("TODO: string to identifier")
+        else
+            nodes[field.first_child_id].loc.src(code);
+
         if (mode == .vertical) {
             try printIndent(indent, w);
         }
-        try w.print("{s}{s}{s} ", .{ dot, field_name, sep });
+
+        const symbols: [2][]const u8 = switch (layout) {
+            .@"struct" => .{ ".", " =" },
+            .map => .{ "", ":" },
+        };
+
+        try w.print("{s}{s}{s} ", .{ symbols[0], field_name, symbols[1] });
         try renderValue(indent, nodes[field.last_child_id], nodes, code, false, w);
 
         if (field.next_id != 0) {
