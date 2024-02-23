@@ -136,7 +136,7 @@ const Handler = struct {
 
     pub fn changeDocument(
         self: *Handler,
-        _: std.mem.Allocator,
+        arena: std.mem.Allocator,
         notification: types.DidChangeTextDocumentParams,
     ) !void {
         if (notification.contentChanges.len == 0) return;
@@ -157,31 +157,25 @@ const Handler = struct {
             .diagnostics = &.{},
         };
 
-        var buf = std.ArrayList(u8).init(self.gpa);
-        defer buf.deinit();
-
         if (self.schema) {
             var diag: schema.Diagnostic = .{ .path = null };
 
             log.debug("schema: parsing", .{});
-            const ast = schema.Ast.init(self.gpa, new_text, &diag) catch undefined;
-            defer if (diag.err == .none) ast.deinit();
+            const ast = schema.Ast.init(arena, new_text, &diag) catch undefined;
 
             if (diag.err == .none) blk: {
                 log.debug("schema: analysis", .{});
-                var rules = schema.Schema.init(
-                    self.gpa,
+                _ = schema.Schema.init(
+                    arena,
                     ast.nodes.items,
                     new_text,
                     &diag,
                 ) catch break :blk;
-
-                rules.deinit(self.gpa);
             }
             log.debug("schema: done", .{});
 
             if (diag.err != .none) {
-                try buf.writer().print("{lsp}", .{diag});
+                const msg = try std.fmt.allocPrint(arena, "{lsp}", .{diag});
                 const range = diag.tok.loc.getSelection(new_text);
                 res.diagnostics = &.{
                     .{
@@ -196,18 +190,19 @@ const Handler = struct {
                             },
                         },
                         .severity = .Error,
-                        .message = buf.items,
+                        .message = msg,
                     },
                 };
             }
-        } else {
+        } else send: {
             var diag: ziggy.Diagnostic = .{ .path = null };
 
-            const ast = ziggy.Ast.init(self.gpa, new_text, true, &diag) catch undefined;
-            defer if (std.meta.activeTag(diag.err) == .none) ast.deinit();
+            log.debug("parsing ziggy ast", .{});
+            const ast = ziggy.Ast.init(arena, new_text, true, &diag) catch undefined;
 
-            if (std.meta.activeTag(diag.err) != .none) {
-                try buf.writer().print("{lsp}", .{diag});
+            if (diag.err != .none) {
+                log.debug("ziggy code parsing error", .{});
+                const msg = try std.fmt.allocPrint(arena, "{lsp}", .{diag});
                 const range = diag.tok.loc.getSelection(new_text);
                 res.diagnostics = &.{
                     .{
@@ -222,12 +217,123 @@ const Handler = struct {
                             },
                         },
                         .severity = .Error,
-                        .message = buf.items,
+                        .message = msg,
                     },
                 };
+                break :send;
             }
+
+            log.debug("ziggy parsing ok, looking for schema", .{});
+            const schema_path: []const u8 = blk: {
+                const top_comments = ast.nodes.items[1];
+                if (top_comments.tag == .top_comment) {
+                    assert(top_comments.first_child_id != 0);
+                    const schema_line = ast.nodes.items[top_comments.first_child_id];
+                    const src = schema_line.loc.src(new_text);
+                    var it = std.mem.tokenizeScalar(u8, src, ' ');
+                    var state: enum { start, comment, schema, colon } = .start;
+                    while (it.next()) |tok| switch (state) {
+                        .start => {
+                            if (std.mem.eql(u8, tok, "//!")) {
+                                state = .comment;
+                            } else if (std.mem.eql(u8, tok, "//!ziggy-schema")) {
+                                state = .schema;
+                            } else if (std.mem.eql(u8, tok, "//!ziggy-schema:")) {
+                                state = .colon;
+                            } else {
+                                break :send;
+                            }
+                        },
+                        .comment => {
+                            if (std.mem.eql(u8, tok, "ziggy-schema")) {
+                                state = .schema;
+                            } else if (std.mem.eql(u8, tok, "ziggy-schema:")) {
+                                state = .colon;
+                            } else {
+                                break :send;
+                            }
+                        },
+                        .schema => {
+                            if (std.mem.eql(u8, tok, ":")) {
+                                state = .colon;
+                            } else {
+                                break :send;
+                            }
+                        },
+
+                        .colon => {
+                            break :blk tok;
+                        },
+                    };
+                } else {
+                    log.debug("ziggy file doesn't have a schema comment", .{});
+                }
+                break :send;
+            };
+
+            log.debug("detected schema: '{s}'", .{schema_path});
+            const schema_file = std.fs.cwd().readFileAllocOptions(
+                arena,
+                schema_path,
+                1024 * 1024 * 1024,
+                null,
+                1,
+                0,
+            ) catch {
+                const start_col: u32 = @intCast(std.mem.indexOf(u8, new_text, schema_path).?);
+                res.diagnostics = &.{
+                    .{
+                        .range = .{
+                            .start = .{ .line = 0, .character = start_col },
+                            .end = .{ .line = 0, .character = @intCast(start_col + schema_path.len) },
+                        },
+                        .severity = .Error,
+                        .message = "error opening schema file",
+                    },
+                };
+                break :send;
+            };
+
+            log.debug("schema: parsing", .{});
+            const schema_ast = schema.Ast.init(self.gpa, schema_file, null) catch |err| {
+                const start_col: u32 = @intCast(std.mem.indexOf(u8, new_text, schema_path).?);
+                const msg = try std.fmt.allocPrint(arena, "schema file error: {s}", .{
+                    @errorName(err),
+                });
+                res.diagnostics = &.{
+                    .{
+                        .range = .{
+                            .start = .{ .line = 0, .character = start_col },
+                            .end = .{ .line = 0, .character = @intCast(start_col + schema_path.len) },
+                        },
+                        .severity = .Error,
+                        .message = msg,
+                    },
+                };
+                break :send;
+            };
+
+            const rules = schema.Schema.init(arena, schema_ast.nodes.items, schema_file, null) catch |err| {
+                const start_col: u32 = @intCast(std.mem.indexOf(u8, new_text, schema_path).?);
+                const msg = try std.fmt.allocPrint(arena, "schema file error: {s}", .{
+                    @errorName(err),
+                });
+                res.diagnostics = &.{
+                    .{
+                        .range = .{
+                            .start = .{ .line = 0, .character = start_col },
+                            .end = .{ .line = 0, .character = @intCast(start_col + schema_path.len) },
+                        },
+                        .severity = .Error,
+                        .message = msg,
+                    },
+                };
+                break :send;
+            };
+            _ = rules;
         }
 
+        log.debug("sending diags!", .{});
         const msg = try self.server.sendToClientNotification(
             "textDocument/publishDiagnostics",
             res,

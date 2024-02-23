@@ -19,6 +19,8 @@ pub const Node = struct {
 
     pub const Tag = enum {
         root,
+        top_comment,
+        top_comment_line,
         braceless_struct,
         struct_or_map,
         @"struct",
@@ -112,8 +114,12 @@ pub fn init(
     var token = try ast.next();
     while (true) {
         switch (node.tag) {
-            .comment, .multiline_string, .line_string => unreachable,
+            .comment, .multiline_string, .top_comment_line, .line_string => unreachable,
             .root => switch (token.tag) {
+                .top_comment_line => {
+                    node = try node.addChild(&ast.nodes, .top_comment);
+                    node.loc.start = token.loc.start;
+                },
                 .dot, .comment => {
                     node = try node.addChild(&ast.nodes, .braceless_struct);
                     node.loc.start = token.loc.start;
@@ -122,6 +128,17 @@ pub fn init(
                 else => {
                     node = try node.addChild(&ast.nodes, ._value);
                 },
+            },
+            .top_comment => switch (token.tag) {
+                .top_comment_line => {
+                    assert(node.tag == .top_comment);
+                    node = try node.addChild(&ast.nodes, .top_comment_line);
+                    node.loc = token.loc;
+                    node = node.parent(&ast.nodes);
+                    node.loc.end = token.loc.end;
+                    token = try ast.next();
+                },
+                else => node = node.parent(&ast.nodes),
             },
             .braceless_struct => switch (token.tag) {
                 .eof => return ast,
@@ -615,7 +632,20 @@ pub fn format(
 const RenderMode = enum { horizontal, vertical };
 const ContainerLayout = enum { @"struct", map };
 pub fn render(nodes: []const Node, code: [:0]const u8, w: anytype) anyerror!void {
-    try renderValue(0, nodes[1], nodes, code, true, w);
+    var value_idx: u32 = 1;
+    const value = nodes[value_idx];
+    if (value.tag == .top_comment) {
+        value_idx = value.next_id;
+        var line_idx = value.first_child_id;
+        assert(line_idx != 0);
+        while (line_idx != 0) {
+            const line = nodes[line_idx];
+            try w.print("{s}\n", .{line.loc.src(code)});
+            line_idx = line.next_id;
+        }
+        try w.writeAll("\n");
+    }
+    try renderValue(0, nodes[value_idx], nodes, code, true, w);
 }
 
 fn renderValue(

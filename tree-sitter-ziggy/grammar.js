@@ -24,10 +24,13 @@ module.exports = grammar({
   extras: $ => [/\s/],
 
   rules: {
-    document: $ => optional(choice(
-      $.top_level_struct,
-      $._value,
-    )),
+    document: $ => seq(
+        optional($.top_comment),
+        optional(choice(
+          $.top_level_struct,
+          $._value,
+        )),
+      ),
 
     _value: $ => choice(
       $.struct,
@@ -139,7 +142,8 @@ module.exports = grammar({
 
     null: _ => 'null',
 
-    comment: _ => repeat1(token(seq('//', /.*/))),    
+    comment: _ => repeat1(token(seq('//', token.immediate(/[^!]/), /.*/))),    
+    top_comment: $ => repeat1(token(seq('//!', /.*/))),    
   }
 });
 

@@ -24,6 +24,7 @@
   (line_string)*
 ] @string
 
+
 (comment) @comment.line
 
 (escape_sequence) @constant.character.escape
@@ -40,3 +41,7 @@
   "("
   ")"
 ] @punctuation.bracket
+
+
+(top_comment) @comment.line
+

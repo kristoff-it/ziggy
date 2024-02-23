@@ -1,8 +1,8 @@
 const std = @import("std");
 const ziggy = @import("ziggy");
-const logging = @import("logging.zig");
-const lsp_exe = @import("lsp.zig");
-const fmt_exe = @import("fmt.zig");
+const logging = @import("cli/logging.zig");
+const lsp_exe = @import("cli/lsp.zig");
+const fmt_exe = @import("cli/fmt.zig");
 
 pub const known_folders_config = .{
     .xdg_force_default = true,

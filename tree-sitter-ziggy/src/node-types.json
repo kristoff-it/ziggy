@@ -83,7 +83,7 @@
     "named": true,
     "fields": {},
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": false,
       "types": [
         {
@@ -120,6 +120,10 @@
         },
         {
           "type": "tag_string",
+          "named": true
+        },
+        {
+          "type": "top_comment",
           "named": true
         },
         {
@@ -415,6 +419,11 @@
         }
       ]
     }
+  },
+  {
+    "type": "top_comment",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "top_level_struct",

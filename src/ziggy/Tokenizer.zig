@@ -29,6 +29,7 @@ pub const Token = struct {
         null,
         true,
         false,
+        top_comment_line,
         comment,
         eof,
 
@@ -40,6 +41,7 @@ pub const Token = struct {
         pub fn lexeme(self: Tag) []const u8 {
             return switch (self) {
                 .invalid => "(invalid)",
+                .top_comment_line => "(top comment)",
                 .comment => "(comment)",
                 .dot => ".",
                 .comma => ",",
@@ -347,8 +349,12 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
             .comment => switch (c) {
                 0, '\n' => {
                     if (self.want_comments) {
-                        res.tag = .comment;
                         res.loc.end = self.idx;
+                        if (std.mem.startsWith(u8, res.loc.src(code), "//!")) {
+                            res.tag = .top_comment_line;
+                        } else {
+                            res.tag = .comment;
+                        }
                         break;
                     } else {
                         state = .start;

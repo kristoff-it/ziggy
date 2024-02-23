@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
 
     const ziggy_exe = b.addExecutable(.{
         .name = "ziggy",
-        .root_source_file = .{ .path = "src/cli/main.zig" },
+        .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
         .optimize = optimize,
     });
