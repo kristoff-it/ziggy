@@ -4,6 +4,7 @@ pub const Value = @import("ziggy/Value.zig");
 pub const Ast = @import("ziggy/Ast.zig");
 pub const Diagnostic = @import("ziggy/Diagnostic.zig");
 pub const parseLeaky = Parser.parseLeaky;
+pub const stringify = @import("ziggy/serializer.zig").stringify;
 
 test {
     _ = Tokenizer;
@@ -11,6 +12,7 @@ test {
     _ = Diagnostic;
     _ = Ast;
     _ = Value;
+    _ = @import("ziggy/serializer.zig");
 }
 
 pub const schema = struct {
