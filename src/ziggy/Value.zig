@@ -4,6 +4,7 @@ const Diagnostic = @import("Diagnostic.zig");
 const Parser = @import("Parser.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
+const serializer = @import("serializer.zig");
 
 pub const ContainerKind = enum { ziggy_struct, map };
 
@@ -127,6 +128,67 @@ pub fn Map(comptime T: type) type {
                     }
                 }
             }
+
+            pub fn stringify(
+                value: Self,
+                opts: serializer.StringifyOptions,
+                indent_level: usize,
+                depth: usize,
+                writer: anytype,
+            ) !void {
+                const omit_curly = opts.omit_top_level_curly and depth == 0;
+                const indent = if (omit_curly) indent_level else indent_level + 1;
+                const item_count = value.data.count();
+                if (!omit_curly) {
+                    try writer.writeAll("{");
+                    try serializer.indent(opts.whitespace, indent, writer);
+                }
+                var data_it = value.data.iterator();
+                var idx: usize = 1;
+                switch (value.kind) {
+                    .ziggy_struct => {
+                        while (data_it.next()) |entry| : (idx += 1) {
+                            if (opts.whitespace == .minified) {
+                                try writer.print(".{s}=", .{entry.key_ptr.*});
+                            } else {
+                                try writer.print(".{s} = ", .{entry.key_ptr.*});
+                            }
+                            try serializer.stringifyInner(entry.value_ptr.*, opts, indent, depth + 1, writer);
+                            if (idx < item_count) {
+                                if (opts.whitespace == .minified) {
+                                    try writer.writeAll(",");
+                                } else {
+                                    try writer.writeAll(",");
+                                    try serializer.indent(opts.whitespace, indent, writer);
+                                }
+                            }
+                        }
+                    },
+                    .map => {
+                        while (data_it.next()) |entry| : (idx += 1) {
+                            if (opts.whitespace == .minified) {
+                                try writer.print("\"{s}\":", .{entry.key_ptr.*});
+                            } else {
+                                try writer.print("\"{s}\": ", .{entry.key_ptr.*});
+                            }
+                            try serializer.stringifyInner(entry.value_ptr.*, opts, indent, depth + 1, writer);
+                            if (idx < item_count) {
+                                if (opts.whitespace == .minified) {
+                                    try writer.writeAll(",");
+                                } else {
+                                    try writer.writeAll(",");
+                                    try serializer.indent(opts.whitespace, indent, writer);
+                                }
+                            }
+                        }
+                    },
+                }
+                if (!omit_curly) {
+                    if (item_count > 0 and opts.whitespace != .minified) try writer.writeAll(",");
+                    try serializer.indent(opts.whitespace, indent_level, writer);
+                    try writer.writeAll("}");
+                }
+            }
         };
     };
 }
@@ -200,4 +262,107 @@ test "map + union" {
     const super = result.dependencies.data.get("super") orelse return error.Missing;
     try std.testing.expect(super == .Local);
     try std.testing.expectEqualStrings("../super", super.Local.path);
+}
+
+test "map + union stringify" {
+    const case =
+        \\.name = "zine",
+        \\.dependencies = {
+        \\    "gfm": Remote {
+        \\        .url = "https://github.com",
+        \\        .hash = @sha512("123..."),
+        \\    },
+        \\    "super": Local {
+        \\        .path = "../super",
+        \\    },
+        \\},
+    ;
+
+    const Project = struct {
+        name: []const u8,
+        dependencies: Map(Dependency),
+        pub const Dependency = union(enum) {
+            Remote: struct {
+                url: []const u8,
+                hash: []const u8,
+
+                const Self = @This();
+                pub const ziggy = struct {
+                    pub fn stringify(
+                        value: Self,
+                        opts: serializer.StringifyOptions,
+                        indent_level: usize,
+                        depth: usize,
+                        writer: anytype,
+                    ) !void {
+                        const omit_curly = opts.omit_top_level_curly and depth == 0;
+                        const indent = if (omit_curly) indent_level else indent_level + 1;
+                        if (!omit_curly) {
+                            try writer.writeAll("{");
+                            try serializer.indent(opts.whitespace, indent, writer);
+                        }
+                        if (opts.whitespace == .minified) {
+                            try writer.writeAll(".url=");
+                        } else {
+                            try writer.writeAll(".url = ");
+                        }
+                        try serializer.stringifyInner(value.url, opts, indent, depth + 1, writer);
+                        if (opts.whitespace == .minified) {
+                            try writer.writeAll(",");
+                        } else {
+                            try writer.writeAll(",");
+                            try serializer.indent(opts.whitespace, indent, writer);
+                        }
+                        if (opts.whitespace == .minified) {
+                            try writer.writeAll(".hash=@sha512(");
+                        } else {
+                            try writer.writeAll(".hash = @sha512(");
+                        }
+                        try serializer.stringifyInner(value.hash, opts, indent, depth + 1, writer);
+                        try writer.writeAll(")");
+
+                        if (!omit_curly) {
+                            if (opts.whitespace != .minified) try writer.writeAll(",");
+                            try serializer.indent(opts.whitespace, indent_level, writer);
+                            try writer.writeAll("}");
+                        }
+                    }
+                };
+            },
+            Local: struct {
+                path: []const u8,
+            },
+        };
+    };
+
+    var deps: Map(Project.Dependency) = .{ .kind = .map, .data = .{} };
+    defer deps.data.deinit(std.testing.allocator);
+    try deps.data.put(
+        std.testing.allocator,
+        "gfm",
+        .{
+            .Remote = .{
+                .url = "https://github.com",
+                .hash = "123...",
+            },
+        },
+    );
+    try deps.data.put(
+        std.testing.allocator,
+        "super",
+        .{
+            .Local = .{
+                .path = "../super",
+            },
+        },
+    );
+    const proj: Project = .{
+        .name = "zine",
+        .dependencies = deps,
+    };
+    var output = std.ArrayList(u8).init(std.testing.allocator);
+    defer output.deinit();
+
+    try serializer.stringify(proj, .{ .whitespace = .space_4 }, output.writer());
+    try std.testing.expectEqualStrings(case, output.items);
 }
