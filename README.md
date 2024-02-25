@@ -34,7 +34,6 @@ struct Frontmatter {
     description: bytes,
     author: ?bytes,
     date: @date,
-    tags: [bytes],
     /// Alternative paths where this content will also be made available
     aliases: [bytes],
     /// When set to true this file will be ignored when bulding the website
@@ -53,7 +52,7 @@ Ziggy values can be of the following types:
 - Numbers `123_000`, `1.23`, `0xff_ff_ff`, `0o7_5_5`, `0b01_01_01` 
 - Null `null`
 - Bool `true`, `false`
-- Custom Literals `@date("2020-12-01")`, `@v("1.0.0")`, `@url("https://zine-ssg.io")`
+- Custom Literals `@date("2020-12-01")`, `@v("1.0.0")`, `@foo("bar")`
 - Array `[1, 2, 3]`
 - Struct `{ .fixed = "schema" }`, `Named { .for = "unions of structs" }`
 - Map `{ "custom": "keys" }`
