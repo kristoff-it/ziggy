@@ -569,8 +569,7 @@ test "struct - missing field" {
     try std.testing.expectError(error.MissingField, result);
     try std.testing.expectFmt(
         \\line: 1 col: 13
-        \\missing field 'bar', struct ends here: line: 1 col: 13
-        \\
+        \\missing field 'bar'
     , "{}", .{diag});
 }
 
@@ -617,8 +616,7 @@ test "struct - unknown field" {
     try std.testing.expectError(error.UnknownField, result);
     try std.testing.expectFmt(
         \\line: 3 col: 2
-        \\unknown field 'baz' found here: line: 3 col: 2
-        \\
+        \\unknown field 'baz'
     , "{}", .{diag});
 }
 

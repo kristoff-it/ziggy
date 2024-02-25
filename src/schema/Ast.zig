@@ -649,7 +649,7 @@ test "basics" {
         \\
         \\/// Doc comment 1a
         \\/// Doc comment 1b
-        \\@date,
+        \\@date = bytes,
         \\
         \\/// Doc comment 2a
         \\/// Doc comment 2b
