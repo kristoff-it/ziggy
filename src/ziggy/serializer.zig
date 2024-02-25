@@ -233,12 +233,6 @@ fn stringifyStructInner(writer: anytype, strct: anytype, indent_level: usize, de
 fn stringifyUnion(writer: anytype, un: anytype, indent_level: usize, depth: usize, opts: StringifyOptions) !void {
     const T = @typeInfo(@TypeOf(un)).Union;
     if (T.tag_type == null) @compileError("Union '" ++ @typeName(@TypeOf(un)) ++ "' must be tagged!");
-    inline for (T.fields) |field| {
-        switch (@typeInfo(field.type)) {
-            .Struct => {},
-            else => @compileError("All variants of union '" ++ @typeName(@TypeOf(un)) ++ "' must have struct types"),
-        }
-    }
     var opts_ = opts;
     opts_.omit_top_level_curly = false;
     const at = std.meta.activeTag(un);
@@ -246,7 +240,26 @@ fn stringifyUnion(writer: anytype, un: anytype, indent_level: usize, depth: usiz
     if (opts.whitespace != .minified) try writer.writeAll(" ");
     inline for (T.fields) |field| {
         if (std.mem.eql(u8, field.name, @tagName(at))) {
-            try stringifyInner(@field(un, field.name), opts_, indent_level, depth, writer);
+            switch (@typeInfo(field.type)) {
+                .Struct => try stringifyInner(@field(un, field.name), opts_, indent_level, depth, writer),
+                else => {
+                    const value_field: std.builtin.Type.StructField = .{
+                        .name = "value",
+                        .type = field.type,
+                        .default_value = null,
+                        .is_comptime = false,
+                        .alignment = @alignOf(field.type),
+                    };
+                    const St = @Type(.{ .Struct = .{
+                        .layout = .Auto,
+                        .fields = &.{value_field},
+                        .decls = &.{},
+                        .is_tuple = false,
+                    } });
+                    const v: St = .{ .value = @field(un, field.name) };
+                    try stringifyInner(v, opts_, indent_level, depth, writer);
+                },
+            }
         }
     }
 }
@@ -478,5 +491,27 @@ test "union" {
         \\  },
         \\ ],
         \\}
+    );
+}
+
+test "non struct union" {
+    const U = union(enum) {
+        foo: []const u8,
+        bar: usize,
+    };
+
+    const v: U = .{ .foo = "hello" };
+    const z: U = .{ .bar = 123 };
+    const q: []const U = &.{ v, z };
+
+    try testStringify(q, .{ .whitespace = .space_2 },
+        \\[
+        \\  foo {
+        \\    .value = "hello",
+        \\  },
+        \\  bar {
+        \\    .value = 123,
+        \\  },
+        \\]
     );
 }
