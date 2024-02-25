@@ -2,6 +2,8 @@ const Schema = @This();
 
 const std = @import("std");
 const assert = std.debug.assert;
+const ziggy = @import("../root.zig");
+const Tokenizer = @import("Tokenizer.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Ast = @import("Ast.zig");
 const Node = Ast.Node;
@@ -275,6 +277,263 @@ fn analyzeRule(
             else => unreachable,
         }
     }
+}
+
+const CheckItem = struct {
+    rule: Rule,
+    doc_node: u32,
+};
+
+pub fn check(
+    self: Schema,
+    gpa: std.mem.Allocator,
+    ast: Ast,
+    doc: ziggy.Ast,
+    diag: ?*ziggy.Diagnostic,
+) !void {
+    // TODO: check ziggy file against this ruleset
+    var stack = std.ArrayList(CheckItem).init(gpa);
+    defer stack.deinit();
+
+    var doc_root_val: u32 = 1;
+    if (doc.nodes.items[1].tag == .top_comment) {
+        doc_root_val = doc.nodes.items[1].next_id;
+    }
+
+    try stack.append(.{
+        .rule = self.root,
+        .doc_node = doc_root_val,
+    });
+
+    while (stack.popOrNull()) |elem| {
+        const rule = ast.nodes.items[elem.rule.node];
+        const doc_node = doc.nodes.items[elem.doc_node];
+        {
+            log.debug("rule '{s}', node '{s}'", .{
+                rule.loc.src(ast.code),
+                @tagName(doc_node.tag),
+            });
+            const sel = doc_node.loc.getSelection(doc.code);
+            log.debug("line: {}, col: {}", .{
+                sel.start.line,
+                sel.start.col,
+            });
+        }
+        switch (rule.tag) {
+            .array => switch (doc_node.tag) {
+                .array, .array_comma => {
+                    //TODO: optimize for simple cases
+                    const child_rule: Rule = .{ .node = rule.first_child_id };
+                    assert(child_rule.node != 0);
+
+                    var doc_child_id = doc_node.first_child_id;
+                    while (doc_child_id != 0) {
+                        assert(doc.nodes.items[doc_child_id].tag != .comment);
+                        try stack.append(.{
+                            .rule = child_rule,
+                            .doc_node = doc_child_id,
+                        });
+
+                        doc_child_id = doc.nodes.items[doc_child_id].next_id;
+                    }
+                },
+                else => return typeMismatch(ast, diag, rule, doc_node),
+            },
+            .map => switch (doc_node.tag) {
+                .struct_or_map => {},
+                .map => {
+                    //TODO: optimize for simple cases
+                    const child_rule: Rule = .{ .node = rule.first_child_id };
+                    assert(child_rule.node != 0);
+
+                    var doc_child_id = doc_node.first_child_id;
+                    while (doc_child_id != 0) {
+                        assert(doc.nodes.items[doc_child_id].tag == .map_field);
+                        try stack.append(.{
+                            .rule = child_rule,
+                            .doc_node = doc.nodes.items[doc_child_id].last_child_id,
+                        });
+
+                        doc_child_id = doc.nodes.items[doc_child_id].next_id;
+                    }
+                },
+
+                else => return typeMismatch(ast, diag, rule, doc_node),
+            },
+            .struct_union => switch (doc_node.tag) {
+                .@"struct" => {
+                    const rule_src = rule.loc.src(ast.code);
+
+                    const struct_name_node = doc.nodes.items[doc_node.first_child_id];
+                    if (struct_name_node.tag != .identifier) {
+                        if (diag) |d| {
+                            d.tok = .{
+                                .tag = .identifier,
+                                .loc = .{
+                                    // a struct always has curlies
+                                    .start = doc_node.loc.start -| 1,
+                                    .end = doc_node.loc.start + 1,
+                                },
+                            };
+                            d.err = .{
+                                .missing_struct_name = .{
+                                    .expected = rule_src,
+                                },
+                            };
+                        }
+                        return error.MissingStructName;
+                    }
+
+                    const struct_name = struct_name_node.loc.src(doc.code);
+
+                    var ident_id = rule.first_child_id;
+                    assert(ident_id != 0);
+                    while (ident_id != 0) {
+                        const id_rule = ast.nodes.items[ident_id];
+                        const id_rule_src = id_rule.loc.src(ast.code);
+                        if (std.mem.eql(u8, struct_name, id_rule_src)) {
+                            try stack.append(.{
+                                .rule = .{ .node = ident_id },
+                                .doc_node = elem.doc_node,
+                            });
+                            continue;
+                        }
+                        ident_id = id_rule.next_id;
+                    }
+                    // no match
+                    if (diag) |d| {
+                        d.tok = .{
+                            .tag = .identifier,
+                            .loc = struct_name_node.loc,
+                        };
+                        d.err = .{
+                            .wrong_struct_name = .{
+                                .expected = rule_src,
+                            },
+                        };
+                    }
+                    return error.WrongStructName;
+                },
+                else => return typeMismatch(ast, diag, rule, doc_node),
+            },
+            .identifier => switch (doc_node.tag) {
+                .@"struct", .braceless_struct => {
+                    //TODO: optimize for simple cases
+                    const name = rule.loc.src(ast.code);
+                    const struct_rule = self.structs.get(name).?;
+
+                    var seen_fields = std.StringHashMap(void).init(gpa);
+                    defer seen_fields.deinit();
+
+                    var doc_child_id = doc_node.first_child_id;
+                    if (doc.nodes.items[doc_child_id].tag == .identifier) {
+                        doc_child_id = doc.nodes.items[doc_child_id].next_id;
+                    }
+
+                    while (doc_child_id != 0) {
+                        const field = doc.nodes.items[doc_child_id];
+                        assert(field.tag == .struct_field);
+
+                        const field_name_node = doc.nodes.items[field.first_child_id];
+                        assert(field_name_node.tag == .identifier);
+
+                        const field_name = field_name_node.loc.src(doc.code);
+
+                        const field_rule = struct_rule.fields.get(field_name) orelse {
+                            if (diag) |d| {
+                                d.tok = .{
+                                    .tag = .identifier,
+                                    .loc = field_name_node.loc,
+                                };
+                                d.err = .unknown_field;
+                            }
+                            return error.UnknownField;
+                        };
+
+                        // duplicate fields should be detected in the doc
+                        // via AST contruction.
+                        try seen_fields.putNoClobber(field_name, {});
+
+                        try stack.append(.{
+                            .rule = field_rule.rule,
+                            .doc_node = field.last_child_id,
+                        });
+
+                        doc_child_id = field.next_id;
+                    }
+
+                    if (seen_fields.count() != struct_rule.fields.count()) {
+                        for (struct_rule.fields.keys()) |k| {
+                            if (!seen_fields.contains(k)) {
+                                if (diag) |d| {
+                                    // tok must point at where the struct ends
+                                    d.tok = .{
+                                        .tag = .value, // doesn't matter
+                                        .loc = .{
+                                            .start = doc_node.loc.end - 1,
+                                            .end = doc_node.loc.end,
+                                        },
+                                    };
+                                    d.err = .{
+                                        .missing_field = .{
+                                            .name = k,
+                                        },
+                                    };
+                                }
+                                return error.UnknownField;
+                            }
+                        }
+                    }
+                },
+                else => return typeMismatch(ast, diag, rule, doc_node),
+            },
+            .tag => switch (doc_node.tag) {
+                .tag => {},
+                else => return typeMismatch(ast, diag, rule, doc_node),
+            },
+            .bytes => switch (doc_node.tag) {
+                .string, .line_string => {},
+                else => return typeMismatch(ast, diag, rule, doc_node),
+            },
+            .int => switch (doc_node.tag) {
+                .integer => {},
+                else => return typeMismatch(ast, diag, rule, doc_node),
+            },
+            .float => switch (doc_node.tag) {
+                .float => {},
+                else => return typeMismatch(ast, diag, rule, doc_node),
+            },
+            .bool => switch (doc_node.tag) {
+                .bool => {},
+                else => return typeMismatch(ast, diag, rule, doc_node),
+            },
+            .any => {},
+            else => unreachable,
+        }
+    }
+}
+
+fn typeMismatch(
+    ast: Ast,
+    diag: ?*ziggy.Diagnostic,
+    rule_node: Ast.Node,
+    found: ziggy.Ast.Node,
+) error{TypeMismatch} {
+    assert(found.tag != .comment);
+    assert(found.tag != .top_comment);
+
+    if (diag) |d| {
+        d.tok = .{
+            .tag = .value,
+            .loc = found.loc,
+        };
+        d.err = .{
+            .type_mismatch = .{
+                .expected = rule_node.loc.src(ast.code),
+            },
+        };
+    }
+    return error.TypeMismatch;
 }
 
 test "basics" {

@@ -29,7 +29,6 @@ pub const Error = union(enum) {
     },
     invalid_token,
 
-    // Only returned by the type-driven parser
     duplicate_field: struct {
         name: []const u8,
         first_loc: Token.Loc,
@@ -38,6 +37,22 @@ pub const Error = union(enum) {
         name: []const u8,
     },
     unknown_field,
+
+    schema: struct {
+        err: anyerror,
+    },
+
+    type_mismatch: struct {
+        expected: []const u8,
+    },
+
+    missing_struct_name: struct {
+        expected: []const u8,
+    },
+
+    wrong_struct_name: struct {
+        expected: []const u8,
+    },
 };
 
 pub fn debug(self: Diagnostic) void {
@@ -198,6 +213,93 @@ pub fn format(
                     try out_stream.print(" line: {} col: {}\n", .{
                         selection.start.line,
                         selection.start.col,
+                    });
+                }
+            }
+        },
+
+        .schema => |s| {
+            try out_stream.print("schema file error: {s}", .{
+                @errorName(s.err),
+            });
+        },
+
+        .type_mismatch => |mism| {
+            if (lsp) {
+                try out_stream.print(
+                    "type mismatch, expected '{s}'",
+                    .{mism.expected},
+                );
+            } else {
+                const val = self.tok.loc.getSelection(self.code);
+                try out_stream.print(
+                    "type mismatch, expected '{s}'",
+                    .{mism.expected},
+                );
+                if (self.path) |p| {
+                    try out_stream.print("\n{s}:{}:{}\n", .{
+                        p,
+                        val.start.line,
+                        val.start.col,
+                    });
+                } else {
+                    try out_stream.print(" line: {} col: {}\n", .{
+                        val.start.line,
+                        val.start.col,
+                    });
+                }
+            }
+        },
+
+        .missing_struct_name => |msn| {
+            if (lsp) {
+                try out_stream.print(
+                    "missing struct name, expected one of ({s})",
+                    .{msn.expected},
+                );
+            } else {
+                const struct_start = self.tok.loc.getSelection(self.code);
+                try out_stream.print(
+                    "missing struct name, expected '{s}'",
+                    .{msn.expected},
+                );
+                if (self.path) |p| {
+                    try out_stream.print("\n{s}:{}:{}\n", .{
+                        p,
+                        struct_start.start.line,
+                        struct_start.start.col,
+                    });
+                } else {
+                    try out_stream.print(" line: {} col: {}\n", .{
+                        struct_start.start.line,
+                        struct_start.start.col,
+                    });
+                }
+            }
+        },
+
+        .wrong_struct_name => |wsn| {
+            if (lsp) {
+                try out_stream.print(
+                    "wrong struct name, expected one of ({s})",
+                    .{wsn.expected},
+                );
+            } else {
+                const struct_name = self.tok.loc.getSelection(self.code);
+                try out_stream.print(
+                    "wrong struct name '{s}' expected '{s}'",
+                    .{ self.tok.loc.src(self.code), wsn.expected },
+                );
+                if (self.path) |p| {
+                    try out_stream.print("\n{s}:{}:{}\n", .{
+                        p,
+                        struct_name.start.line,
+                        struct_name.start.col,
+                    });
+                } else {
+                    try out_stream.print(" line: {} col: {}\n", .{
+                        struct_name.start.line,
+                        struct_name.start.col,
                     });
                 }
             }

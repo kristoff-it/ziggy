@@ -141,7 +141,10 @@ pub fn init(
                 else => node = node.parent(&ast.nodes),
             },
             .braceless_struct => switch (token.tag) {
-                .eof => return ast,
+                .eof => {
+                    node.loc.end = token.loc.end;
+                    return ast;
+                },
                 .comment => {
                     node = try node.addChild(&ast.nodes, .comment);
                     node.loc = token.loc;
@@ -490,6 +493,7 @@ pub fn init(
                     node = try node.addChild(&ast.nodes, .identifier);
                     node.loc = token.loc;
                     node = node.parent(&ast.nodes);
+                    node.loc.end = token.loc.end;
 
                     token = try ast.next();
                     if (token.tag != .lp) {
@@ -548,6 +552,7 @@ pub fn init(
                         node = try node.addChild(&ast.nodes, .line_string);
                         node.loc = token.loc;
                         node = node.parent(&ast.nodes);
+                        node.loc.end = token.loc.end;
                         token = try ast.next();
                     }
 

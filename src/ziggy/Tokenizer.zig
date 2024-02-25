@@ -2,7 +2,7 @@ const Tokenizer = @This();
 const std = @import("std");
 
 want_comments: bool,
-idx: usize = 0,
+idx: u32 = 0,
 
 pub const Token = struct {
     tag: Tag,
@@ -70,8 +70,8 @@ pub const Token = struct {
     };
 
     pub const Loc = struct {
-        start: usize,
-        end: usize,
+        start: u32,
+        end: u32,
 
         pub fn src(self: Loc, code: []const u8) []const u8 {
             return code[self.start..self.end];
@@ -82,8 +82,8 @@ pub const Token = struct {
             end: Position,
 
             pub const Position = struct {
-                line: usize,
-                col: usize,
+                line: u32,
+                col: u32,
             };
         };
 
@@ -187,8 +187,8 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
             .start => switch (c) {
                 0 => {
                     res.tag = .eof;
-                    res.loc.start = code.len - 1;
-                    res.loc.end = code.len;
+                    res.loc.start = @intCast(code.len - 1);
+                    res.loc.end = @intCast(code.len);
                     break;
                 },
                 ' ', '\n', '\r', '\t' => res.loc.start += 1,

@@ -1,7 +1,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const ziggy = @import("ziggy");
-const schema = ziggy.schema;
+const Document = @import("lsp/Document.zig");
+const Schema = @import("lsp/Schema.zig");
 const lsp = @import("lsp");
 const types = lsp.types;
 const offsets = lsp.offsets;
@@ -13,7 +14,7 @@ const log = std.log.scoped(.ziggy_lsp);
 const ZiggyLsp = lsp.server.Server(Handler);
 
 pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
-    const schema_mode = args.len > 0 and std.mem.eql(u8, args[0], "--schema");
+    _ = args;
 
     log.debug("Ziggy LSP started!", .{});
 
@@ -27,18 +28,18 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
     var handler: Handler = .{
         .gpa = gpa,
         .server = &server,
-        .schema = schema_mode,
     };
     server = try ZiggyLsp.init(gpa, &transport, &handler);
 
     try server.loop();
 }
 
-const Handler = struct {
+pub const Handler = struct {
     gpa: std.mem.Allocator,
     server: *ZiggyLsp,
-    schema: bool,
-    documents: std.StringHashMapUnmanaged([:0]u8) = .{},
+    files: std.StringHashMapUnmanaged(Handler.File) = .{},
+
+    usingnamespace @import("lsp/logic.zig");
 
     pub fn initialize(
         self: Handler,
@@ -54,8 +55,8 @@ const Handler = struct {
 
         return .{
             .serverInfo = .{
-                .name = "ZiggyLSP",
-                .version = "0.0.0",
+                .name = "Ziggy LSP",
+                .version = "0.0.1",
             },
             .capabilities = .{
                 .positionEncoding = switch (offset_encoding) {
@@ -118,20 +119,23 @@ const Handler = struct {
 
     pub fn openDocument(
         self: *Handler,
-        _: std.mem.Allocator,
+        arena: std.mem.Allocator,
         notification: types.DidOpenTextDocumentParams,
     ) !void {
         const new_text = try self.gpa.dupeZ(u8, notification.textDocument.text); // We informed the client that we only do full document syncs
         errdefer self.gpa.free(new_text);
 
-        const gop = try self.documents.getOrPut(self.gpa, notification.textDocument.uri);
-        if (gop.found_existing) {
-            self.gpa.free(gop.value_ptr.*); // free old text even though this shoudnt be necessary
-        } else {
-            errdefer std.debug.assert(self.documents.remove(notification.textDocument.uri));
-            gop.key_ptr.* = try self.gpa.dupe(u8, notification.textDocument.uri);
-        }
-        gop.value_ptr.* = new_text;
+        const language_id = notification.textDocument.languageId;
+        const language = std.meta.stringToEnum(Handler.Language, language_id) orelse {
+            log.debug("unrecognized language id: '{s}'", .{language_id});
+            return;
+        };
+        try self.loadFile(
+            arena,
+            new_text,
+            notification.textDocument.uri,
+            language,
+        );
     }
 
     pub fn changeDocument(
@@ -140,206 +144,18 @@ const Handler = struct {
         notification: types.DidChangeTextDocumentParams,
     ) !void {
         if (notification.contentChanges.len == 0) return;
+
         const new_text = try self.gpa.dupeZ(u8, notification.contentChanges[notification.contentChanges.len - 1].literal_1.text); // We informed the client that we only do full document syncs
         errdefer self.gpa.free(new_text);
 
-        const gop = try self.documents.getOrPut(self.gpa, notification.textDocument.uri);
-        if (gop.found_existing) {
-            self.gpa.free(gop.value_ptr.*); // free old text even though this shoudnt be necessary
-        } else {
-            errdefer std.debug.assert(self.documents.remove(notification.textDocument.uri));
-            gop.key_ptr.* = try self.gpa.dupe(u8, notification.textDocument.uri);
-        }
-        gop.value_ptr.* = new_text;
-
-        var res: types.PublishDiagnosticsParams = .{
-            .uri = notification.textDocument.uri,
-            .diagnostics = &.{},
-        };
-
-        if (self.schema) {
-            var diag: schema.Diagnostic = .{ .path = null };
-
-            log.debug("schema: parsing", .{});
-            const ast = schema.Ast.init(arena, new_text, &diag) catch undefined;
-
-            if (diag.err == .none) blk: {
-                log.debug("schema: analysis", .{});
-                _ = schema.Schema.init(
-                    arena,
-                    ast.nodes.items,
-                    new_text,
-                    &diag,
-                ) catch break :blk;
-            }
-            log.debug("schema: done", .{});
-
-            if (diag.err != .none) {
-                const msg = try std.fmt.allocPrint(arena, "{lsp}", .{diag});
-                const range = diag.tok.loc.getSelection(new_text);
-                res.diagnostics = &.{
-                    .{
-                        .range = .{
-                            .start = .{
-                                .line = @intCast(range.start.line - 1),
-                                .character = @intCast(range.start.col - 1),
-                            },
-                            .end = .{
-                                .line = @intCast(range.end.line - 1),
-                                .character = @intCast(range.end.col - 1),
-                            },
-                        },
-                        .severity = .Error,
-                        .message = msg,
-                    },
-                };
-            }
-        } else send: {
-            var diag: ziggy.Diagnostic = .{ .path = null };
-
-            log.debug("parsing ziggy ast", .{});
-            const ast = ziggy.Ast.init(arena, new_text, true, &diag) catch undefined;
-
-            if (diag.err != .none) {
-                log.debug("ziggy code parsing error", .{});
-                const msg = try std.fmt.allocPrint(arena, "{lsp}", .{diag});
-                const range = diag.tok.loc.getSelection(new_text);
-                res.diagnostics = &.{
-                    .{
-                        .range = .{
-                            .start = .{
-                                .line = @intCast(range.start.line - 1),
-                                .character = @intCast(range.start.col - 1),
-                            },
-                            .end = .{
-                                .line = @intCast(range.end.line - 1),
-                                .character = @intCast(range.end.col - 1),
-                            },
-                        },
-                        .severity = .Error,
-                        .message = msg,
-                    },
-                };
-                break :send;
-            }
-
-            log.debug("ziggy parsing ok, looking for schema", .{});
-            const schema_path: []const u8 = blk: {
-                const top_comments = ast.nodes.items[1];
-                if (top_comments.tag == .top_comment) {
-                    assert(top_comments.first_child_id != 0);
-                    const schema_line = ast.nodes.items[top_comments.first_child_id];
-                    const src = schema_line.loc.src(new_text);
-                    var it = std.mem.tokenizeScalar(u8, src, ' ');
-                    var state: enum { start, comment, schema, colon } = .start;
-                    while (it.next()) |tok| switch (state) {
-                        .start => {
-                            if (std.mem.eql(u8, tok, "//!")) {
-                                state = .comment;
-                            } else if (std.mem.eql(u8, tok, "//!ziggy-schema")) {
-                                state = .schema;
-                            } else if (std.mem.eql(u8, tok, "//!ziggy-schema:")) {
-                                state = .colon;
-                            } else {
-                                break :send;
-                            }
-                        },
-                        .comment => {
-                            if (std.mem.eql(u8, tok, "ziggy-schema")) {
-                                state = .schema;
-                            } else if (std.mem.eql(u8, tok, "ziggy-schema:")) {
-                                state = .colon;
-                            } else {
-                                break :send;
-                            }
-                        },
-                        .schema => {
-                            if (std.mem.eql(u8, tok, ":")) {
-                                state = .colon;
-                            } else {
-                                break :send;
-                            }
-                        },
-
-                        .colon => {
-                            break :blk tok;
-                        },
-                    };
-                } else {
-                    log.debug("ziggy file doesn't have a schema comment", .{});
-                }
-                break :send;
-            };
-
-            log.debug("detected schema: '{s}'", .{schema_path});
-            const schema_file = std.fs.cwd().readFileAllocOptions(
-                arena,
-                schema_path,
-                1024 * 1024 * 1024,
-                null,
-                1,
-                0,
-            ) catch {
-                const start_col: u32 = @intCast(std.mem.indexOf(u8, new_text, schema_path).?);
-                res.diagnostics = &.{
-                    .{
-                        .range = .{
-                            .start = .{ .line = 0, .character = start_col },
-                            .end = .{ .line = 0, .character = @intCast(start_col + schema_path.len) },
-                        },
-                        .severity = .Error,
-                        .message = "error opening schema file",
-                    },
-                };
-                break :send;
-            };
-
-            log.debug("schema: parsing", .{});
-            const schema_ast = schema.Ast.init(self.gpa, schema_file, null) catch |err| {
-                const start_col: u32 = @intCast(std.mem.indexOf(u8, new_text, schema_path).?);
-                const msg = try std.fmt.allocPrint(arena, "schema file error: {s}", .{
-                    @errorName(err),
-                });
-                res.diagnostics = &.{
-                    .{
-                        .range = .{
-                            .start = .{ .line = 0, .character = start_col },
-                            .end = .{ .line = 0, .character = @intCast(start_col + schema_path.len) },
-                        },
-                        .severity = .Error,
-                        .message = msg,
-                    },
-                };
-                break :send;
-            };
-
-            const rules = schema.Schema.init(arena, schema_ast.nodes.items, schema_file, null) catch |err| {
-                const start_col: u32 = @intCast(std.mem.indexOf(u8, new_text, schema_path).?);
-                const msg = try std.fmt.allocPrint(arena, "schema file error: {s}", .{
-                    @errorName(err),
-                });
-                res.diagnostics = &.{
-                    .{
-                        .range = .{
-                            .start = .{ .line = 0, .character = start_col },
-                            .end = .{ .line = 0, .character = @intCast(start_col + schema_path.len) },
-                        },
-                        .severity = .Error,
-                        .message = msg,
-                    },
-                };
-                break :send;
-            };
-            _ = rules;
-        }
-
-        log.debug("sending diags!", .{});
-        const msg = try self.server.sendToClientNotification(
-            "textDocument/publishDiagnostics",
-            res,
+        // TODO: this is a hack while we wait for actual incremental reloads
+        const file = self.files.get(notification.textDocument.uri) orelse return;
+        try self.loadFile(
+            arena,
+            new_text,
+            notification.textDocument.uri,
+            file,
         );
-
-        defer self.gpa.free(msg);
     }
 
     pub fn saveDocument(
@@ -356,9 +172,9 @@ const Handler = struct {
         _: std.mem.Allocator,
         notification: types.DidCloseTextDocumentParams,
     ) error{}!void {
-        const kv = self.documents.fetchRemove(notification.textDocument.uri) orelse return;
+        var kv = self.files.fetchRemove(notification.textDocument.uri) orelse return;
         self.gpa.free(kv.key);
-        self.gpa.free(kv.value);
+        kv.value.deinit();
     }
 
     pub fn completion(
@@ -390,12 +206,41 @@ const Handler = struct {
     }
 
     pub fn gotoDefinition(
-        _: Handler,
+        self: Handler,
         arena: std.mem.Allocator,
         request: types.DefinitionParams,
     ) !ResultType("textDocument/definition") {
-        _ = arena;
-        _ = request;
+        const file = self.files.get(request.textDocument.uri) orelse return null;
+        const doc = switch (file) {
+            .ziggy => |doc| doc,
+            .ziggy_schema => return null,
+        };
+        const schema_loc = doc.schema_path_loc orelse return null;
+
+        const sel = schema_loc.getSelection(doc.bytes);
+        const pos = request.position;
+        if (pos.line == sel.start.line - 1 and
+            pos.character >= sel.start.col and pos.character < sel.end.col)
+        {
+            const schema_path_loc = doc.schema_path_loc orelse return null;
+            const doc_dir = std.fs.path.dirname(request.textDocument.uri) orelse return null;
+            const path = try std.fs.path.join(arena, &.{
+                doc_dir,
+                schema_path_loc.src(doc.bytes),
+            });
+            return .{
+                .Definition = types.Definition{
+                    .Location = .{
+                        .uri = path,
+                        .range = .{
+                            .start = .{ .line = 0, .character = 0 },
+                            .end = .{ .line = 0, .character = 0 },
+                        },
+                    },
+                },
+            };
+        }
+
         return null;
     }
 
@@ -405,16 +250,58 @@ const Handler = struct {
         request: types.HoverParams,
         offset_encoding: offsets.Encoding,
     ) !?types.Hover {
-        _ = arena;
+        const file = self.files.get(request.textDocument.uri) orelse return null;
 
-        const text = self.documents.get(request.textDocument.uri) orelse return null;
-        const line = offsets.lineSliceAtPosition(text, request.position, offset_encoding);
+        const doc = switch (file) {
+            .ziggy => |doc| doc,
+            .ziggy_schema => return null,
+        };
+
+        const schema = doc.schema orelse return null;
+
+        const idx = offsets.maybePositionToIndex(
+            doc.bytes,
+            request.position,
+            offset_encoding,
+        ) orelse return null;
+
+        log.debug("hover ok on doc with schema", .{});
+
+        var start = idx;
+        while (start != 0) switch (doc.bytes[start]) {
+            'a'...'z', '_', '0'...'9' => start -= 1,
+            '@' => break,
+            else => return null,
+        };
+
+        log.debug("found start", .{});
+
+        if (doc.bytes.len == 0 or doc.bytes[start] != '@') return null;
+
+        var end = idx;
+        while (true) switch (doc.bytes[end]) {
+            'a'...'z', '_', '0'...'9' => end += 1,
+            else => break,
+        };
+
+        var buf = std.ArrayList(u8).init(arena);
+        const literal = schema.rules.literals.get(doc.bytes[start..end][1..]) orelse return null;
+
+        var docs_node_id = literal.comment;
+        if (docs_node_id == 0) return null;
+        while (docs_node_id != 0) {
+            const doc_node = schema.ast.nodes.items[docs_node_id];
+            if (doc_node.tag != .doc_comment) break;
+            try buf.appendSlice(doc_node.loc.src(schema.ast.code)[3..]);
+            try buf.append('\n');
+            docs_node_id = doc_node.next_id;
+        }
 
         return types.Hover{
             .contents = .{
                 .MarkupContent = .{
-                    .kind = .plaintext,
-                    .value = line,
+                    .kind = .markdown,
+                    .value = buf.items,
                 },
             },
         };
@@ -481,165 +368,3 @@ const Handler = struct {
         log.warn("received response from client with id '{s}' that has no handler!", .{id});
     }
 };
-
-// pub fn run(
-//     gpa: std.mem.Allocator,
-//     docs: *std.StringHashMap([]u8),
-// ) !void {
-//     const stdin_unbuffered_reader = std.io.getStdIn().reader();
-//     var buffered_reader = std.io.bufferedReader(stdin_unbuffered_reader);
-//     const r = buffered_reader.reader();
-//     const w = std.io.getStdOut().writer();
-
-//     var buf = std.ArrayList(u8).init(gpa);
-//     var outbuf = std.ArrayList(u8).init(gpa);
-
-//     while (true) : (buf.clearRetainingCapacity()) {
-//         const len = try parseHeader(&buf, r);
-//         log.debug("headers done", .{});
-
-//         log.debug("len from run(): {}", .{len});
-//         try buf.resize(len);
-
-//         try r.readNoEof(buf.items);
-
-//         log.debug("received: \n\n{s}\n\n", .{buf.items});
-
-//         try reply(gpa, buf.items, &outbuf, w, docs);
-//         outbuf.clearRetainingCapacity();
-//     }
-// }
-
-// fn reply(
-//     gpa: std.mem.Allocator,
-//     bytes: []const u8,
-//     buf: *std.ArrayList(u8),
-//     w: anytype,
-//     docs: *std.StringHashMap([]u8),
-// ) !void {
-//     const msg = try std.json.parseFromSlice(Message, gpa, bytes, .{
-//         .ignore_unknown_fields = true,
-//     });
-//     defer msg.deinit();
-
-//     switch (msg.value.tag) {
-//         .notification => {
-//             const notif = msg.value.notification.?;
-//             switch (notif) {
-//                 else => return,
-//                 .@"textDocument/didChange" => |change| {
-//                     // const gop = try docs.getOrPut(change.textDocument.uri);
-//                     const text = change.contentChanges[0].literal_1.text;
-//                     log.debug("saving '{s}' \n\n{s}\n\n", .{ change.textDocument.uri, text });
-//                     // if (gop.found_existing) {
-//                     //     gop.value_ptr.* = try gpa.realloc(gop.value_ptr.*, text.len);
-//                     // } else {
-//                     //     gop.value_ptr.* = try gpa.alloc(u8, text.len);
-//                     // }
-
-//                     // @memcpy(gop.value_ptr.*, text);
-//                     log.debug("saved '{s}'", .{change.textDocument.uri});
-//                 },
-//             }
-//         },
-//         .response => @panic("TODO: message response"),
-//         .request => {
-//             const req = msg.value.request.?;
-//             switch (req.params) {
-//                 else => std.debug.panic("TODO: req.params == '{s}'", .{@tagName(req.params)}),
-//                 .@"textDocument/willSaveWaitUntil" => |ws| {
-//                     const maybe_doc = docs.get(ws.textDocument.uri);
-//                     var text_edit_buf: [1]types.TextEdit = undefined;
-//                     var text_edits: []types.TextEdit = text_edit_buf[0..0];
-//                     if (maybe_doc) |doc| {
-//                         _ = doc;
-//                         text_edits = &text_edit_buf;
-//                         text_edits[0] = .{
-//                             .range = .{ .start = .{
-//                                 .line = 1,
-//                                 .character = 1,
-//                             }, .end = .{
-//                                 .line = 1,
-//                                 .character = "banana".len,
-//                             } },
-//                             .newText = "banana",
-//                         };
-//                     }
-
-//                     const frame: Frame([]const types.TextEdit) = .{
-//                         .id = req.id,
-//                         .result = text_edits,
-//                     };
-
-//                     try frame.write(buf, w);
-//                 },
-//                 .initialize => |_| {
-//                     const initialize_result: types.InitializeResult = .{
-//                         .serverInfo = .{
-//                             .name = "Ziggy LSP",
-//                             .version = "0.0.1",
-//                         },
-//                         .capabilities = .{
-//                             .positionEncoding = .@"utf-8",
-//                             .textDocumentSync = .{
-//                                 .TextDocumentSyncOptions = .{
-//                                     .openClose = true,
-//                                     .change = .Full,
-//                                     // .save = .{ .bool = true },
-//                                     .willSaveWaitUntil = true,
-//                                 },
-//                             },
-//                         },
-//                     };
-
-//                     const frame: Frame(types.InitializeResult) = .{
-//                         .id = req.id,
-//                         .result = initialize_result,
-//                     };
-
-//                     try frame.write(buf, w);
-//                 },
-//             }
-//         },
-//     }
-// }
-
-// pub fn Frame(comptime T: type) type {
-//     return struct {
-//         jsonrpc: []const u8 = "2.0",
-//         id: types.RequestId,
-//         result: T,
-
-//         pub fn write(self: @This(), buf: *std.ArrayList(u8), w: anytype) !void {
-//             try std.json.stringify(self, .{}, buf.writer());
-//             try w.print(
-//                 "Content-Length: {}\r\n\r\n{s}",
-//                 .{ buf.items.len, buf.items },
-//             );
-//         }
-//     };
-// }
-
-// fn parseHeader(buf: *std.ArrayList(u8), reader: anytype) !usize {
-//     var maybe_len: ?usize = null;
-//     while (true) : (buf.clearRetainingCapacity()) {
-//         try reader.readUntilDelimiterArrayList(buf, '\n', 1024);
-//         log.debug("header: '{s}'", .{buf.items});
-
-//         const prefix = "Content-Length: ";
-
-//         if (buf.items.len == 1) break;
-//         if (!std.mem.startsWith(u8, buf.items, prefix)) continue;
-
-//         const len_string = blk: {
-//             const rest = buf.items[prefix.len..];
-//             break :blk rest[0 .. rest.len - 1];
-//         };
-
-//         if (maybe_len != null) @panic("len was already set");
-//         maybe_len = try std.fmt.parseInt(usize, len_string, 10);
-//         log.debug("len: {?}", .{maybe_len});
-//     }
-
-//     return maybe_len orelse error.MissingHeader;
-// }

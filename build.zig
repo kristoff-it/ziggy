@@ -8,6 +8,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = .{ .path = "src/root.zig" },
         .target = target,
         .optimize = optimize,
+        .strip = true,
     });
 
     const unit_tests = b.addTest(.{

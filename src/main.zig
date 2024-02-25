@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const ziggy = @import("ziggy");
 const logging = @import("cli/logging.zig");
 const lsp_exe = @import("cli/lsp.zig");
@@ -12,6 +13,17 @@ pub const known_folders_config = .{
 pub const std_options: std.Options = .{
     .logFn = logging.logFn,
 };
+
+pub fn panic(
+    msg: []const u8,
+    trace: ?*std.builtin.StackTrace,
+    ret_addr: ?usize,
+) noreturn {
+    _ = ret_addr;
+    std.log.err("{s}\n\n{?}", .{ msg, trace });
+    if (builtin.mode == .Debug) @breakpoint();
+    std.process.exit(1);
+}
 
 pub const Command = enum { lsp, query, fmt, check, convert, help };
 
