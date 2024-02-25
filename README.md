@@ -24,7 +24,7 @@ Alpha, using Ziggy now means participating in its development.
 <details><summary>Schema</summary>
 <p>
 
-```ziggy-schema
+```zig
 root = Project
 
 struct Project {
@@ -69,7 +69,7 @@ struct Local {
 <p>
 
 
-```ziggy-schema
+```zig
 root = Frontmatter
 
 ///A RFC 3339 date string, eg "2024-10-24T00:00:00"
