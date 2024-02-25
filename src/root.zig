@@ -7,6 +7,9 @@ pub const parseLeaky = Parser.parseLeaky;
 pub const serializer = @import("ziggy/serializer.zig");
 pub const stringify = serializer.stringify;
 
+// Ziggy documents and schemas can have a maximum size of 4GB
+pub const max_size = 4 * 1024 * 1024 * 1024;
+
 test {
     _ = Tokenizer;
     _ = Parser;

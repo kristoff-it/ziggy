@@ -165,57 +165,17 @@ pub fn format(
             }
         },
         .missing_field => |miss| {
-            if (lsp) {
-                try out_stream.print(
-                    "missing field '{s}'",
-                    .{miss.name},
-                );
-            } else {
-                const struct_end = self.tok.loc.getSelection(self.code);
-                try out_stream.print(
-                    "missing field '{s}', struct ends here:",
-                    .{miss.name},
-                );
-                if (self.path) |p| {
-                    try out_stream.print("\n{s}:{}:{}\n", .{
-                        p,
-                        struct_end.start.line,
-                        struct_end.start.col,
-                    });
-                } else {
-                    try out_stream.print(" line: {} col: {}\n", .{
-                        struct_end.start.line,
-                        struct_end.start.col,
-                    });
-                }
-            }
+            try out_stream.print(
+                "missing field '{s}'",
+                .{miss.name},
+            );
         },
         .unknown_field => {
             const name = self.tok.loc.src(self.code);
-            if (lsp) {
-                try out_stream.print(
-                    "unknown field '{s}'",
-                    .{name},
-                );
-            } else {
-                const selection = self.tok.loc.getSelection(self.code);
-                try out_stream.print(
-                    "unknown field '{s}' found here:",
-                    .{name},
-                );
-                if (self.path) |p| {
-                    try out_stream.print("\n{s}:{}:{}\n", .{
-                        p,
-                        selection.start.line,
-                        selection.start.col,
-                    });
-                } else {
-                    try out_stream.print(" line: {} col: {}\n", .{
-                        selection.start.line,
-                        selection.start.col,
-                    });
-                }
-            }
+            try out_stream.print(
+                "unknown field '{s}'",
+                .{name},
+            );
         },
 
         .schema => |s| {
@@ -225,30 +185,10 @@ pub fn format(
         },
 
         .type_mismatch => |mism| {
-            if (lsp) {
-                try out_stream.print(
-                    "type mismatch, expected '{s}'",
-                    .{mism.expected},
-                );
-            } else {
-                const val = self.tok.loc.getSelection(self.code);
-                try out_stream.print(
-                    "type mismatch, expected '{s}'",
-                    .{mism.expected},
-                );
-                if (self.path) |p| {
-                    try out_stream.print("\n{s}:{}:{}\n", .{
-                        p,
-                        val.start.line,
-                        val.start.col,
-                    });
-                } else {
-                    try out_stream.print(" line: {} col: {}\n", .{
-                        val.start.line,
-                        val.start.col,
-                    });
-                }
-            }
+            try out_stream.print(
+                "type mismatch, expected '{s}'",
+                .{mism.expected},
+            );
         },
 
         .missing_struct_name => |msn| {

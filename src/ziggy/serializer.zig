@@ -82,23 +82,23 @@ pub fn stringifyInner(value: anytype, opts: StringifyOptions, indent_level: usiz
         .EnumLiteral => try writer.print("\"{s}\"", .{@tagName(value)}),
 
         .Enum => {
-            if (@hasDecl(T, "ziggy") and @hasDecl(T.ziggy, "stringify")) {
-                try T.ziggy.stringify(value, opts, indent_level, depth, writer);
+            if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "stringify")) {
+                try T.ziggy_options.stringify(value, opts, indent_level, depth, writer);
             } else {
                 try writer.print("\"{s}\"", .{@tagName(value)});
             }
         },
 
         .Struct => {
-            if (@hasDecl(T, "ziggy") and @hasDecl(T.ziggy, "stringify")) {
-                try T.ziggy.stringify(value, opts, indent_level, depth, writer);
+            if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "stringify")) {
+                try T.ziggy_options.stringify(value, opts, indent_level, depth, writer);
             } else {
                 try stringifyStruct(writer, value, indent_level, depth, opts);
             }
         },
         .Union => {
-            if (@hasDecl(T, "ziggy") and @hasDecl(T.ziggy, "stringify")) {
-                try T.ziggy.stringify(value, opts, indent_level, depth, writer);
+            if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "stringify")) {
+                try T.ziggy_options.stringify(value, opts, indent_level, depth, writer);
             } else {
                 try stringifyUnion(writer, value, indent_level, depth, opts);
             }

@@ -4,6 +4,60 @@ A Zig-flavored JSON / YAML / TOML replacement.
 ## Status
 Alpha, using Ziggy now means participating in its development.
 
+## Example 
+***`frontmatter.ziggy`***
+```zig
+.title = "Buy Tickets",
+.description = "short description",
+.date = @date("2020-10-01T00:00:00"),
+.aliases = ["/buy.html", "/tickets.html"],
+.draft = false,
+.custom = {
+    "sales_end": @date("2020-12-01T00:00:00"), 
+    "some_other_custom_field": true,
+    "extended_description":
+        \\Lorem ipsum dolor something something,
+        \\this is a multiline string literal.
+    ,
+},
+```
+
+Schema file for the previous example:
+```ziggy-schema
+root = Frontmatter
+
+///A RFC 3339 date string, eg "2024-10-24T00:00:00"
+@date = bytes,
+
+struct Frontmatter {
+    title: bytes,
+    description: bytes,
+    author: ?bytes,
+    date: @date,
+    tags: [bytes],
+    /// Alternative paths where this content will also be made available
+    aliases: [bytes],
+    /// When set to true this file will be ignored when bulding the website
+    draft: bool,
+    /// Path to a layout file inside of the configured layouts directory 
+    layout: bytes,
+    /// User-defined properties that you can then reference in templates 
+    custom: map[any],
+}
+```
+
+## Value Types
+Ziggy values can be of the following types:
+
+- Bytes `"🧑‍🚀"`, `"\x1B[?1000h gang"`, `\\multiline`
+- Numbers `123_000`, `1.23`, `0xff_ff_ff`, `0o7_5_5`, `0b01_01_01` 
+- Null `null`
+- Bool `true`, `false`
+- Custom Literals `@date("2020-12-01")`, `@v("1.0.0")`, `@url("https://zine-ssg.io")`
+- Array `[1, 2, 3]`
+- Struct `{ .fixed = "schema" }`, `Named { .for = "unions of structs" }`
+- Map `{ "custom": "keys" }`
+
 ## Features
 
 ### Tooling Supremacy
@@ -30,7 +84,7 @@ General Options:
 Development status: 
 - [x] fmt 
 - [ ] query 
-- [ ] check 
+- [x] check 
 - [ ] convert 
 - [x] lsp 
 - [x] help 
@@ -61,19 +115,8 @@ into a destination Type avoiding any unnecessary allocation.
 Development status:
 - [x] AST parser
 - [x] Type-driven Zig parser
-- [ ] Serializer (https://github.com/kristoff-it/ziggy/issues/6)
+- [x] Serializer
 - [ ] AST parser as a C library
-
-### Value Types
-Ziggy values can be of the following types:
-
-- `struct`
-- `map`
-- `array`
-- `string`
-- `number`
-- `bool` (`true`, `false`)
-- `null`
 
 
 ### Structs vs Maps
@@ -82,7 +125,7 @@ key names (ie key names must follow a schema) vs where **the user** is in contro
 of key names.
 
 Struct: 
-```
+```zig
 {
   .name = "Loris Cro",
   .age = 33,
@@ -90,7 +133,7 @@ Struct:
 ```
 
 Map:
-```
+```zig
 {
   "foo": "bar",
   "bar": true, 
@@ -249,7 +292,6 @@ const ziggy = @import("ziggy");
 const data = @embedFile("data.ziggy");
 
 const Project = struct {
-    name: []const u8,
     dependencies: Map(Dependency),
     pub const Dependency = union(enum) {
         Remote: struct {
@@ -397,8 +439,8 @@ Development status:
 - [x] Handwritten AST Parser 
 - [x] Formatter (`ziggy fmt --schema --stdin`)
 - [x] LSP (`ziggy lsp --schema`)
-- [ ] Analysis of Schema files
-- [ ] Schema compliance for Ziggy files (`ziggy check`)
+- [x] Analysis of Schema files (https://github.com/kristoff-it/ziggy/issues/9)
+- [x] Schema compliance for Ziggy files (`ziggy check`, `ziggy lsp`)
 - [ ] Schema file support in `ziggy convert`
 
 ### Binary Format

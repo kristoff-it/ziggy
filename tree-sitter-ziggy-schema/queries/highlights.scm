@@ -2,19 +2,22 @@
 (struct_field
   key: (_) @keyword)
   
-(tag) @function
+(tag_name) @function
 
 [
   "any"
   "struct"
   "root"
+  "enum"
+  "map"
 ] @keyword
 
 
 (identifier) @type
 
+"?" @type
+
 [
-  "map"
   "bool"
   "bytes"
   "int"
@@ -29,6 +32,7 @@
 "," @punctuation.delimiter
 
 "|" @punctuation
+
 
 [
   "["

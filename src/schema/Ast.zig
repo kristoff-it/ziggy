@@ -22,6 +22,7 @@ pub const Node = struct {
         root,
         root_expr,
         tag_definition,
+        enum_definition,
         @"struct",
         struct_field,
         doc_comment,
@@ -31,6 +32,7 @@ pub const Node = struct {
         array,
         map,
         struct_union,
+        optional,
         identifier,
         tag,
         bytes,
@@ -176,9 +178,37 @@ pub fn init(
                 token = try ast.nextMust(.identifier);
                 node = try node.addChild(&ast.nodes, .identifier);
                 node.loc = token.loc;
+                node = node.parent(&ast.nodes);
+
+                _ = try ast.nextMust(.eq);
+
+                token = try ast.nextMustAny(&.{ .bytes, .enum_kw });
+
+                switch (token.tag) {
+                    .bytes => {
+                        node = try node.addChild(&ast.nodes, .bytes);
+                        node.loc = token.loc;
+                        node = node.parent(&ast.nodes);
+                    },
+                    .enum_kw => {
+                        node = try node.addChild(&ast.nodes, .enum_definition);
+                        node.loc.start = token.loc.start;
+                        _ = try ast.nextMust(.lb);
+                        token = try ast.nextMustAny(&.{ .identifier, .rb });
+                        while (token.tag == .identifier) {
+                            node = try node.addChild(&ast.nodes, .identifier);
+                            node.loc = token.loc;
+                            node = node.parent(&ast.nodes);
+                            token = try ast.nextMustAny(&.{ .identifier, .rb });
+                        }
+                        assert(token.tag == .rb);
+                        node.loc.end = token.loc.end;
+                        node = node.parent(&ast.nodes);
+                    },
+                    else => unreachable,
+                }
 
                 token = try ast.nextMust(.comma);
-                node = node.parent(&ast.nodes);
                 node.loc.end = token.loc.end;
 
                 token = try ast.next();
@@ -293,6 +323,12 @@ pub fn init(
                 token = try ast.next();
             },
 
+            .optional => {
+                assert(node.last_child_id != 0);
+                node.loc.end = ast.nodes.items[node.last_child_id].loc.end;
+                node = node.parent(&ast.nodes);
+            },
+
             ._expr => switch (token.tag) {
                 .at => {
                     node.tag = .tag;
@@ -345,6 +381,12 @@ pub fn init(
                     node = try node.addChild(&ast.nodes, ._expr);
                     token = try ast.next();
                 },
+                .qmark => {
+                    node.tag = .optional;
+                    node.loc.start = token.loc.start;
+                    node = try node.addChild(&ast.nodes, ._expr);
+                    token = try ast.next();
+                },
                 .identifier => {
                     var pipe = try ast.next();
                     if (pipe.tag != .pipe) {
@@ -375,6 +417,7 @@ pub fn init(
                 },
                 else => try ast.must(token, .expr),
             },
+            .enum_definition,
             .struct_union,
             .identifier,
             .tag,
@@ -474,7 +517,28 @@ pub fn render(nodes: []const Node, code: [:0]const u8, w: anytype) !void {
         }
 
         assert(ident.tag == .identifier);
-        try w.print("@{s},\n", .{ident.loc.src(code)});
+        try w.print("@{s} = ", .{ident.loc.src(code)});
+
+        const expr = nodes[ident.next_id];
+        switch (expr.tag) {
+            else => unreachable,
+            .bytes => try w.writeAll("bytes,\n"),
+            .enum_definition => {
+                try w.writeAll("enum { ");
+                var enum_name_id = expr.first_child_id;
+                while (enum_name_id != 0) {
+                    const enum_name = nodes[enum_name_id];
+                    try w.writeAll(enum_name.loc.src(code));
+                    enum_name_id = enum_name.next_id;
+                    if (enum_name_id != 0) {
+                        try w.writeAll(", ");
+                    }
+                }
+
+                try w.writeAll("},\n");
+            },
+        }
+
         idx = next_tag.next_id;
     }
 
@@ -563,6 +627,10 @@ fn renderExpr(idx: u32, nodes: []const Node, code: [:0]const u8, w: anytype) !vo
             try w.writeAll("map[");
             try renderExpr(expr.last_child_id, nodes, code, w);
             try w.writeAll("]");
+        },
+        .optional => {
+            try w.writeAll("?");
+            try renderExpr(expr.last_child_id, nodes, code, w);
         },
         .tag,
         .identifier,

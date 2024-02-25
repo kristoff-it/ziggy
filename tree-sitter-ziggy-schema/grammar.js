@@ -20,19 +20,22 @@ module.exports = grammar({
     ),
 
     
+    tag_name: $ => seq('@', alias($.identifier, "_tag_name")),
+    enum_definition: $ => seq("enum", "{", commaSep1($.identifier), "}"),
     tag: $ => seq(
       field("docs", optional($.doc_comment)), 
       field("name", $.tag_name),
+      "=",
+      field("expr", choice("bytes", $.enum_definition)),
     ),
-
-    tag_name: $ => seq('@', alias($.identifier, "_tag_name")),
-
+    
     expr: $ => choice(
       $.struct_union,
       $.identifier,
-      $.tag,
+      $.tag_name,
       $.map,
       $.array,
+      $.optional,
       "bytes",
       "int",
       "float",
@@ -41,6 +44,7 @@ module.exports = grammar({
     ),
 
     struct_union: $ => seq($.identifier, repeat1(seq('|', $.identifier))),
+
 
     
     identifier: (_) => {
@@ -51,6 +55,7 @@ module.exports = grammar({
 
     map: $ => seq("map", '[', $.expr, ']'), 
     array: $ => seq('[', $.expr, ']'), 
+    optional: $ => seq('?', $.expr),
 
     struct: $ => seq(
       field("docs", optional($.doc_comment)),

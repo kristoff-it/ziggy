@@ -20,6 +20,21 @@
     "fields": {}
   },
   {
+    "type": "enum_definition",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "expr",
     "named": true,
     "fields": {},
@@ -40,11 +55,15 @@
           "named": true
         },
         {
+          "type": "optional",
+          "named": true
+        },
+        {
           "type": "struct_union",
           "named": true
         },
         {
-          "type": "tag",
+          "type": "tag_name",
           "named": true
         }
       ]
@@ -52,6 +71,21 @@
   },
   {
     "type": "map",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "expr",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "optional",
     "named": true,
     "fields": {},
     "children": {
@@ -206,6 +240,20 @@
           }
         ]
       },
+      "expr": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "bytes",
+            "named": false
+          },
+          {
+            "type": "enum_definition",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -236,6 +284,10 @@
     "named": false
   },
   {
+    "type": "?",
+    "named": false
+  },
+  {
     "type": "@",
     "named": false
   },
@@ -261,6 +313,10 @@
   },
   {
     "type": "bytes",
+    "named": false
+  },
+  {
+    "type": "enum",
     "named": false
   },
   {

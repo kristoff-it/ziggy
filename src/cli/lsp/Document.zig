@@ -115,7 +115,7 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) Document {
     };
 
     log.debug("schema: applying", .{});
-    rules.check(gpa, schema_ast, ast, &doc.diagnostic) catch return doc;
+    rules.check(gpa, ast, &doc.diagnostic) catch return doc;
 
     return doc;
 }

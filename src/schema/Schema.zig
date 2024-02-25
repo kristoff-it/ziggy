@@ -11,8 +11,16 @@ const Node = Ast.Node;
 const log = std.log.scoped(.schema);
 
 root: Rule,
-literals: std.StringHashMapUnmanaged(struct { comment: u32, name: u32 }) = .{},
+code: [:0]const u8,
+nodes: []const Ast.Node,
+literals: std.StringHashMapUnmanaged(LiteralRule) = .{},
 structs: std.StringArrayHashMapUnmanaged(StructRule) = .{},
+
+pub const LiteralRule = struct {
+    comment: u32,
+    name: u32,
+    expr: u32,
+};
 
 pub const StructRule = struct {
     comment: u32,
@@ -46,6 +54,8 @@ pub fn init(
     assert(root_expr.last_child_id != 0);
 
     var schema: Schema = .{
+        .code = code,
+        .nodes = nodes,
         .root = .{ .node = root_expr.last_child_id },
     };
     errdefer schema.deinit(gpa);
@@ -58,10 +68,14 @@ pub fn init(
         }
 
         var comment_id = literal.first_child_id;
-        if (nodes[comment_id].tag != .doc_comment) {
+        var name_id = literal.first_child_id;
+        if (nodes[comment_id].tag == .doc_comment) {
+            name_id = nodes[comment_id].next_id;
+        } else {
             comment_id = 0;
         }
-        const name_id = literal.last_child_id;
+
+        const expr_id = literal.last_child_id;
         assert(nodes[name_id].tag == .identifier);
         log.debug("literal '{s}'", .{nodes[name_id].loc.src(code)});
 
@@ -80,7 +94,11 @@ pub fn init(
             }
             return error.DuplicateField;
         }
-        gop.value_ptr.* = .{ .comment = comment_id, .name = name_id };
+        gop.value_ptr.* = .{
+            .comment = comment_id,
+            .name = name_id,
+            .expr = expr_id,
+        };
         idx = literal.next_id;
     }
 
@@ -168,12 +186,12 @@ pub fn init(
 
     // Analysis
     log.debug("beginning analysis", .{});
-    try schema.analyzeRule(gpa, schema.root, nodes, code, diagnostic);
+    try schema.analyzeRule(gpa, schema.root, diagnostic);
     log.debug("root_rule analized", .{});
     for (schema.structs.keys(), schema.structs.values()) |s_name, s| {
         for (s.fields.keys(), s.fields.values()) |f_name, f| {
             log.debug("analyzeRule '{s}.{s}'", .{ s_name, f_name });
-            try schema.analyzeRule(gpa, f.rule, nodes, code, diagnostic);
+            try schema.analyzeRule(gpa, f.rule, diagnostic);
         }
     }
 
@@ -190,23 +208,21 @@ fn analyzeRule(
     schema: Schema,
     gpa: std.mem.Allocator,
     rule: Rule,
-    nodes: []const Node,
-    code: [:0]const u8,
     diagnostic: ?*Diagnostic,
 ) !void {
-    var node = nodes[rule.node];
+    var node = schema.nodes[rule.node];
     while (true) {
-        const sel = node.loc.getSelection(code);
+        const sel = node.loc.getSelection(schema.code);
         log.debug("analyzing rule '{s}', line: {}, col: {}", .{
-            node.loc.src(code),
+            node.loc.src(schema.code),
             sel.start.line,
             sel.start.col,
         });
         switch (node.tag) {
             .bytes, .int, .float, .bool, .any => break,
-            .map, .array => node = nodes[node.first_child_id],
+            .map, .array, .optional => node = schema.nodes[node.first_child_id],
             .tag => {
-                const src = node.loc.src(code);
+                const src = node.loc.src(schema.code);
                 if (!schema.literals.contains(src[1..])) {
                     if (diagnostic) |d| {
                         d.tok = .{
@@ -220,7 +236,7 @@ fn analyzeRule(
                 break;
             },
             .identifier => {
-                const src = node.loc.src(code);
+                const src = node.loc.src(schema.code);
                 if (!schema.structs.contains(src)) {
                     if (diagnostic) |d| {
                         d.tok = .{
@@ -240,8 +256,8 @@ fn analyzeRule(
                 defer seen_names.deinit();
 
                 while (idx != 0) {
-                    const ident = nodes[idx];
-                    const src = ident.loc.src(code);
+                    const ident = schema.nodes[idx];
+                    const src = ident.loc.src(schema.code);
                     const gop = try seen_names.getOrPut(src);
                     if (gop.found_existing) {
                         if (diagnostic) |d| {
@@ -251,7 +267,7 @@ fn analyzeRule(
                             };
                             d.err = .{
                                 .duplicate_field = .{
-                                    .first_loc = nodes[gop.value_ptr.*].loc,
+                                    .first_loc = schema.nodes[gop.value_ptr.*].loc,
                                 },
                             };
                         }
@@ -280,6 +296,7 @@ fn analyzeRule(
 }
 
 const CheckItem = struct {
+    optional: bool = false,
     rule: Rule,
     doc_node: u32,
 };
@@ -287,7 +304,6 @@ const CheckItem = struct {
 pub fn check(
     self: Schema,
     gpa: std.mem.Allocator,
-    ast: Ast,
     doc: ziggy.Ast,
     diag: ?*ziggy.Diagnostic,
 ) !void {
@@ -306,11 +322,11 @@ pub fn check(
     });
 
     while (stack.popOrNull()) |elem| {
-        const rule = ast.nodes.items[elem.rule.node];
+        const rule = self.nodes[elem.rule.node];
         const doc_node = doc.nodes.items[elem.doc_node];
         {
             log.debug("rule '{s}', node '{s}'", .{
-                rule.loc.src(ast.code),
+                rule.loc.src(self.code),
                 @tagName(doc_node.tag),
             });
             const sel = doc_node.loc.getSelection(doc.code);
@@ -320,6 +336,19 @@ pub fn check(
             });
         }
         switch (rule.tag) {
+            .optional => switch (doc_node.tag) {
+                .null => {},
+                else => {
+                    const child_rule: Rule = .{ .node = rule.first_child_id };
+                    assert(child_rule.node != 0);
+
+                    try stack.append(.{
+                        .optional = true,
+                        .rule = child_rule,
+                        .doc_node = elem.doc_node,
+                    });
+                },
+            },
             .array => switch (doc_node.tag) {
                 .array, .array_comma => {
                     //TODO: optimize for simple cases
@@ -337,7 +366,7 @@ pub fn check(
                         doc_child_id = doc.nodes.items[doc_child_id].next_id;
                     }
                 },
-                else => return typeMismatch(ast, diag, rule, doc_node),
+                else => return self.typeMismatch(diag, doc, elem),
             },
             .map => switch (doc_node.tag) {
                 .struct_or_map => {},
@@ -358,11 +387,11 @@ pub fn check(
                     }
                 },
 
-                else => return typeMismatch(ast, diag, rule, doc_node),
+                else => return self.typeMismatch(diag, doc, elem),
             },
             .struct_union => switch (doc_node.tag) {
                 .@"struct" => {
-                    const rule_src = rule.loc.src(ast.code);
+                    const rule_src = rule.loc.src(self.code);
 
                     const struct_name_node = doc.nodes.items[doc_node.first_child_id];
                     if (struct_name_node.tag != .identifier) {
@@ -389,8 +418,8 @@ pub fn check(
                     var ident_id = rule.first_child_id;
                     assert(ident_id != 0);
                     while (ident_id != 0) {
-                        const id_rule = ast.nodes.items[ident_id];
-                        const id_rule_src = id_rule.loc.src(ast.code);
+                        const id_rule = self.nodes[ident_id];
+                        const id_rule_src = id_rule.loc.src(self.code);
                         if (std.mem.eql(u8, struct_name, id_rule_src)) {
                             try stack.append(.{
                                 .rule = .{ .node = ident_id },
@@ -414,12 +443,12 @@ pub fn check(
                     }
                     return error.WrongStructName;
                 },
-                else => return typeMismatch(ast, diag, rule, doc_node),
+                else => return self.typeMismatch(diag, doc, elem),
             },
             .identifier => switch (doc_node.tag) {
                 .@"struct", .braceless_struct => {
                     //TODO: optimize for simple cases
-                    const name = rule.loc.src(ast.code);
+                    const name = rule.loc.src(self.code);
                     const struct_rule = self.structs.get(name).?;
 
                     var seen_fields = std.StringHashMap(void).init(gpa);
@@ -463,7 +492,12 @@ pub fn check(
                     }
 
                     if (seen_fields.count() != struct_rule.fields.count()) {
-                        for (struct_rule.fields.keys()) |k| {
+                        var it = struct_rule.fields.iterator();
+                        while (it.next()) |kv| {
+                            if (self.nodes[kv.value_ptr.rule.node].tag == .optional) {
+                                continue;
+                            }
+                            const k = kv.key_ptr.*;
                             if (!seen_fields.contains(k)) {
                                 if (diag) |d| {
                                     // tok must point at where the struct ends
@@ -480,32 +514,32 @@ pub fn check(
                                         },
                                     };
                                 }
-                                return error.UnknownField;
+                                return error.MissingField;
                             }
                         }
                     }
                 },
-                else => return typeMismatch(ast, diag, rule, doc_node),
+                else => return self.typeMismatch(diag, doc, elem),
             },
             .tag => switch (doc_node.tag) {
                 .tag => {},
-                else => return typeMismatch(ast, diag, rule, doc_node),
+                else => return self.typeMismatch(diag, doc, elem),
             },
             .bytes => switch (doc_node.tag) {
                 .string, .line_string => {},
-                else => return typeMismatch(ast, diag, rule, doc_node),
+                else => return self.typeMismatch(diag, doc, elem),
             },
             .int => switch (doc_node.tag) {
                 .integer => {},
-                else => return typeMismatch(ast, diag, rule, doc_node),
+                else => return self.typeMismatch(diag, doc, elem),
             },
             .float => switch (doc_node.tag) {
                 .float => {},
-                else => return typeMismatch(ast, diag, rule, doc_node),
+                else => return self.typeMismatch(diag, doc, elem),
             },
             .bool => switch (doc_node.tag) {
                 .bool => {},
-                else => return typeMismatch(ast, diag, rule, doc_node),
+                else => return self.typeMismatch(diag, doc, elem),
             },
             .any => {},
             else => unreachable,
@@ -514,11 +548,18 @@ pub fn check(
 }
 
 fn typeMismatch(
-    ast: Ast,
+    self: Schema,
     diag: ?*ziggy.Diagnostic,
-    rule_node: Ast.Node,
-    found: ziggy.Ast.Node,
+    doc: ziggy.Ast,
+    check_item: CheckItem,
 ) error{TypeMismatch} {
+    var rule_node = self.nodes[check_item.rule.node];
+    if (check_item.optional) {
+        rule_node = self.nodes[rule_node.parent_id];
+    }
+
+    const found = doc.nodes.items[check_item.doc_node];
+
     assert(found.tag != .comment);
     assert(found.tag != .top_comment);
 
@@ -529,7 +570,7 @@ fn typeMismatch(
         };
         d.err = .{
             .type_mismatch = .{
-                .expected = rule_node.loc.src(ast.code),
+                .expected = rule_node.loc.src(self.code),
             },
         };
     }

@@ -10,6 +10,7 @@ pub const Token = struct {
     pub const Tag = enum {
         invalid,
         root_kw,
+        enum_kw,
         struct_kw,
         map_kw,
         any_kw,
@@ -22,6 +23,7 @@ pub const Token = struct {
         rb,
         lsb,
         rsb,
+        qmark,
         identifier,
         doc_comment_line,
         bytes,
@@ -39,6 +41,7 @@ pub const Token = struct {
             return switch (self) {
                 .invalid => "(invalid)",
                 .root_kw => "root",
+                .enum_kw => "enum",
                 .struct_kw => "struct",
                 .map_kw => "map",
                 .any_kw => "any",
@@ -51,6 +54,7 @@ pub const Token = struct {
                 .rb => "}",
                 .lsb => "[",
                 .rsb => "]",
+                .qmark => "?",
                 .identifier => "(identifier)",
                 .doc_comment_line => "(doc comment)",
                 .bytes => "bytes",
@@ -191,6 +195,12 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
                     res.loc.end = self.idx;
                     break;
                 },
+                '?' => {
+                    self.idx += 1;
+                    res.tag = .qmark;
+                    res.loc.end = self.idx;
+                    break;
+                },
 
                 'a'...'z', 'A'...'Z', '_' => state = .identifier,
                 '/' => state = .doc_comment_start,
@@ -221,6 +231,8 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
                         res.tag = .any_kw;
                     } else if (std.mem.eql(u8, src, "root")) {
                         res.tag = .root_kw;
+                    } else if (std.mem.eql(u8, src, "enum")) {
+                        res.tag = .enum_kw;
                     } else {
                         res.tag = .identifier;
                     }

@@ -15,7 +15,7 @@ pub fn Map(comptime T: type) type {
         data: std.StringHashMapUnmanaged(T),
 
         const Self = @This();
-        pub const ziggy = struct {
+        pub const ziggy_options = struct {
             pub fn parse(
                 parser: *Parser,
                 first_tok: Token,
@@ -287,7 +287,7 @@ test "map + union stringify" {
                 hash: []const u8,
 
                 const Self = @This();
-                pub const ziggy = struct {
+                pub const ziggy_options = struct {
                     pub fn stringify(
                         value: Self,
                         opts: serializer.StringifyOptions,

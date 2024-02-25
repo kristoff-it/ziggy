@@ -99,16 +99,23 @@ pub fn parseValue(
         .Int => return self.parseInt(T, first_tok),
         .Float => return self.parseFloat(T, first_tok),
         .Struct => {
-            if (@hasDecl(T, "ziggy") and @hasDecl(T.ziggy, "parse")) {
-                return T.ziggy.parse(self, first_tok);
+            if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "parse")) {
+                return T.ziggy_options.parse(self, first_tok);
             }
             return self.parseStruct(T, first_tok);
         },
         .Union => {
-            if (@hasDecl(T, "ziggy") and @hasDecl(T.ziggy, "parse")) {
-                return T.ziggy.parse(self, first_tok);
+            if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "parse")) {
+                return T.ziggy_options.parse(self, first_tok);
             }
             return self.parseUnion(T, first_tok);
+        },
+        .Enum => {
+            if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "parse")) {
+                return T.ziggy_options.parse(self, first_tok);
+            }
+            // return self.parseEnum(T, first_tok);
+            @panic("TODO: parseEnum");
         },
         .Optional => |opt| {
             if (first_tok.tag == .null) {
