@@ -4,8 +4,51 @@ A Zig-flavored JSON / YAML / TOML replacement.
 ## Status
 Alpha, using Ziggy now means participating in its development.
 
-## Example 
-***`frontmatter.ziggy`***
+## Examples 
+
+### Project dependencies
+```zig
+{
+    .name = "Ziggy",
+    .dependencies = {
+        "foo": Remote {
+            .url = "(...)",
+            .hash = "(...)",  
+        },
+        "bar": Local {
+            .path = "foo/bar/baz",
+        }
+    },
+}
+```
+<details><summary>Schema</summary>
+<p>
+
+```ziggy-schema
+root = Project
+
+struct Project {
+    name: bytes,
+    dependencies: map[Remote | Local],
+}
+
+struct Remote {
+    url: bytes,
+    hash: bytes,
+}
+
+struct Local {
+    path: bytes,
+}
+  
+```
+
+
+</p>
+</details> 
+
+
+### Frontmatter
 ```zig
 .title = "Buy Tickets",
 .description = "short description",
@@ -22,7 +65,10 @@ Alpha, using Ziggy now means participating in its development.
 },
 ```
 
-Schema file for the previous example:
+<details><summary>Schema</summary>
+<p>
+
+
 ```ziggy-schema
 root = Frontmatter
 
@@ -44,6 +90,9 @@ struct Frontmatter {
     custom: map[any],
 }
 ```
+
+</p>
+</details> 
 
 ## Value Types
 Ziggy values can be of the following types:
@@ -158,7 +207,7 @@ where instead it's up to the user what to put as key values (eg `dependencies`,
 ```
 
 This is how it would look like in Ziggy instead:
-```ziggy
+```zig
 {
   .name = "foo",
   .dependencies = {
@@ -182,7 +231,7 @@ This makes Ziggy a good language for **configuration files** and markdown frontm
 
 #### Frontmatter example
 With outer curlies (worse):
-```ziggy
+```zig
 ---
 {
     .title = "My Post",
@@ -199,7 +248,7 @@ Markdown content.
 ```
 
 Without outer curlies (better): 
-```ziggy
+```zig
 ---
 .title = "My Post",
 .date = "2024-02-18T10:00:00",
@@ -270,7 +319,7 @@ Ziggy allows you to specify struct names which can help both producers and consu
 come to an understanding about the shape of the data without sacrificing indentation.
 
 Here's the same example as above, but in Ziggy:
-```ziggy
+```zig
 .dependencies = {
     "foo": Remote {
         .url = "(...)",
@@ -325,7 +374,7 @@ Note: at the moment struct names must be capitalized (ie start with an uppercase
 #### Multiline String Literals
 Ziggy supports multiline string literals using the same notation used by Zig.
 
-```ziggy
+```zig
 .title = "Lorem Ipsum",
 .description = 
     \\Lorem Ipsum has been the industry's standard 
@@ -373,7 +422,7 @@ This is how I use tags to solve the problem in [Zine](https://zine-ssg.io), a
 static site generator written by me that uses Ziggy as the frontmatter data 
 format:
 
-```ziggy
+```zig
 .title = "Tickets",
 .date = @date("2020-10-01T00:00:00"),
 .draft = false,
@@ -418,7 +467,7 @@ struct Local {
 } 
 ```
 Example that adheres to the schema:
-```ziggy
+```zig
 .name = "zine",
 .version = "0.0.0",
 .dependencies = {
@@ -457,7 +506,7 @@ This allows you to document individual fields / array values as well as toggle
 them off by commenting them out
 
 Example:
-```ziggy
+```zig
 .name = "zine",
 
 // version must be a semver string
@@ -487,7 +536,7 @@ Ziggy supports trailing commas, which can also be used to interact with the
 formatter in a way similar to `zig fmt`, where a trailing comma means vertical 
 alignment, and the absence of one means horizontal alignment.
 
-```ziggy
+```zig
 .horizontal = [1, 2, 3], //no trailing commma
 .vertical = [
     1,
