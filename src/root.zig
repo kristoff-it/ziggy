@@ -15,8 +15,10 @@ test {
     // _ = Parser;
     // _ = Diagnostic;
     _ = Ast;
+
     // _ = Value;
     // _ = serializer;
+    _ = @import("ziggy/ResilientParser.zig");
 }
 
 pub const schema = struct {
