@@ -113,11 +113,10 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) error{OutOfMemory}!Docu
     return doc;
 }
 
-fn findSchemaPath(ast: ziggy.Ast, bytes: [:0]const u8) ?[]const u8 {
-    const top_comments = ast.nodes[1];
-    if (top_comments.tag == .top_comment) {
-        assert(top_comments.first_child_id != 0);
-        const schema_line = ast.nodes[top_comments.first_child_id];
+fn findSchemaPath(tree: ziggy.Ast.Tree, bytes: [:0]const u8) ?[]const u8 {
+    const top_comments = tree.children.items[0];
+    if (top_comments == .token and top_comments.token.tag == .top_comment_line) {
+        const schema_line = top_comments.token;
         const src = schema_line.loc.src(bytes);
         var it = std.mem.tokenizeScalar(u8, src, ' ');
         var state: enum { start, comment, schema, colon } = .start;
