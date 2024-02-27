@@ -73,8 +73,17 @@ pub const TreeFmt = struct {
         writer: anytype,
     ) !void {
         switch (token.tag) {
-            .identifier, .string, .integer, .float => {
+            .string, .integer, .float => {
                 try writer.writeAll(token.loc.src(tfmt.code));
+            },
+            .identifier => {
+                try writer.writeAll(token.loc.src(tfmt.code));
+                // identifiers have a trailing space except between
+                // tag_string '@' and identifier
+                if (i == 0 or
+                    (tfmt.tree.children.items[i - 1] == .token and
+                    tfmt.tree.children.items[i - 1].token.tag != .at))
+                    try writer.writeByte(' ');
             },
             .comment, .top_comment_line => {
                 try writer.writeAll(token.loc.src(tfmt.code));
@@ -82,16 +91,15 @@ pub const TreeFmt = struct {
             },
             .line_string => {
                 try writer.writeByte('\n');
-                try writer.writeByteNTimes(' ', indent * 4);
+                try writer.writeByteNTimes(' ', (indent + 1) * 4);
                 try writer.writeAll(token.loc.src(tfmt.code));
+                // if this is the last line string, indent for a trailing comma
                 if (i + 1 == tfmt.tree.children.items.len) {
                     try writer.writeByte('\n');
-                    try writer.writeByteNTimes(' ', indent * 4);
+                    try writer.writeByteNTimes(' ', (indent + 1) * 4);
                 }
             },
             else => {
-                const space = token.tag == .eql;
-                if (space) try writer.writeByte(' ');
                 try writer.writeAll(token.tag.lexeme());
                 if (has_trailing_comma and
                     (token.tag == .lsb or token.tag == .lb or token.tag == .comma))
@@ -107,9 +115,11 @@ pub const TreeFmt = struct {
                 } else if (tfmt.tree.tag == .top_level_struct) {
                     try writer.writeByte('\n');
                 } else {
-                    const trailing_space =
-                        token.tag == .comma or token.tag == .colon;
-                    if (space or trailing_space) try writer.writeByte(' ');
+                    // print trailing space
+                    if (token.tag == .eql or
+                        token.tag == .comma or
+                        token.tag == .colon)
+                        try writer.writeByte(' ');
                 }
             },
         }
@@ -320,27 +330,23 @@ fn value(p: *Parser) void {
     const m = p.open();
     const token = p.peek(0);
     switch (token.tag) {
-        .lb => {
+        .identifier => {
             const token1 = p.peek(1);
-            switch (token1.tag) {
-                .dot => {
-                    p.struct_();
-                    _ = p.close(m, .@"struct");
-                },
-                .string => {
-                    p.map();
-                    _ = p.close(m, .map);
-                },
-                else => {
-                    // "expected map or struct"
-                    p.advanceWithErrorNoOpen(m, .{
-                        .unexpected_token = .{
-                            .token = token1,
-                            .expected = &.{ .dot, .string },
-                        },
-                    }) catch return;
-                },
+            if (token1.tag != .lb) {
+                // "expected struct"
+                p.advanceWithErrorNoOpen(m, .{
+                    .unexpected_token = .{
+                        .token = token1,
+                        .expected = &.{.dot},
+                    },
+                }) catch return;
             }
+
+            p.advance();
+            p.structOrMap(m) catch return;
+        },
+        .lb => {
+            p.structOrMap(m) catch return;
         },
         .lsb => {
             p.array();
@@ -390,6 +396,29 @@ fn value(p: *Parser) void {
                     },
                 },
             }) catch return;
+        },
+    }
+}
+
+fn structOrMap(p: *Parser, m: MarkOpened) !void {
+    const token = p.peek(1);
+    switch (token.tag) {
+        .dot => {
+            p.struct_();
+            _ = p.close(m, .@"struct");
+        },
+        .string => {
+            p.map();
+            _ = p.close(m, .map);
+        },
+        else => {
+            // "expected map or struct"
+            try p.advanceWithErrorNoOpen(m, .{
+                .unexpected_token = .{
+                    .token = token,
+                    .expected = &.{ .dot, .string },
+                },
+            });
         },
     }
 }
@@ -578,7 +607,10 @@ fn buildTree(p: *Parser) !Tree {
 }
 
 fn expectFmt(case: [:0]const u8) !void {
-    var tree = try init(std.testing.allocator, case, .want_comments, null);
+    var diag = Diagnostic{ .path = null };
+    defer diag.errors.deinit(std.testing.allocator);
+    errdefer std.debug.print("{}\n", .{diag});
+    var tree = try init(std.testing.allocator, case, true, false, &diag);
     defer tree.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{pretty}", .{tree.fmt(case)});
 }
@@ -664,9 +696,9 @@ test "line string" {
     try expectFmt(
         \\{
         \\    "extended_description": 
-        \\    \\Lorem ipsum dolor something something,
-        \\    \\this is a multiline string literal.
-        \\    ,
+        \\        \\Lorem ipsum dolor something something,
+        \\        \\this is a multiline string literal.
+        \\        ,
         \\}
     );
 }
@@ -674,4 +706,48 @@ test "line string" {
 test "invalid" {
     try expectFmt(".a = , ");
     try expectFmt(".a = 1,\n, ");
+}
+
+test "nested named structs" {
+    try expectFmt(
+        \\{
+        \\    "asrt1": Remote {
+        \\        .url = "arst",
+        \\        .hash = "wfp",
+        \\    },
+        \\}, 
+    );
+
+    std.testing.log_level = .debug;
+    try expectFmt(
+        \\//! ziggy-schema:  frontmatter.zs
+        \\.title = "My Post #1",
+        \\.date = @date("2024-02-18T10:00:00"),
+        \\.author = "",
+        \\.tags = ["tag1", "tag2"],
+        \\.draft = true,
+        \\.aliases = [],
+        \\.layout = "arst",
+        \\.custom = {
+        \\    "arst": "foo",
+        \\    "bar": true,
+        \\    "foo": "https://google.com",
+        \\    "bar1": @date("2020-01-01T00:00:00"),
+        \\    "bar1": @date("2020-01-01T00:00:00"),
+        \\    "asrt1": Remote {
+        \\        .url = "arst",
+        \\        .hash = "wfp",
+        \\    },
+        \\    "baz": 
+        \\        \\Lorem Ipsum is simply dummy text of 
+        \\        \\the printing and typesetting industry. 
+        \\        \\
+        \\        \\Lorem Ipsum has been the industry's standard 
+        \\        \\dummy text ever since the 1500s, when an 
+        \\        \\unknown printer took a galley of type and 
+        \\        \\scrambled it to make a type specimen book. 
+        \\        ,
+        \\},
+        \\
+    );
 }
