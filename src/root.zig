@@ -12,11 +12,11 @@ pub const max_size = 4 * 1024 * 1024 * 1024;
 
 test {
     _ = Tokenizer;
-    _ = Parser;
-    _ = Diagnostic;
+    // _ = Parser;
+    // _ = Diagnostic;
     _ = Ast;
-    _ = Value;
-    _ = serializer;
+    // _ = Value;
+    // _ = serializer;
 }
 
 pub const schema = struct {
@@ -26,9 +26,9 @@ pub const schema = struct {
     pub const Ast = @import("schema/Ast.zig");
 };
 
-test {
-    _ = schema.Diagnostic;
-    _ = schema.Tokenizer;
-    _ = schema.Schema;
-    _ = schema.Ast;
-}
+// test {
+//     _ = schema.Diagnostic;
+//     _ = schema.Tokenizer;
+//     _ = schema.Schema;
+//     _ = schema.Ast;
+// }

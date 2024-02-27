@@ -23,7 +23,7 @@ pub fn deinit(doc: *Document) void {
     doc.arena.deinit();
 }
 
-pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) Document {
+pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) error{OutOfMemory}!Document {
     var doc: Document = .{
         .arena = std.heap.ArenaAllocator.init(gpa),
         .bytes = bytes,
@@ -37,12 +37,9 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) Document {
         arena,
         bytes,
         true,
+        false,
         &doc.diagnostic,
     ) catch return doc;
-
-    if (doc.diagnostic.err != .none) return doc;
-
-    log.debug("ziggy parsing ok, looking for schema", .{});
 
     const schema_path = findSchemaPath(ast, bytes) orelse return doc;
     log.debug("detected schema: '{s}'", .{schema_path});
@@ -62,16 +59,12 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) Document {
         1,
         0,
     ) catch |err| {
-        doc.diagnostic.tok = .{
-            .tag = .identifier,
-            .loc = schema_path_loc,
-        };
-        doc.diagnostic.err = .{
+        try doc.diagnostic.errors.append(arena, .{
             .schema = .{
+                .loc = schema_path_loc,
                 .err = err,
             },
-        };
-
+        });
         return doc;
     };
 
@@ -81,13 +74,13 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) Document {
         schema_file,
         null,
     ) catch |err| {
-        doc.diagnostic.tok = .{
-            .tag = .identifier,
-            .loc = schema_path_loc,
-        };
-        doc.diagnostic.err = .{
-            .schema = .{ .err = err },
-        };
+        try doc.diagnostic.errors.append(arena, .{
+            .schema = .{
+                .loc = schema_path_loc,
+                .err = err,
+            },
+        });
+
         return doc;
     };
 
@@ -98,13 +91,13 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) Document {
         schema_file,
         null,
     ) catch |err| {
-        doc.diagnostic.tok = .{
-            .tag = .identifier,
-            .loc = schema_path_loc,
-        };
-        doc.diagnostic.err = .{
-            .schema = .{ .err = err },
-        };
+        try doc.diagnostic.errors.append(arena, .{
+            .schema = .{
+                .loc = schema_path_loc,
+                .err = err,
+            },
+        });
+
         return doc;
     };
 
@@ -115,16 +108,16 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) Document {
     };
 
     log.debug("schema: applying", .{});
-    rules.check(gpa, ast, &doc.diagnostic) catch return doc;
+    rules.check(arena, ast, &doc.diagnostic) catch return doc;
 
     return doc;
 }
 
 fn findSchemaPath(ast: ziggy.Ast, bytes: [:0]const u8) ?[]const u8 {
-    const top_comments = ast.nodes.items[1];
+    const top_comments = ast.nodes[1];
     if (top_comments.tag == .top_comment) {
         assert(top_comments.first_child_id != 0);
-        const schema_line = ast.nodes.items[top_comments.first_child_id];
+        const schema_line = ast.nodes[top_comments.first_child_id];
         const src = schema_line.loc.src(bytes);
         var it = std.mem.tokenizeScalar(u8, src, ' ');
         var state: enum { start, comment, schema, colon } = .start;

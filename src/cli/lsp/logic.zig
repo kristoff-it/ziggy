@@ -71,8 +71,10 @@ pub fn loadFile(
             }
         },
         .ziggy => {
-            var doc = Document.init(self.gpa, new_text);
+            var doc = try Document.init(self.gpa, new_text);
             errdefer doc.deinit();
+
+            log.debug("document init", .{});
 
             const gop = try self.files.getOrPut(self.gpa, uri);
             errdefer _ = self.files.remove(uri);
@@ -85,29 +87,29 @@ pub fn loadFile(
 
             gop.value_ptr.* = .{ .ziggy = doc };
 
-            switch (doc.diagnostic.err) {
-                .none => {},
-                else => {
-                    const msg = try std.fmt.allocPrint(arena, "{lsp}", .{doc.diagnostic});
-                    const sel = doc.diagnostic.tok.loc.getSelection(doc.bytes);
-                    res.diagnostics = &.{
-                        .{
-                            .range = .{
-                                .start = .{
-                                    .line = sel.start.line - 1,
-                                    .character = sel.start.col - 1,
-                                },
-                                .end = .{
-                                    .line = sel.end.line - 1,
-                                    .character = sel.end.col - 1,
-                                },
-                            },
-                            .severity = .Error,
-                            .message = msg,
+            log.debug("sending {} diagnostic errors", .{doc.diagnostic.errors.items.len});
+
+            const diags = try arena.alloc(lsp.types.Diagnostic, doc.diagnostic.errors.items.len);
+            for (doc.diagnostic.errors.items, 0..) |e, idx| {
+                const msg = try std.fmt.allocPrint(arena, "{lsp}", .{e.fmt(new_text, null)});
+                const sel = e.getErrorSelection(doc.bytes);
+                diags[idx] = .{
+                    .range = .{
+                        .start = .{
+                            .line = sel.start.line - 1,
+                            .character = sel.start.col - 1,
                         },
-                    };
-                },
+                        .end = .{
+                            .line = sel.end.line - 1,
+                            .character = sel.end.col - 1,
+                        },
+                    },
+                    .severity = .Error,
+                    .message = msg,
+                };
             }
+
+            res.diagnostics = diags;
         },
     }
     log.debug("sending diags!", .{});

@@ -32,10 +32,12 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
         try out.print("{}", .{ast});
     } else {
         var diag: Diagnostic = .{ .path = null };
-        const ast = Ast.init(gpa, code, true, &diag) catch {
+        const ast = try Ast.init(gpa, code, true, false, &diag);
+
+        if (diag.errors.items.len != 0) {
             std.debug.print("{}", .{diag});
             std.process.exit(1);
-        };
+        }
 
         try out.print("{}", .{ast});
     }

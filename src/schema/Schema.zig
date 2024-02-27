@@ -301,6 +301,14 @@ const CheckItem = struct {
     doc_node: u32,
 };
 
+fn addError(gpa: std.mem.Allocator, diag: ?*ziggy.Diagnostic, err: ziggy.Diagnostic.Error) !void {
+    if (diag) |d| {
+        try d.errors.append(gpa, err);
+    } else {
+        return err.zigError();
+    }
+}
+
 pub fn check(
     self: Schema,
     gpa: std.mem.Allocator,
@@ -312,8 +320,8 @@ pub fn check(
     defer stack.deinit();
 
     var doc_root_val: u32 = 1;
-    if (doc.nodes.items[1].tag == .top_comment) {
-        doc_root_val = doc.nodes.items[1].next_id;
+    if (doc.nodes[1].tag == .top_comment) {
+        doc_root_val = doc.nodes[1].next_id;
     }
 
     try stack.append(.{
@@ -323,7 +331,7 @@ pub fn check(
 
     while (stack.popOrNull()) |elem| {
         const rule = self.nodes[elem.rule.node];
-        const doc_node = doc.nodes.items[elem.doc_node];
+        const doc_node = doc.nodes[elem.doc_node];
         {
             log.debug("rule '{s}', node '{s}'", .{
                 rule.loc.src(self.code),
@@ -335,6 +343,21 @@ pub fn check(
                 sel.start.col,
             });
         }
+
+        if (doc_node.tag == .value and doc_node.missing) {
+            const rule_src = rule.loc.src(self.code);
+            try addError(gpa, diag, .{
+                .missing = .{
+                    .token = .{
+                        .tag = .identifier,
+                        .loc = doc_node.loc,
+                    },
+                    .expected = rule_src,
+                },
+            });
+            continue;
+        }
+
         switch (rule.tag) {
             .optional => switch (doc_node.tag) {
                 .null => {},
@@ -350,23 +373,23 @@ pub fn check(
                 },
             },
             .array => switch (doc_node.tag) {
-                .array, .array_comma => {
+                .array => {
                     //TODO: optimize for simple cases
                     const child_rule: Rule = .{ .node = rule.first_child_id };
                     assert(child_rule.node != 0);
 
                     var doc_child_id = doc_node.first_child_id;
                     while (doc_child_id != 0) {
-                        assert(doc.nodes.items[doc_child_id].tag != .comment);
+                        assert(doc.nodes[doc_child_id].tag != .comment);
                         try stack.append(.{
                             .rule = child_rule,
                             .doc_node = doc_child_id,
                         });
 
-                        doc_child_id = doc.nodes.items[doc_child_id].next_id;
+                        doc_child_id = doc.nodes[doc_child_id].next_id;
                     }
                 },
-                else => return self.typeMismatch(diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, doc, elem),
             },
             .map => switch (doc_node.tag) {
                 .struct_or_map => {},
@@ -377,40 +400,37 @@ pub fn check(
 
                     var doc_child_id = doc_node.first_child_id;
                     while (doc_child_id != 0) {
-                        assert(doc.nodes.items[doc_child_id].tag == .map_field);
+                        assert(doc.nodes[doc_child_id].tag == .map_field);
                         try stack.append(.{
                             .rule = child_rule,
-                            .doc_node = doc.nodes.items[doc_child_id].last_child_id,
+                            .doc_node = doc.nodes[doc_child_id].last_child_id,
                         });
 
-                        doc_child_id = doc.nodes.items[doc_child_id].next_id;
+                        doc_child_id = doc.nodes[doc_child_id].next_id;
                     }
                 },
 
-                else => return self.typeMismatch(diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, doc, elem),
             },
             .struct_union => switch (doc_node.tag) {
                 .@"struct" => {
                     const rule_src = rule.loc.src(self.code);
 
-                    const struct_name_node = doc.nodes.items[doc_node.first_child_id];
+                    const struct_name_node = doc.nodes[doc_node.first_child_id];
                     if (struct_name_node.tag != .identifier) {
-                        if (diag) |d| {
-                            d.tok = .{
-                                .tag = .identifier,
-                                .loc = .{
-                                    // a struct always has curlies
-                                    .start = doc_node.loc.start -| 1,
-                                    .end = doc_node.loc.start + 1,
+                        try addError(gpa, diag, .{
+                            .missing = .{
+                                .token = .{
+                                    .tag = .identifier,
+                                    .loc = .{
+                                        // a struct always has curlies
+                                        .start = doc_node.loc.start -| 1,
+                                        .end = doc_node.loc.start + 1,
+                                    },
                                 },
-                            };
-                            d.err = .{
-                                .missing_struct_name = .{
-                                    .expected = rule_src,
-                                },
-                            };
-                        }
-                        return error.MissingStructName;
+                                .expected = rule_src,
+                            },
+                        });
                     }
 
                     const struct_name = struct_name_node.loc.src(doc.code);
@@ -430,20 +450,17 @@ pub fn check(
                         ident_id = id_rule.next_id;
                     }
                     // no match
-                    if (diag) |d| {
-                        d.tok = .{
-                            .tag = .identifier,
-                            .loc = struct_name_node.loc,
-                        };
-                        d.err = .{
-                            .wrong_struct_name = .{
-                                .expected = rule_src,
+                    try addError(gpa, diag, .{
+                        .unknown = .{
+                            .token = .{
+                                .tag = .identifier,
+                                .loc = struct_name_node.loc,
                             },
-                        };
-                    }
-                    return error.WrongStructName;
+                            .expected = rule_src,
+                        },
+                    });
                 },
-                else => return self.typeMismatch(diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, doc, elem),
             },
             .identifier => switch (doc_node.tag) {
                 .@"struct", .braceless_struct => {
@@ -455,28 +472,32 @@ pub fn check(
                     defer seen_fields.deinit();
 
                     var doc_child_id = doc_node.first_child_id;
-                    if (doc.nodes.items[doc_child_id].tag == .identifier) {
-                        doc_child_id = doc.nodes.items[doc_child_id].next_id;
+                    if (doc.nodes[doc_child_id].tag == .identifier) {
+                        doc_child_id = doc.nodes[doc_child_id].next_id;
                     }
 
                     while (doc_child_id != 0) {
-                        const field = doc.nodes.items[doc_child_id];
+                        const field = doc.nodes[doc_child_id];
+                        doc_child_id = field.next_id;
+
                         assert(field.tag == .struct_field);
 
-                        const field_name_node = doc.nodes.items[field.first_child_id];
+                        const field_name_node = doc.nodes[field.first_child_id];
                         assert(field_name_node.tag == .identifier);
 
                         const field_name = field_name_node.loc.src(doc.code);
 
                         const field_rule = struct_rule.fields.get(field_name) orelse {
-                            if (diag) |d| {
-                                d.tok = .{
-                                    .tag = .identifier,
-                                    .loc = field_name_node.loc,
-                                };
-                                d.err = .unknown_field;
-                            }
-                            return error.UnknownField;
+                            try addError(gpa, diag, .{
+                                .unknown = .{
+                                    .token = .{
+                                        .tag = .identifier,
+                                        .loc = field_name_node.loc,
+                                    },
+                                    .expected = &.{},
+                                },
+                            });
+                            continue;
                         };
 
                         // duplicate fields should be detected in the doc
@@ -487,8 +508,6 @@ pub fn check(
                             .rule = field_rule.rule,
                             .doc_node = field.last_child_id,
                         });
-
-                        doc_child_id = field.next_id;
                     }
 
                     if (seen_fields.count() != struct_rule.fields.count()) {
@@ -499,47 +518,43 @@ pub fn check(
                             }
                             const k = kv.key_ptr.*;
                             if (!seen_fields.contains(k)) {
-                                if (diag) |d| {
-                                    // tok must point at where the struct ends
-                                    d.tok = .{
-                                        .tag = .value, // doesn't matter
-                                        .loc = .{
-                                            .start = doc_node.loc.end - 1,
-                                            .end = doc_node.loc.end,
+                                try addError(gpa, diag, .{
+                                    .missing = .{
+                                        .token = .{
+                                            .tag = .value, // doesn't matter
+                                            .loc = .{
+                                                .start = doc_node.loc.end - 1,
+                                                .end = doc_node.loc.end,
+                                            },
                                         },
-                                    };
-                                    d.err = .{
-                                        .missing_field = .{
-                                            .name = k,
-                                        },
-                                    };
-                                }
-                                return error.MissingField;
+                                        .expected = k,
+                                    },
+                                });
                             }
                         }
                     }
                 },
-                else => return self.typeMismatch(diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, doc, elem),
             },
             .tag => switch (doc_node.tag) {
                 .tag => {},
-                else => return self.typeMismatch(diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, doc, elem),
             },
             .bytes => switch (doc_node.tag) {
                 .string, .line_string => {},
-                else => return self.typeMismatch(diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, doc, elem),
             },
             .int => switch (doc_node.tag) {
                 .integer => {},
-                else => return self.typeMismatch(diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, doc, elem),
             },
             .float => switch (doc_node.tag) {
                 .float => {},
-                else => return self.typeMismatch(diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, doc, elem),
             },
             .bool => switch (doc_node.tag) {
                 .bool => {},
-                else => return self.typeMismatch(diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, doc, elem),
             },
             .any => {},
             else => unreachable,
@@ -549,32 +564,30 @@ pub fn check(
 
 fn typeMismatch(
     self: Schema,
+    gpa: std.mem.Allocator,
     diag: ?*ziggy.Diagnostic,
     doc: ziggy.Ast,
     check_item: CheckItem,
-) error{TypeMismatch} {
+) !void {
     var rule_node = self.nodes[check_item.rule.node];
     if (check_item.optional) {
         rule_node = self.nodes[rule_node.parent_id];
     }
 
-    const found = doc.nodes.items[check_item.doc_node];
+    const found = doc.nodes[check_item.doc_node];
 
     assert(found.tag != .comment);
     assert(found.tag != .top_comment);
 
-    if (diag) |d| {
-        d.tok = .{
-            .tag = .value,
-            .loc = found.loc,
-        };
-        d.err = .{
-            .type_mismatch = .{
-                .expected = rule_node.loc.src(self.code),
+    try addError(gpa, diag, .{
+        .type_mismatch = .{
+            .token = .{
+                .tag = .value,
+                .loc = found.loc,
             },
-        };
-    }
-    return error.TypeMismatch;
+            .expected = rule_node.loc.src(self.code),
+        },
+    });
 }
 
 test "basics" {

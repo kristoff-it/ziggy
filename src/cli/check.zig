@@ -99,6 +99,7 @@ fn checkFile(
         arena,
         doc_file,
         false,
+        true,
         &diag,
     ) catch fatalDiag(diag);
 
