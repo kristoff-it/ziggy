@@ -42,115 +42,146 @@ pub const Tree = struct {
         t.children.deinit(gpa);
     }
 
-    pub fn fmt(t: Tree, code: [:0]const u8) Fmt {
+    pub fn fmt(t: Tree, code: [:0]const u8) TreeFmt {
         return .{ .code = code, .tree = t };
     }
+};
 
-    pub const Fmt = struct {
-        code: [:0]const u8,
-        tree: Tree,
+pub const TreeFmt = struct {
+    code: [:0]const u8,
+    tree: Tree,
 
-        pub fn format(
-            tfmt: Fmt,
-            comptime fmt_str: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = options;
-            if (mem.eql(u8, fmt_str, "pretty"))
-                try tfmt.prettyPrint(writer, 0, false)
-            else
-                try tfmt.dump(writer, 0);
-        }
+    pub fn format(
+        tfmt: TreeFmt,
+        comptime fmt_str: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = options;
+        if (mem.eql(u8, fmt_str, "pretty"))
+            try tfmt.prettyPrint(writer, 0, false)
+        else
+            try tfmt.dump(writer, 0);
+    }
 
-        fn prettyPrint(tfmt: Fmt, writer: anytype, indent: usize, has_trailing_comma: bool) !void {
-            var i: usize = 0;
-            while (i < tfmt.tree.children.items.len) : (i += 1) {
-                const child = tfmt.tree.children.items[i];
-                switch (child) {
-                    .token => |token| {
-                        switch (token.tag) {
-                            .identifier, .string, .integer, .float => {
-                                try writer.writeAll(token.loc.src(tfmt.code));
-                            },
-                            .comment, .top_comment_line => {
-                                try writer.writeAll(token.loc.src(tfmt.code));
-                                try writer.writeByte('\n');
-                            },
-                            .line_string => {
-                                try writer.writeByte('\n');
-                                try writer.writeByteNTimes(' ', indent * 4);
-                                try writer.writeAll(token.loc.src(tfmt.code));
-                                if (i + 1 == tfmt.tree.children.items.len) {
-                                    try writer.writeByte('\n');
-                                    try writer.writeByteNTimes(' ', indent * 4);
-                                }
-                            },
-                            else => {
-                                const space = mem.indexOfScalar(Token.Tag, &.{.eql}, token.tag) != null;
-                                if (space) try writer.writeByte(' ');
-                                try writer.writeAll(token.tag.lexeme());
-                                if (has_trailing_comma and (token.tag == .lsb or token.tag == .lb or token.tag == .comma)) {
-                                    try writer.writeByte('\n');
-                                    const unindent = token.tag == .comma and
-                                        i + 1 < tfmt.tree.children.items.len and
-                                        tfmt.tree.children.items[i + 1] == .token and
-                                        (tfmt.tree.children.items[i + 1].token.tag == .rsb or
-                                        tfmt.tree.children.items[i + 1].token.tag == .rb);
-                                    const _level = indent -| @as(u8, @intFromBool(unindent));
-                                    try writer.writeByteNTimes(' ', _level * 4);
-                                } else if (tfmt.tree.tag == .top_level_struct) {
-                                    try writer.writeByte('\n');
-                                } else {
-                                    const trailing_space = mem.indexOfScalar(Token.Tag, &.{ .comma, .colon }, token.tag) != null;
-                                    if (space or trailing_space) try writer.writeByte(' ');
-                                }
-                            },
-                        }
-                    },
-                    .tree => |tree| {
-                        const mlast_child = if (tree.children.items.len < 2)
-                            null
-                        else
-                            tree.children.items[tree.children.items.len - 2];
-
-                        const is_container =
-                            tree.tag == .array or
-                            tree.tag == .@"struct" or
-                            tree.tag == .map;
-
-                        const _has_trailing_comma = is_container and
-                            if (mlast_child) |last_child|
-                            last_child == .token and last_child.token.tag == .comma
-                        else
-                            false;
-
-                        const additional_indent = @intFromBool(_has_trailing_comma);
-                        const sub_tfmt = Fmt{ .tree = tree, .code = tfmt.code };
-                        try sub_tfmt.prettyPrint(writer, indent + additional_indent, _has_trailing_comma);
-                    },
+    fn prettyPrintToken(
+        tfmt: TreeFmt,
+        token: Token,
+        indent: u8,
+        i: usize,
+        has_trailing_comma: bool,
+        writer: anytype,
+    ) !void {
+        switch (token.tag) {
+            .identifier, .string, .integer, .float => {
+                try writer.writeAll(token.loc.src(tfmt.code));
+            },
+            .comment, .top_comment_line => {
+                try writer.writeAll(token.loc.src(tfmt.code));
+                try writer.writeByte('\n');
+            },
+            .line_string => {
+                try writer.writeByte('\n');
+                try writer.writeByteNTimes(' ', indent * 4);
+                try writer.writeAll(token.loc.src(tfmt.code));
+                if (i + 1 == tfmt.tree.children.items.len) {
+                    try writer.writeByte('\n');
+                    try writer.writeByteNTimes(' ', indent * 4);
                 }
+            },
+            else => {
+                const space = token.tag == .eql;
+                if (space) try writer.writeByte(' ');
+                try writer.writeAll(token.tag.lexeme());
+                if (has_trailing_comma and
+                    (token.tag == .lsb or token.tag == .lb or
+                    token.tag == .comma))
+                {
+                    try writer.writeByte('\n');
+                    const unindent = token.tag == .comma and
+                        i + 1 < tfmt.tree.children.items.len and
+                        tfmt.tree.children.items[i + 1] == .token and
+                        (tfmt.tree.children.items[i + 1].token.tag == .rsb or
+                        tfmt.tree.children.items[i + 1].token.tag == .rb);
+                    const new_indent = (indent -| @intFromBool(unindent)) * 4;
+                    try writer.writeByteNTimes(' ', new_indent);
+                } else if (tfmt.tree.tag == .top_level_struct) {
+                    try writer.writeByte('\n');
+                } else {
+                    const trailing_space =
+                        token.tag == .comma or token.tag == .colon;
+                    if (space or trailing_space) try writer.writeByte(' ');
+                }
+            },
+        }
+    }
+
+    fn prettyPrint(
+        tfmt: TreeFmt,
+        writer: anytype,
+        indent: u8,
+        has_trailing_comma: bool,
+    ) !void {
+        var i: usize = 0;
+        while (i < tfmt.tree.children.items.len) : (i += 1) {
+            const child = tfmt.tree.children.items[i];
+            switch (child) {
+                .token => |token| try tfmt.prettyPrintToken(
+                    token,
+                    indent,
+                    i,
+                    has_trailing_comma,
+                    writer,
+                ),
+                .tree => |tree| {
+                    const mlast_child = if (tree.children.items.len < 2)
+                        null
+                    else
+                        tree.children.items[tree.children.items.len - 2];
+
+                    const is_container =
+                        tree.tag == .array or
+                        tree.tag == .@"struct" or
+                        tree.tag == .map;
+
+                    const _has_trailing_comma = is_container and
+                        if (mlast_child) |last_child|
+                        last_child == .token and last_child.token.tag == .comma
+                    else
+                        false;
+
+                    const additional_indent = @intFromBool(_has_trailing_comma);
+                    const sub_tfmt = TreeFmt{ .tree = tree, .code = tfmt.code };
+                    try sub_tfmt.prettyPrint(
+                        writer,
+                        indent + additional_indent,
+                        _has_trailing_comma,
+                    );
+                },
             }
         }
+    }
 
-        fn dump(tfmt: Fmt, writer: anytype, level: usize) !void {
-            try writer.writeByteNTimes(' ', level * 2);
-            _ = try writer.write(@tagName(tfmt.tree.tag));
-            try writer.writeByte('\n');
-            for (tfmt.tree.children.items) |child| {
-                switch (child) {
-                    .token => |token| {
-                        try writer.writeByteNTimes(' ', level * 2);
-                        try writer.print("  '{s}' {}:{}\n", .{ token.loc.src(tfmt.code), token.loc.start, token.loc.end });
-                    },
-                    .tree => |tree| {
-                        const sub_tfmt = Fmt{ .tree = tree, .code = tfmt.code };
-                        try sub_tfmt.dump(writer, level + 1);
-                    },
-                }
+    fn dump(tfmt: TreeFmt, writer: anytype, indent: usize) !void {
+        try writer.writeByteNTimes(' ', indent * 2);
+        _ = try writer.write(@tagName(tfmt.tree.tag));
+        try writer.writeByte('\n');
+        for (tfmt.tree.children.items) |child| {
+            switch (child) {
+                .token => |token| {
+                    try writer.writeByteNTimes(' ', indent * 2);
+                    try writer.print(
+                        "  '{s}' {}:{}\n",
+                        .{ token.loc.src(tfmt.code), token.loc.start, token.loc.end },
+                    );
+                },
+                .tree => |tree| {
+                    const sub_tfmt = TreeFmt{ .tree = tree, .code = tfmt.code };
+                    try sub_tfmt.dump(writer, indent + 1);
+                },
             }
         }
-    };
+    }
 };
 
 const Child = union(enum) {
