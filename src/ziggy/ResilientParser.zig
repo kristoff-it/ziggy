@@ -3,10 +3,10 @@ const Parser = @This();
 gpa: std.mem.Allocator,
 code: [:0]const u8,
 tokenizer: Tokenizer,
-// diagnostic: ?*Diagnostic,
+diagnostic: ?*Diagnostic,
 fuel: u32,
 events: std.ArrayListUnmanaged(Event) = .{},
-filepath: ?[]const u8,
+stop_on_first_error: bool,
 
 const std = @import("std");
 const mem = std.mem;
@@ -218,22 +218,22 @@ pub const MarkClosed = enum(usize) {
     }
 };
 
-pub fn parse(
+pub fn init(
     gpa: std.mem.Allocator,
     code: [:0]const u8,
-    // TODO maybe handle diagnostic
-    // diagnostic: ?*Diagnostic,
-    mode: enum { want_comments, no_comments },
-    filepath: ?[]const u8,
+    want_comments: bool,
+    stop_on_first_error: bool,
+    diagnostic: ?*Diagnostic,
 ) !Tree {
     var p = Parser{
         .gpa = gpa,
         .code = code,
-        // .diagnostic = diagnostic,
+        .diagnostic = diagnostic,
         .fuel = 256,
-        .filepath = filepath,
-        .tokenizer = .{ .want_comments = mode == .want_comments },
+        .tokenizer = .{ .want_comments = want_comments },
+        .stop_on_first_error = stop_on_first_error,
     };
+    if (diagnostic) |d| d.code = code;
     defer p.deinit();
     p.document();
     return p.buildTree();
@@ -249,7 +249,8 @@ fn document(p: *Parser) void {
     while (p.consume(.top_comment_line)) {}
 
     while (true) {
-        switch (p.peek(0).tag) {
+        const token = p.peek(0);
+        switch (token.tag) {
             .eof => break,
             .dot, .comment => p.topLevelStruct(),
             .lb,
@@ -263,7 +264,16 @@ fn document(p: *Parser) void {
             .false,
             .null,
             => p.value(),
-            else => p.advanceWithError("expected a top level struct or value"),
+            else => {
+                // "expected a top level struct or value"
+                p.advanceWithError(.{ .unexpected_token = .{
+                    .token = token,
+                    .expected = &.{
+                        .lb,    .lsb,     .at,   .string, .line_string,
+                        .float, .integer, .true, .false,  .null,
+                    },
+                } }) catch return;
+            },
         }
     }
 
@@ -295,9 +305,9 @@ fn topLevelStruct(p: *Parser) void {
 fn structField(p: *Parser) void {
     const m = p.open();
     p.comments();
-    p.expect(.dot);
-    p.expect(.identifier);
-    p.expect(.eql);
+    p.expect(.dot) catch return;
+    p.expect(.identifier) catch return;
+    p.expect(.eql) catch return;
     p.value();
     _ = p.close(m, .struct_field);
 }
@@ -308,9 +318,11 @@ fn structField(p: *Parser) void {
 fn value(p: *Parser) void {
     std.log.debug("value {s}", .{@tagName(p.peek(0).tag)});
     const m = p.open();
-    switch (p.peek(0).tag) {
+    const token = p.peek(0);
+    switch (token.tag) {
         .lb => {
-            switch (p.peek(1).tag) {
+            const token1 = p.peek(1);
+            switch (token1.tag) {
                 .dot => {
                     p.struct_();
                     _ = p.close(m, .@"struct");
@@ -319,7 +331,15 @@ fn value(p: *Parser) void {
                     p.map();
                     _ = p.close(m, .map);
                 },
-                else => p.advanceWithErrorNoOpen(m, "expected map or struct"),
+                else => {
+                    // "expected map or struct"
+                    p.advanceWithErrorNoOpen(m, .{
+                        .unexpected_token = .{
+                            .token = token1,
+                            .expected = &.{ .dot, .string },
+                        },
+                    }) catch return;
+                },
             }
         },
         .lsb => {
@@ -359,18 +379,29 @@ fn value(p: *Parser) void {
             p.advance();
             _ = p.close(m, .null);
         },
-        else => p.advanceWithErrorNoOpen(m, "expected a value"),
+        else => {
+            // "expected a value"
+            p.advanceWithErrorNoOpen(m, .{
+                .unexpected_token = .{
+                    .token = token,
+                    .expected = &.{
+                        .lb,    .lsb,     .at,   .string, .line_string,
+                        .float, .integer, .true, .false,  .null,
+                    },
+                },
+            }) catch return;
+        },
     }
 }
 
 /// tag_string = '@' identifier '(' string ')'
 fn tagString(p: *Parser) void {
     const m = p.open();
-    p.expect(.at);
-    p.expect(.identifier);
-    p.expect(.lp);
-    p.expect(.string);
-    p.expect(.rp);
+    p.expect(.at) catch return;
+    p.expect(.identifier) catch return;
+    p.expect(.lp) catch return;
+    p.expect(.string) catch return;
+    p.expect(.rp) catch return;
     _ = p.close(m, .tag_string);
 }
 
@@ -378,7 +409,7 @@ fn tagString(p: *Parser) void {
 /// array_elem = comment* value
 fn array(p: *Parser) void {
     // mark open/close is handled in value()
-    p.expect(.lsb);
+    p.expect(.lsb) catch return;
 
     while (!p.atAny(&.{ .rsb, .eof })) {
         p.comments();
@@ -388,14 +419,14 @@ fn array(p: *Parser) void {
 
     _ = p.consume(.comma);
     p.comments();
-    p.expect(.rsb);
+    p.expect(.rsb) catch return;
 }
 
 /// struct = struct_name? '{' (struct_field,  (',' struct_field)* )? comment* '}'
 fn struct_(p: *Parser) void {
     // mark open/close is handled in value()
     _ = p.consume(.identifier);
-    p.expect(.lb);
+    p.expect(.lb) catch return;
 
     while (!p.atAny(&.{ .rb, .eof })) {
         p.structField();
@@ -404,26 +435,26 @@ fn struct_(p: *Parser) void {
 
     _ = p.consume(.comma);
     p.comments();
-    p.expect(.rb);
+    p.expect(.rb) catch return;
 }
 
 /// map = '{' (map_field,  (',' map_field)* )? comment* '}'
 /// map_field = comment* string ':' value
 fn map(p: *Parser) void {
     // mark open/close is handled in value()
-    p.expect(.lb);
+    p.expect(.lb) catch return;
 
     while (!p.atAny(&.{ .rb, .eof })) {
         p.comments();
-        p.expect(.string);
-        p.expect(.colon);
+        p.expect(.string) catch return;
+        p.expect(.colon) catch return;
         p.value();
         if (!p.consume(.comma)) break;
     }
 
     _ = p.consume(.comma);
     p.comments();
-    p.expect(.rb);
+    p.expect(.rb) catch return;
 }
 
 fn peek(p: *Parser, offset: u32) Token {
@@ -449,9 +480,11 @@ fn consume(p: *Parser, tag: Token.Tag) bool {
     return false;
 }
 
-fn expect(p: *Parser, tag: Token.Tag) void {
+fn expect(p: *Parser, tag: Token.Tag) !void {
     if (p.consume(tag)) return;
-    p.printError("expected {s}", .{@tagName(tag)});
+    try p.addError(.{
+        .unexpected_token = .{ .token = p.peek(0), .expected = &.{tag} },
+    });
 }
 
 fn at(p: *Parser, tag: Token.Tag) bool {
@@ -464,44 +497,20 @@ fn atAny(p: *Parser, tags: []const Token.Tag) bool {
     return mem.indexOfScalar(Token.Tag, tags, p.peek(0).tag) != null;
 }
 
-fn printError(p: Parser, comptime fmt: []const u8, args: anytype) void {
-    var pos: u32 = 0;
-    var line: u32 = 1;
-    var col: u32 = 1;
-    var last_nonws_linecol = [2]u32{ line, col };
-    while (pos < p.tokenizer.idx) : (pos += 1) {
-        if (p.code[pos] == '\n') {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
-
-        // TODO decide if simd is overkill here
-        const u8x6 = @Vector(6, u8);
-        const ws: u8x6 = std.ascii.whitespace;
-        const cs: u8x6 = @splat(p.code[pos]);
-        // if (std.mem.indexOfScalar(u8, &std.ascii.whitespace, p.code[pos]) == null) {
-        if (@reduce(.And, cs != ws)) {
-            last_nonws_linecol = .{ line, col };
-        }
+fn addError(p: Parser, err: Diagnostic.Error) !void {
+    if (p.diagnostic) |d| {
+        try d.errors.append(p.gpa, err);
     }
-    if (!@import("builtin").is_test) {
-        // FIXME i'm not sure where to log errors
-        std.debug.print(
-            "{?s}:{}:{}: error: " ++ fmt ++ "\n",
-            .{ p.filepath, last_nonws_linecol[0], last_nonws_linecol[1] } ++ args,
-        );
-    }
+    if (p.stop_on_first_error) return err.zigError();
 }
 
-fn advanceWithError(p: *Parser, err: []const u8) void {
+fn advanceWithError(p: *Parser, err: Diagnostic.Error) !void {
     const m = p.open();
-    p.advanceWithErrorNoOpen(m, err);
+    try p.advanceWithErrorNoOpen(m, err);
 }
 
-fn advanceWithErrorNoOpen(p: *Parser, m: MarkOpened, err: []const u8) void {
-    p.printError("{s}", .{err});
+fn advanceWithErrorNoOpen(p: *Parser, m: MarkOpened, err: Diagnostic.Error) !void {
+    try p.addError(err);
     p.advance();
     _ = p.close(m, .err);
 }
@@ -569,7 +578,7 @@ fn buildTree(p: *Parser) !Tree {
 }
 
 fn expectFmt(case: [:0]const u8) !void {
-    var tree = try parse(std.testing.allocator, case, .want_comments, null);
+    var tree = try init(std.testing.allocator, case, .want_comments, null);
     defer tree.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{pretty}", .{tree.fmt(case)});
 }
