@@ -94,8 +94,7 @@ pub const TreeFmt = struct {
                 if (space) try writer.writeByte(' ');
                 try writer.writeAll(token.tag.lexeme());
                 if (has_trailing_comma and
-                    (token.tag == .lsb or token.tag == .lb or
-                    token.tag == .comma))
+                    (token.tag == .lsb or token.tag == .lb or token.tag == .comma))
                 {
                     try writer.writeByte('\n');
                     const unindent = token.tag == .comma and
@@ -247,23 +246,33 @@ pub fn deinit(p: *Parser) void {
 /// document = top_comment* (top_level_struct | value)?
 fn document(p: *Parser) void {
     const m = p.open();
-    while (p.eat(.top_comment_line)) {}
-    while (!p.eof()) {
-        if (p.atAny(&.{ .dot, .comment })) {
-            p.topLevelStruct();
-        } else if (p.atAny(&.{
-            .lb,   .lsb,   .at,   .string, .line_string, .float, .integer,
-            .true, .false, .null,
-        })) {
-            p.value();
-        } else p.advanceWithError("expected a top level struct");
+    while (p.consume(.top_comment_line)) {}
+
+    while (true) {
+        switch (p.peek(0).tag) {
+            .eof => break,
+            .dot, .comment => p.topLevelStruct(),
+            .lb,
+            .lsb,
+            .at,
+            .string,
+            .line_string,
+            .float,
+            .integer,
+            .true,
+            .false,
+            .null,
+            => p.value(),
+            else => p.advanceWithError("expected a top level struct or value"),
+        }
     }
+
     _ = p.close(m, .document);
 }
 
 /// ('//' .?* '\n')*
 fn comments(p: *Parser) void {
-    while (p.eat(.comment)) {}
+    while (p.consume(.comment)) {}
 }
 
 /// top_level_struct = struct_field (',' struct_field)* ','? comment*
@@ -273,11 +282,11 @@ fn topLevelStruct(p: *Parser) void {
 
     // note: we must check for eof AFTER eating a comma so that we don't
     // continue parsing struct fields after a final trailing comma
-    while (p.eat(.comma) and !p.eof()) {
+    while (p.consume(.comma) and !p.eof()) {
         p.structField();
     }
 
-    _ = p.eat(.comma);
+    _ = p.consume(.comma);
     p.comments();
     _ = p.close(m, .top_level_struct);
 }
@@ -327,7 +336,7 @@ fn value(p: *Parser) void {
         },
         .line_string => {
             p.advance();
-            while (p.eat(.line_string)) {}
+            while (p.consume(.line_string)) {}
             _ = p.close(m, .line_string);
         },
         .integer => {
@@ -374,10 +383,10 @@ fn array(p: *Parser) void {
     while (!p.atAny(&.{ .rsb, .eof })) {
         p.comments();
         p.value();
-        if (!p.eat(.comma)) break;
+        if (!p.consume(.comma)) break;
     }
 
-    _ = p.eat(.comma);
+    _ = p.consume(.comma);
     p.comments();
     p.expect(.rsb);
 }
@@ -385,15 +394,15 @@ fn array(p: *Parser) void {
 /// struct = struct_name? '{' (struct_field,  (',' struct_field)* )? comment* '}'
 fn struct_(p: *Parser) void {
     // mark open/close is handled in value()
-    _ = p.eat(.identifier);
+    _ = p.consume(.identifier);
     p.expect(.lb);
 
     while (!p.atAny(&.{ .rb, .eof })) {
         p.structField();
-        if (!p.eat(.comma)) break;
+        if (!p.consume(.comma)) break;
     }
 
-    _ = p.eat(.comma);
+    _ = p.consume(.comma);
     p.comments();
     p.expect(.rb);
 }
@@ -409,10 +418,10 @@ fn map(p: *Parser) void {
         p.expect(.string);
         p.expect(.colon);
         p.value();
-        if (!p.eat(.comma)) break;
+        if (!p.consume(.comma)) break;
     }
 
-    _ = p.eat(.comma);
+    _ = p.consume(.comma);
     p.comments();
     p.expect(.rb);
 }
@@ -432,7 +441,7 @@ fn peek(p: *Parser, offset: u32) Token {
     return tok;
 }
 
-fn eat(p: *Parser, tag: Token.Tag) bool {
+fn consume(p: *Parser, tag: Token.Tag) bool {
     if (p.at(tag)) {
         p.advance();
         return true;
@@ -441,7 +450,7 @@ fn eat(p: *Parser, tag: Token.Tag) bool {
 }
 
 fn expect(p: *Parser, tag: Token.Tag) void {
-    if (p.eat(tag)) return;
+    if (p.consume(tag)) return;
     p.printError("expected {s}", .{@tagName(tag)});
 }
 
@@ -559,20 +568,22 @@ fn buildTree(p: *Parser) !Tree {
     return tree;
 }
 
-test "basics" {
-    const case =
-        \\.foo = "bar",
-        \\.bar = [1, 2, 3],
-        \\
-    ;
-
+fn expectFmt(case: [:0]const u8) !void {
     var tree = try parse(std.testing.allocator, case, .want_comments, null);
     defer tree.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{pretty}", .{tree.fmt(case)});
 }
 
+test "basics" {
+    try expectFmt(
+        \\.foo = "bar",
+        \\.bar = [1, 2, 3],
+        \\
+    );
+}
+
 test "vertical" {
-    const case =
+    try expectFmt(
         \\.foo = "bar",
         \\.bar = [
         \\    1,
@@ -580,15 +591,11 @@ test "vertical" {
         \\    3,
         \\],
         \\
-    ;
-
-    var tree = try parse(std.testing.allocator, case, .want_comments, null);
-    defer tree.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{pretty}", .{tree.fmt(case)});
+    );
 }
 
 test "complex" {
-    const case =
+    try expectFmt(
         \\.foo = "bar",
         \\.bar = [
         \\    1,
@@ -603,15 +610,11 @@ test "complex" {
         \\.n = null,
         \\.date = @date("2020-10-01T00:00:00"),
         \\
-    ;
-
-    var tree = try parse(std.testing.allocator, case, .want_comments, null);
-    defer tree.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{pretty}", .{tree.fmt(case)});
+    );
 }
 
 test "comments" {
-    const case =
+    try expectFmt(
         \\//! top comment
         \\//! top comment2
         \\// foo field comment
@@ -620,69 +623,46 @@ test "comments" {
         \\// bar field comment
         \\// bar field comment2
         \\.bar = null
-    ;
-
-    var tree = try parse(std.testing.allocator, case, .want_comments, null);
-    defer tree.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{pretty}", .{tree.fmt(case)});
+    );
 }
 
 test "top level non-struct values" {
-    const testCase = struct {
-        fn func(case: [:0]const u8) !void {
-            var tree = try parse(std.testing.allocator, case, .want_comments, null);
-            defer tree.deinit(std.testing.allocator);
-            try std.testing.expectFmt(case, "{pretty}", .{tree.fmt(case)});
-        }
-    }.func;
-    try testCase("true");
-    try testCase("false");
-    try testCase("null");
-    try testCase(
+    try expectFmt("true");
+    try expectFmt("false");
+    try expectFmt("null");
+    try expectFmt(
         \\"top str"
     );
-    try testCase("123");
-    try testCase("123.45");
-    try testCase("{.a = 1, .b = 2}");
-    try testCase(
+    try expectFmt("123");
+    try expectFmt("123.45");
+    try expectFmt("{.a = 1, .b = 2}");
+    try expectFmt(
         \\{"a": 1, "b": 2}
     );
-    try testCase(
+    try expectFmt(
         \\[true, false, null, "str", 123, {.a = 1, .b = 2}, {"a": 1, "b": 2}]
     );
 }
 
 test "misc" {
-    const testCase = struct {
-        fn func(case: [:0]const u8) !void {
-            var tree = try parse(std.testing.allocator, case, .want_comments, null);
-            defer tree.deinit(std.testing.allocator);
-            try std.testing.expectFmt(case, "{pretty}", .{tree.fmt(case)});
-        }
-    }.func;
-    try testCase("[]");
+    try expectFmt("[]");
     // FIXME: re-enable this test case which panics @Tokenizer.zig:190:55
     // try testCase("");
-    try testCase("{}");
+    try expectFmt("{}");
 }
 
 test "line string" {
-    const case =
+    try expectFmt(
         \\{
         \\    "extended_description": 
         \\    \\Lorem ipsum dolor something something,
         \\    \\this is a multiline string literal.
         \\    ,
         \\}
-    ;
-    var tree = try parse(std.testing.allocator, case, .want_comments, null);
-    defer tree.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{pretty}", .{tree.fmt(case)});
+    );
 }
 
 test "invalid" {
-    const case = ".a = , ";
-    var tree = try parse(std.testing.allocator, case, .want_comments, null);
-    defer tree.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{pretty}", .{tree.fmt(case)});
+    try expectFmt(".a = , ");
+    try expectFmt(".a = 1,\n, ");
 }
