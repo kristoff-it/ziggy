@@ -24,7 +24,7 @@ injection-regex = "ziggy-schema|zs"
 file-types = ["zs"]
 comment-token = "///"
 indent = { tab-width = 4, unit = "    " }
-formatter = { command = "ziggy" , args = ["fmt", "--schema", "--stdin"] }
+formatter = { command = "ziggy" , args = ["fmt", "-", "--type", "schema"] }
 auto-format = true
 language-servers = [ "ziggy-schema-lsp" ]
 

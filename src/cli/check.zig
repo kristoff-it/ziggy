@@ -98,11 +98,13 @@ fn checkFile(
     const doc_ast = ziggy.Ast.init(
         arena,
         doc_file,
-        false,
+        true,
+        true,
         &diag,
     ) catch fatalDiag(diag);
 
-    schema.check(arena, doc_ast, &diag) catch fatalDiag(diag);
+    schema.check(arena, doc_ast, &diag, doc_file) catch fatalDiag(diag);
+    std.debug.print("{}\n", .{diag});
 }
 
 fn fatalDiag(diag: anytype) noreturn {

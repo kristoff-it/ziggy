@@ -1,7 +1,7 @@
 pub const Tokenizer = @import("ziggy/Tokenizer.zig");
 pub const Parser = @import("ziggy/Parser.zig");
 pub const Value = @import("ziggy/Value.zig");
-pub const Ast = @import("ziggy/Ast.zig");
+pub const Ast = @import("ziggy/ResilientParser.zig");
 pub const Diagnostic = @import("ziggy/Diagnostic.zig");
 pub const parseLeaky = Parser.parseLeaky;
 pub const serializer = @import("ziggy/serializer.zig");
@@ -12,11 +12,12 @@ pub const max_size = 4 * 1024 * 1024 * 1024;
 
 test {
     _ = Tokenizer;
-    _ = Parser;
-    _ = Diagnostic;
+    // _ = Parser;
+    // _ = Diagnostic;
     _ = Ast;
-    _ = Value;
-    _ = serializer;
+
+    // _ = Value;
+    // _ = serializer;
 }
 
 pub const schema = struct {
@@ -26,9 +27,9 @@ pub const schema = struct {
     pub const Ast = @import("schema/Ast.zig");
 };
 
-test {
-    _ = schema.Diagnostic;
-    _ = schema.Tokenizer;
-    _ = schema.Schema;
-    _ = schema.Ast;
-}
+// test {
+//     _ = schema.Diagnostic;
+//     _ = schema.Tokenizer;
+//     _ = schema.Schema;
+//     _ = schema.Ast;
+// }

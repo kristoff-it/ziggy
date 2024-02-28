@@ -4,10 +4,14 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Diagnostic = @import("Diagnostic.zig");
 const Tokenizer = @import("Tokenizer.zig");
+const Token = Tokenizer.Token;
+
+const log = std.log.scoped(.ziggy_ast);
 
 pub const Node = struct {
     tag: Tag,
-    loc: Tokenizer.Token.Loc = undefined,
+    loc: Token.Loc = undefined,
+    missing: bool = false,
 
     // 0 = root node (root node has itself as parent)
     parent_id: u32,
@@ -28,8 +32,8 @@ pub const Node = struct {
         identifier,
         map,
         map_field,
+        map_field_key,
         array,
-        array_comma,
         string,
         multiline_string,
         line_string,
@@ -39,565 +43,780 @@ pub const Node = struct {
         null,
         tag,
         comment,
-        _value,
+        value,
+
+        // errros
+        // error_node,
     };
-
-    pub fn addChild(
-        self: *Node,
-        nodes: *std.ArrayList(Node),
-        tag: Node.Tag,
-    ) !*Node {
-        const self_id = self.getId(nodes);
-        const new_child_id: u32 = @intCast(nodes.items.len);
-        if (self.last_child_id != 0) {
-            const child = &nodes.items[self.last_child_id];
-            std.debug.assert(child.next_id == 0);
-
-            child.next_id = new_child_id;
-        }
-        if (self.first_child_id == 0) {
-            std.debug.assert(self.last_child_id == 0);
-            self.first_child_id = new_child_id;
-        }
-
-        self.last_child_id = new_child_id;
-        const child = try nodes.addOne();
-        child.* = .{ .tag = tag, .parent_id = self_id };
-
-        return child;
-    }
-
-    pub fn parent(self: *Node, nodes: *std.ArrayList(Node)) *Node {
-        return &nodes.items[self.parent_id];
-    }
-
-    pub fn getId(self: *Node, nodes: *std.ArrayList(Node)) u32 {
-        const idx: u32 = @intCast(
-            (@intFromPtr(self) - @intFromPtr(nodes.items.ptr)) / @sizeOf(Node),
-        );
-        std.debug.assert(idx < nodes.items.len);
-        return idx;
-    }
 };
 
 code: [:0]const u8,
-nodes: std.ArrayList(Node),
-tokenizer: Tokenizer,
-diag: ?*Diagnostic,
+nodes: []const Node,
 
-pub fn deinit(self: Ast) void {
-    self.nodes.deinit();
+pub fn deinit(self: Ast, gpa: std.mem.Allocator) void {
+    gpa.free(self.nodes);
 }
+
+const Parser = struct {
+    gpa: std.mem.Allocator,
+    code: [:0]const u8,
+    tokenizer: Tokenizer,
+    stop_on_first_error: bool,
+    diagnostic: ?*Diagnostic,
+    nodes: std.ArrayListUnmanaged(Node) = .{},
+    node: *Node = undefined,
+    token: Token = undefined,
+
+    pub fn ast(p: *Parser) !Ast {
+        return .{
+            .code = p.code,
+            .nodes = try p.nodes.toOwnedSlice(p.gpa),
+        };
+    }
+
+    fn peek(p: *Parser) Token.Tag {
+        return p.tokenizer.peek(p.code).tag;
+    }
+
+    fn next(p: *Parser) !void {
+        const token = p.tokenizer.next(p.code);
+        if (token.tag == .invalid) {
+            try p.addError(.{ .invalid_token = .{ .token = token } });
+        }
+        p.token = token;
+    }
+
+    fn must(p: Parser, token: Token, comptime tag: Token.Tag) !void {
+        return p.mustAny(token, &.{tag});
+    }
+
+    fn mustAny(p: Parser, token: Token, comptime tags: []const Token.Tag) !void {
+        for (tags) |t| {
+            if (t == token.tag) break;
+        } else {
+            try p.addError(.{
+                .unexpected_token = .{
+                    .token = token,
+                    .expected = tags,
+                },
+            });
+        }
+    }
+
+    pub fn addError(p: *Parser, err: Diagnostic.Error) !void {
+        if (p.diagnostic) |d| {
+            try d.errors.append(p.gpa, err);
+        } else {
+            return err.zigError();
+        }
+        if (p.stop_on_first_error) return err.zigError();
+    }
+
+    pub fn addChild(p: *Parser, tag: Node.Tag) !void {
+        const n = p.node;
+        const self_id = p.getId();
+        const new_child_id: u32 = @intCast(p.nodes.items.len);
+        if (n.last_child_id != 0) {
+            const child = &p.nodes.items[n.last_child_id];
+            std.debug.assert(child.next_id == 0);
+            child.next_id = new_child_id;
+        }
+        if (n.first_child_id == 0) {
+            std.debug.assert(n.last_child_id == 0);
+            n.first_child_id = new_child_id;
+        }
+
+        n.last_child_id = new_child_id;
+        const child = try p.nodes.addOne(p.gpa);
+        child.* = .{ .tag = tag, .parent_id = self_id };
+
+        p.node = child;
+    }
+
+    pub fn parent(p: *Parser) void {
+        const n = p.node;
+        p.node = &p.nodes.items[n.parent_id];
+    }
+
+    pub fn getId(p: Parser) u32 {
+        const n = p.node;
+        const idx: u32 = @intCast(
+            (@intFromPtr(n) - @intFromPtr(p.nodes.items.ptr)) / @sizeOf(Node),
+        );
+        std.debug.assert(idx < p.nodes.items.len);
+        return idx;
+    }
+};
 
 pub fn init(
     gpa: std.mem.Allocator,
     code: [:0]const u8,
     want_comments: bool,
-    diag: ?*Diagnostic,
+    stop_on_first_error: bool,
+    diagnostic: ?*Diagnostic,
 ) !Ast {
-    var ast: Ast = .{
+    var p: Parser = .{
+        .gpa = gpa,
         .code = code,
-        .diag = diag,
+        .diagnostic = diagnostic,
+        .stop_on_first_error = stop_on_first_error,
         .tokenizer = .{ .want_comments = want_comments },
-        .nodes = std.ArrayList(Node).init(gpa),
     };
-    errdefer ast.nodes.clearAndFree();
 
-    if (ast.diag) |d| {
-        d.code = code;
+    if (p.diagnostic) |d| {
+        d.code = p.code;
     }
 
-    const root_node = try ast.nodes.addOne();
+    errdefer p.nodes.clearAndFree(gpa);
+
+    const root_node = try p.nodes.addOne(gpa);
     root_node.* = .{ .tag = .root, .parent_id = 0 };
 
-    var node = root_node;
-    var token = try ast.next();
+    p.node = root_node;
+    try p.next();
     while (true) {
-        switch (node.tag) {
+        log.debug("entering '{s}'", .{@tagName(p.node.tag)});
+        switch (p.node.tag) {
             .comment, .multiline_string, .top_comment_line, .line_string => unreachable,
-            .root => switch (token.tag) {
+            .root => switch (p.token.tag) {
                 .top_comment_line => {
-                    node = try node.addChild(&ast.nodes, .top_comment);
-                    node.loc.start = token.loc.start;
+                    try p.addChild(.top_comment);
+                    p.node.loc.start = p.token.loc.start;
                 },
                 .dot, .comment => {
-                    node = try node.addChild(&ast.nodes, .braceless_struct);
-                    node.loc.start = token.loc.start;
+                    try p.addChild(.braceless_struct);
+                    p.node.loc.start = p.token.loc.start;
                 },
-                .eof => return ast,
+                .eof => return p.ast(),
                 else => {
-                    node = try node.addChild(&ast.nodes, ._value);
+                    const last_child = p.nodes.items[p.node.last_child_id];
+                    switch (last_child.tag) {
+                        .root, .top_comment => {
+                            while (true) : (try p.next()) {
+                                switch (p.token.tag) {
+                                    .identifier => {
+                                        if (p.peek() == .lb) {
+                                            break;
+                                        } else {
+                                            try p.addError(.{
+                                                .unexpected_token = .{
+                                                    .token = p.token,
+                                                    .expected = &.{},
+                                                },
+                                            });
+                                        }
+                                    },
+                                    else => break,
+                                }
+                            }
+                            try p.addChild(.value);
+                        },
+                        else => {
+                            while (p.token.tag != .eof) : (try p.next()) {
+                                try p.addError(.{
+                                    .unexpected_token = .{
+                                        .token = p.token,
+                                        .expected = &.{},
+                                    },
+                                });
+                            }
+                            return p.ast();
+                        },
+                    }
                 },
             },
-            .top_comment => switch (token.tag) {
+            .top_comment => switch (p.token.tag) {
                 .top_comment_line => {
-                    assert(node.tag == .top_comment);
-                    node = try node.addChild(&ast.nodes, .top_comment_line);
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                    node.loc.end = token.loc.end;
-                    token = try ast.next();
+                    try p.addChild(.top_comment_line);
+                    p.node.loc = p.token.loc;
+                    p.parent();
+                    p.node.loc.end = p.token.loc.end;
+                    try p.next();
                 },
-                else => node = node.parent(&ast.nodes),
+                else => p.parent(),
             },
-            .braceless_struct => switch (token.tag) {
+            .braceless_struct => switch (p.token.tag) {
                 .eof => {
-                    node.loc.end = token.loc.end;
-                    return ast;
+                    p.node.loc.end = p.token.loc.end;
+                    return p.ast();
                 },
                 .comment => {
-                    node = try node.addChild(&ast.nodes, .comment);
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
+                    try p.addChild(.comment);
+                    p.node.loc = p.token.loc;
+                    p.parent();
+                    try p.next();
                 },
-                .dot => {
-                    node = try node.addChild(&ast.nodes, .struct_field);
-                    node.loc.start = token.loc.start;
-                    token = try ast.next();
+                .rb => {
+                    try p.addError(.{
+                        .unexpected_token = .{
+                            .token = p.token,
+                            .expected = &.{},
+                        },
+                    });
+                    try p.next();
                 },
                 else => {
-                    if (ast.diag) |d| {
-                        d.tok = token;
-                        d.err = .{
-                            .unexpected_token = .{
-                                .expected = &.{ .eof, .dot },
-                            },
-                        };
-                    }
-                    return error.Syntax;
+                    try p.addChild(.struct_field);
+                    p.node.loc.start = p.token.loc.start;
                 },
             },
 
-            .struct_or_map => switch (token.tag) {
+            .struct_or_map => switch (p.token.tag) {
                 .comment => {
-                    node = try node.addChild(&ast.nodes, .comment);
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
+                    try p.addChild(.comment);
+                    p.node.loc = p.token.loc;
+                    p.parent();
+                    try p.next();
                 },
                 .rb => {
-                    node.loc.end = token.loc.end;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
+                    p.node.loc.end = p.token.loc.end;
+                    p.parent();
+                    try p.next();
                 },
                 .dot => {
-                    node.tag = .@"struct";
+                    p.node.tag = .@"struct";
                 },
                 .string => {
-                    node.tag = .map;
+                    p.node.tag = .map;
                 },
                 else => {
-                    if (ast.diag) |d| {
-                        d.tok = token;
-                        d.err = .{
-                            .unexpected_token = .{
-                                .expected = &.{ .dot, .string, .rb },
-                            },
-                        };
-                    }
-                    return error.Syntax;
+                    p.node.loc.end = p.token.loc.start;
+                    p.parent();
+                    try p.addError(.{
+                        .unexpected_token = .{
+                            .token = p.token,
+                            .expected = &.{ .dot, .string, .rb },
+                        },
+                    });
                 },
             },
 
-            .@"struct" => switch (token.tag) {
+            .@"struct" => switch (p.token.tag) {
                 .comment => {
-                    node = try node.addChild(&ast.nodes, .comment);
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
-                },
-                .dot => {
-                    node = try node.addChild(&ast.nodes, .struct_field);
-                    node.loc.start = token.loc.start;
-                    token = try ast.next();
+                    try p.addChild(.comment);
+                    p.node.loc = p.token.loc;
+                    p.parent();
+                    try p.next();
                 },
                 .rb => {
-                    node.loc.end = token.loc.end;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
+                    p.node.loc.end = p.token.loc.end;
+                    p.parent();
+                    try p.next();
                 },
-                else => {
-                    if (ast.diag) |d| {
-                        d.tok = token;
-                        d.err = .{
-                            .unexpected_token = .{
-                                .expected = &.{ .dot, .rb },
-                            },
-                        };
-                    }
-                    return error.Syntax;
-                },
+                else => try p.addChild(.struct_field),
             },
 
             .struct_field => {
-                if (node.first_child_id == 0) {
-                    if (token.tag == .identifier) {
-                        node = try node.addChild(&ast.nodes, .identifier);
-                        node.loc = token.loc;
-                        node = node.parent(&ast.nodes);
-                    } else {
-                        if (ast.diag) |d| {
-                            d.tok = token;
-                            d.err = .{
+                const last_child = p.nodes.items[p.node.last_child_id];
+                log.debug("last: '{s}'", .{
+                    @tagName(last_child.tag),
+                });
+                switch (last_child.tag) {
+                    .root => {
+                        // first time entering, struct has no children
+                        p.node.loc.start = p.token.loc.start;
+                        if (p.token.tag == .dot) {
+                            try p.next();
+                        } else {
+                            try p.addError(.{
                                 .unexpected_token = .{
-                                    .expected = &.{.identifier},
+                                    .token = p.token,
+                                    .expected = &.{.dot},
                                 },
-                            };
+                            });
                         }
-                        return error.Syntax;
-                    }
 
-                    const t = try ast.next();
-                    if (t.tag != .eql) {
-                        if (ast.diag) |d| {
-                            d.tok = t;
-                            d.err = .{
+                        try p.addChild(.identifier);
+                        if (p.token.tag == .identifier) {
+                            p.node.loc = p.token.loc;
+                            p.parent();
+                            try p.next();
+                        } else {
+                            p.node.missing = true;
+                            p.node.loc.start = p.token.loc.start;
+                            p.node.loc.end = p.node.loc.start;
+                            p.parent();
+                        }
+
+                        // Collect garbage until punctuation
+                        while (true) : (try p.next()) {
+                            log.debug("garbage loop: '{s}'", .{
+                                @tagName(p.token.tag),
+                            });
+                            switch (p.token.tag) {
+                                .eql,
+                                .colon,
+                                // start of a value
+                                .lb,
+                                .lsb,
+                                .at,
+                                .string,
+                                .integer,
+                                .float,
+                                .true,
+                                .false,
+                                .null,
+                                => break,
+                                .identifier => {
+                                    if (p.peek() == .lb) {
+                                        break;
+                                    } else {
+                                        try p.addError(.{
+                                            .unexpected_token = .{
+                                                .token = p.token,
+                                                .expected = &.{},
+                                            },
+                                        });
+                                    }
+                                },
+
+                                .dot, .comma, .rb, .rsb, .eof => {
+                                    p.node.loc.end = p.token.loc.end;
+                                    try p.addChild(.value);
+                                    p.node.missing = true;
+                                    p.node.loc.start = p.token.loc.start;
+                                    p.node.loc.end = p.node.loc.start;
+                                    p.parent();
+                                    p.parent();
+                                    if (p.token.tag == .comma) {
+                                        try p.next();
+                                    }
+                                    break;
+                                },
+                                else => {
+                                    try p.addError(.{
+                                        .unexpected_token = .{
+                                            .token = p.token,
+                                            .expected = &.{},
+                                        },
+                                    });
+                                },
+                            }
+                        }
+                        log.debug("exiting struct_field: '{s}'", .{
+                            @tagName(p.node.tag),
+                        });
+                    },
+                    .identifier => {
+                        log.debug("struct field identifier", .{});
+                        if (p.token.tag == .eql) {
+                            try p.next();
+                        } else {
+                            try p.addError(.{
                                 .unexpected_token = .{
+                                    .token = p.token,
                                     .expected = &.{.eql},
                                 },
-                            };
+                            });
                         }
-                        return error.Syntax;
-                    }
 
-                    node = try node.addChild(&ast.nodes, ._value);
-                    token = try ast.next();
-                } else {
-                    node.loc.end = token.loc.end;
-
-                    if (token.tag == .comma) {
-                        token = try ast.next();
-                    } else {
-                        if (token.tag != .rb and token.tag != .eof) {
-                            if (ast.diag) |d| {
-                                d.tok = token;
-                                d.err = .{
-                                    .unexpected_token = .{
-                                        .expected = &.{.comma},
-                                    },
-                                };
+                        while (true) : (try p.next()) {
+                            switch (p.token.tag) {
+                                else => break,
+                                .identifier => {
+                                    if (p.peek() == .lb) {
+                                        break;
+                                    } else {
+                                        try p.addError(.{
+                                            .unexpected_token = .{
+                                                .token = p.token,
+                                                .expected = &.{},
+                                            },
+                                        });
+                                    }
+                                },
                             }
-                            return error.Syntax;
                         }
-                    }
-
-                    node = node.parent(&ast.nodes);
+                        try p.addChild(.value);
+                    },
+                    else => {
+                        log.debug("struct field final", .{});
+                        // Collect garbage until punctuation
+                        while (true) : (try p.next()) {
+                            switch (p.token.tag) {
+                                .comma => {
+                                    p.node.loc.end = p.token.loc.end;
+                                    p.parent();
+                                    try p.next();
+                                    break;
+                                },
+                                .dot, .rb, .rsb, .eof => {
+                                    p.node.loc.end = p.token.loc.start;
+                                    p.parent();
+                                    break;
+                                },
+                                else => {
+                                    try p.addError(.{
+                                        .unexpected_token = .{
+                                            .token = p.token,
+                                            .expected = &.{.comma},
+                                        },
+                                    });
+                                },
+                            }
+                        }
+                    },
                 }
             },
 
-            .map => switch (token.tag) {
+            .map => switch (p.token.tag) {
                 .comment => {
-                    node = try node.addChild(&ast.nodes, .comment);
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
+                    try p.addChild(.comment);
+                    p.node.loc = p.token.loc;
+                    p.parent();
+                    try p.next();
                 },
-                .string => {
-                    node = try node.addChild(&ast.nodes, .map_field);
-                    node.loc.start = token.loc.start;
-                },
-                .rb => {
-                    node.loc.end = token.loc.end;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
+                .rb, .eof, .dot => {
+                    if (p.token.tag == .rb) {
+                        p.node.loc.end = p.token.loc.end;
+                        try p.next();
+                    } else {
+                        p.node.loc.end = p.token.loc.start;
+                        try p.addError(.{
+                            .unexpected_token = .{
+                                .token = p.token,
+                                .expected = &.{.rb},
+                            },
+                        });
+                    }
+                    p.parent();
                 },
                 else => {
-                    if (ast.diag) |d| {
-                        d.tok = token;
-                        d.err = .{
-                            .unexpected_token = .{
-                                .expected = &.{ .string, .rb },
-                            },
-                        };
-                    }
-                    return error.Syntax;
+                    try p.addChild(.map_field);
+                    p.node.loc.start = p.token.loc.start;
                 },
             },
 
             .map_field => {
-                if (node.first_child_id == 0) {
-                    if (token.tag == .string) {
-                        node = try node.addChild(&ast.nodes, .string);
-                        node.loc = token.loc;
-                        node = node.parent(&ast.nodes);
-                    } else {
-                        if (ast.diag) |d| {
-                            d.tok = token;
-                            d.err = .{
-                                .unexpected_token = .{
-                                    .expected = &.{.string},
+                const last_child = p.nodes.items[p.node.last_child_id];
+                log.debug(" last: '{s}'", .{@tagName(last_child.tag)});
+                switch (last_child.tag) {
+                    .root => {
+                        p.node.loc.start = p.token.loc.start;
+                        try p.addChild(.map_field_key);
+                        const first_token = p.token;
+                        var found_key = false;
+                        while (true) : (try p.next()) {
+                            switch (p.token.tag) {
+                                .eql, .colon, .comma, .rb => break,
+                                .string => {
+                                    if (found_key) {
+                                        try p.addError(.{
+                                            .unexpected_token = .{
+                                                .token = p.token,
+                                                .expected = &.{ .string, .rb },
+                                            },
+                                        });
+                                    } else {
+                                        found_key = true;
+                                        p.node.loc = p.token.loc;
+                                    }
                                 },
-                            };
+                                else => try p.addError(.{
+                                    .unexpected_token = .{
+                                        .token = p.token,
+                                        .expected = &.{ .string, .rb },
+                                    },
+                                }),
+                            }
                         }
-                        return error.Syntax;
-                    }
 
-                    const t = try ast.next();
-                    if (t.tag != .colon) {
-                        if (ast.diag) |d| {
-                            d.tok = token;
-                            d.err = .{
+                        if (!found_key) {
+                            p.node.missing = true;
+                            p.node.loc.start = first_token.loc.start;
+                            p.node.loc.end = p.node.loc.start + 1;
+                        }
+
+                        p.parent();
+                    },
+                    .map_field_key => {
+                        if (p.token.tag == .colon) {
+                            try p.next();
+                        } else {
+                            try p.addError(.{
                                 .unexpected_token = .{
+                                    .token = p.token,
                                     .expected = &.{.colon},
                                 },
-                            };
+                            });
                         }
-                        return error.Syntax;
-                    }
-
-                    node = try node.addChild(&ast.nodes, ._value);
-                    token = try ast.next();
-                } else {
-                    node.loc.end = token.loc.end;
-                    if (token.tag == .comma) {
-                        token = try ast.next();
-                    } else {
-                        if (token.tag != .rb) {
-                            if (ast.diag) |d| {
-                                d.tok = token;
-                                d.err = .{
+                        try p.addChild(.value);
+                        while (true) : (try p.next()) {
+                            switch (p.token.tag) {
+                                .rsb, .invalid, .colon, .eql => try p.addError(.{
                                     .unexpected_token = .{
-                                        .expected = &.{.comma},
+                                        .token = p.token,
+                                        .expected = &.{.value},
                                     },
-                                };
+                                }),
+                                .identifier => {
+                                    if (p.peek() == .lb) {
+                                        break;
+                                    } else {
+                                        try p.addError(.{
+                                            .unexpected_token = .{
+                                                .token = p.token,
+                                                .expected = &.{},
+                                            },
+                                        });
+                                    }
+                                },
+                                else => break,
                             }
-                            return error.Syntax;
                         }
-                    }
-
-                    node = node.parent(&ast.nodes);
+                    },
+                    else => {
+                        while (true) : (try p.next()) {
+                            switch (p.token.tag) {
+                                .comma => {
+                                    p.node.loc.end = p.token.loc.end;
+                                    p.parent();
+                                    try p.next();
+                                    break;
+                                },
+                                .rb, .eof => {
+                                    p.node.loc.end = p.token.loc.start;
+                                    p.parent();
+                                    break;
+                                },
+                                .string => {
+                                    p.node.loc.end = p.token.loc.start;
+                                    try p.addError(.{
+                                        .unexpected_token = .{
+                                            .token = p.token,
+                                            .expected = &.{.comma},
+                                        },
+                                    });
+                                    p.parent();
+                                },
+                                else => try p.addError(.{
+                                    .unexpected_token = .{
+                                        .token = p.token,
+                                        .expected = &.{},
+                                    },
+                                }),
+                            }
+                        }
+                    },
                 }
             },
             .array => {
-                if (node.last_child_id != 0 and
-                    ast.nodes.items[node.last_child_id].tag != .comment)
-                {
-                    if (token.tag == .comma) {
-                        token = try ast.next();
-                        if (token.tag == .rsb) {
-                            node.tag = .array_comma;
-                        }
+                const last_child = p.nodes.items[p.node.last_child_id];
+                log.debug(" last: '{s}'", .{@tagName(last_child.tag)});
+
+                // while (p.token.tag == .comment) : (try p.next()) {
+                //     try p.addChild(.comment);
+                //     p.node.loc = p.token.loc;
+                //     p.parent();
+                // }
+
+                if (p.node.last_child_id == 0) {
+                    p.node.loc.start = p.token.loc.start;
+                } else {
+                    if (p.token.tag == .comma) {
+                        try p.next();
                     } else {
-                        if (token.tag != .rsb) {
-                            if (ast.diag) |d| {
-                                d.tok = token;
-                                d.err = .{
+                        if (p.token.tag != .rsb) {
+                            try p.addError(.{
+                                .unexpected_token = .{
+                                    .token = p.token,
+                                    .expected = &.{.comma},
+                                },
+                            });
+                        }
+                    }
+                }
+
+                while (true) : (try p.next()) {
+                    switch (p.token.tag) {
+                        .rsb, .eof => {
+                            if (p.token.tag == .rsb) {
+                                p.node.loc.end = p.token.loc.end;
+                                try p.next();
+                            } else {
+                                p.node.loc.end = p.token.loc.start;
+                                try p.addError(.{
                                     .unexpected_token = .{
+                                        .token = p.token,
                                         .expected = &.{.comma},
                                     },
-                                };
+                                });
                             }
-                            return error.Syntax;
-                        }
-                    }
-                }
-
-                while (token.tag == .comment) : (token = try ast.next()) {
-                    node = try node.addChild(&ast.nodes, .comment);
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                }
-
-                if (token.tag == .rsb) {
-                    node.loc.end = token.loc.end;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
-                } else {
-                    node = try node.addChild(&ast.nodes, ._value);
-                }
-            },
-
-            ._value => switch (token.tag) {
-                .lb => {
-                    node.tag = .struct_or_map;
-                    node.loc.start = token.loc.start;
-                    token = try ast.next();
-                },
-                .identifier => {
-                    {
-                        const src = token.loc.src(code);
-                        switch (src[0]) {
-                            'A'...'Z' => {},
-                            else => {
-                                if (ast.diag) |d| {
-                                    d.tok = token;
-                                    d.err = .{
-                                        .unexpected_token = .{
-                                            .expected = &.{.value},
-                                        },
-                                    };
-                                }
-                                return error.Syntax;
-                            },
-                        }
-                    }
-                    node.tag = .struct_or_map;
-                    node.loc.start = token.loc.start;
-                    node = try node.addChild(&ast.nodes, .identifier);
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
-                    if (token.tag != .lb) {
-                        if (ast.diag) |d| {
-                            d.tok = token;
-                            d.err = .{
-                                .unexpected_token = .{
-                                    .expected = &.{.lb},
-                                },
-                            };
-                        }
-                        return error.Syntax;
-                    }
-                    token = try ast.next();
-                },
-                .lsb => {
-                    node.tag = .array;
-                    node.loc.start = token.loc.start;
-                    token = try ast.next();
-                },
-                .at => {
-                    node.tag = .tag;
-                    node.loc.start = token.loc.start;
-
-                    token = try ast.next();
-                    if (token.tag != .identifier) {
-                        if (ast.diag) |d| {
-                            d.tok = token;
-                            d.err = .{
-                                .unexpected_token = .{
-                                    .expected = &.{.identifier},
-                                },
-                            };
-                        }
-                        return error.Syntax;
-                    }
-                    const src = token.loc.src(code);
-                    for (src) |ch| {
-                        switch (ch) {
-                            else => {},
-                            'A'...'Z' => {
-                                if (ast.diag) |d| {
-                                    d.tok = token;
-                                    d.err = .{
-                                        .unexpected_token = .{
-                                            .expected = &.{.tag_name},
-                                        },
-                                    };
-                                }
-                                return error.Syntax;
-                            },
-                        }
-                    }
-
-                    node = try node.addChild(&ast.nodes, .identifier);
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                    node.loc.end = token.loc.end;
-
-                    token = try ast.next();
-                    if (token.tag != .lp) {
-                        if (ast.diag) |d| {
-                            d.tok = token;
-                            d.err = .{
-                                .unexpected_token = .{
-                                    .expected = &.{.lp},
-                                },
-                            };
-                        }
-                        return error.Syntax;
-                    }
-
-                    token = try ast.next();
-                    if (token.tag != .string) {
-                        if (ast.diag) |d| {
-                            d.tok = token;
-                            d.err = .{
-                                .unexpected_token = .{
-                                    .expected = &.{.string},
-                                },
-                            };
-                        }
-                        return error.Syntax;
-                    }
-                    node = try node.addChild(&ast.nodes, .string);
-                    node.loc = token.loc;
-
-                    token = try ast.next();
-                    if (token.tag != .rp) {
-                        if (ast.diag) |d| {
-                            d.tok = token;
-                            d.err = .{
-                                .unexpected_token = .{
-                                    .expected = &.{.rp},
-                                },
-                            };
-                        }
-                        return error.Syntax;
-                    }
-
-                    node = node.parent(&ast.nodes).parent(&ast.nodes);
-                    token = try ast.next();
-                },
-                .string => {
-                    node.tag = .string;
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
-                },
-                .line_string => {
-                    node.tag = .multiline_string;
-                    node.loc.start = token.loc.start;
-                    while (token.tag == .line_string) {
-                        node = try node.addChild(&ast.nodes, .line_string);
-                        node.loc = token.loc;
-                        node = node.parent(&ast.nodes);
-                        node.loc.end = token.loc.end;
-                        token = try ast.next();
-                    }
-
-                    node = node.parent(&ast.nodes);
-                },
-                .integer => {
-                    node.tag = .integer;
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
-                },
-                .float => {
-                    node.tag = .float;
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
-                },
-                .true, .false => {
-                    node.tag = .bool;
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
-                },
-                .null => {
-                    node.tag = .null;
-                    node.loc = token.loc;
-                    node = node.parent(&ast.nodes);
-                    token = try ast.next();
-                },
-                else => {
-                    if (ast.diag) |d| {
-                        d.tok = token;
-                        d.err = .{
+                            p.parent();
+                            break;
+                        },
+                        .colon => {
+                            try p.addChild(.value);
+                            p.node.missing = true;
+                            p.node.loc = p.token.loc;
+                            p.parent();
+                            break;
+                        },
+                        .rb, .invalid, .eql => try p.addError(.{
                             .unexpected_token = .{
+                                .token = p.token,
                                 .expected = &.{.value},
                             },
-                        };
+                        }),
+                        .identifier => {
+                            if (p.peek() == .lb) {
+                                break;
+                            } else {
+                                try p.addError(.{
+                                    .unexpected_token = .{
+                                        .token = p.token,
+                                        .expected = &.{},
+                                    },
+                                });
+                            }
+                        },
+                        else => {
+                            try p.addChild(.value);
+                            break;
+                        },
                     }
-                    return error.Syntax;
+                }
+            },
+
+            .value => switch (p.token.tag) {
+                .lb => {
+                    p.node.tag = .struct_or_map;
+                    p.node.loc.start = p.token.loc.start;
+                    try p.next();
+                },
+                .identifier => {
+                    p.node.tag = .struct_or_map;
+                    p.node.loc.start = p.token.loc.start;
+                    try p.addChild(.identifier);
+                    p.node.loc = p.token.loc;
+                    p.parent();
+                    try p.next();
+                    assert(p.token.tag == .lb);
+                    try p.next();
+                },
+                .lsb => {
+                    p.node.tag = .array;
+                    p.node.loc.start = p.token.loc.start;
+                    try p.next();
+                },
+                .at => {
+                    p.node.tag = .tag;
+                    p.node.loc.start = p.token.loc.start;
+                    const tag_token = p.token;
+
+                    try p.next();
+
+                    try p.addChild(.identifier);
+
+                    if (p.token.tag == .identifier) {
+                        p.node.loc = p.token.loc;
+                        p.parent();
+                        p.node.loc.end = p.token.loc.end;
+                        try p.next();
+                    } else {
+                        p.node.missing = true;
+                        p.node.loc = tag_token.loc;
+                        p.parent();
+                        p.node.loc.end = tag_token.loc.end;
+                    }
+
+                    // TODO: make resilient
+
+                    if (p.token.tag != .lp) {
+                        try p.addError(.{
+                            .unexpected_token = .{
+                                .token = p.token,
+                                .expected = &.{.lp},
+                            },
+                        });
+                    }
+
+                    try p.next();
+                    if (p.token.tag != .string) {
+                        try p.addError(.{
+                            .unexpected_token = .{
+                                .token = p.token,
+                                .expected = &.{.string},
+                            },
+                        });
+                    }
+                    try p.addChild(.string);
+                    p.node.loc = p.token.loc;
+
+                    try p.next();
+                    if (p.token.tag != .rp) {
+                        try p.addError(.{
+                            .unexpected_token = .{
+                                .token = p.token,
+                                .expected = &.{.rp},
+                            },
+                        });
+                    }
+
+                    // go up 2 nodes
+                    p.parent();
+                    p.parent();
+                    try p.next();
+                },
+                .string => {
+                    p.node.tag = .string;
+                    p.node.loc = p.token.loc;
+                    p.parent();
+                    try p.next();
+                },
+                .line_string => {
+                    p.node.tag = .multiline_string;
+                    p.node.loc.start = p.token.loc.start;
+                    while (p.token.tag == .line_string) {
+                        try p.addChild(.line_string);
+                        p.node.loc = p.token.loc;
+                        p.parent();
+                        p.node.loc.end = p.token.loc.end;
+                        try p.next();
+                    }
+
+                    p.parent();
+                },
+                .integer => {
+                    p.node.tag = .integer;
+                    p.node.loc = p.token.loc;
+                    p.parent();
+                    try p.next();
+                },
+                .float => {
+                    p.node.tag = .float;
+                    p.node.loc = p.token.loc;
+                    p.parent();
+                    try p.next();
+                },
+                .true, .false => {
+                    p.node.tag = .bool;
+                    p.node.loc = p.token.loc;
+                    p.parent();
+                    try p.next();
+                },
+                .null => {
+                    p.node.tag = .null;
+                    p.node.loc = p.token.loc;
+                    p.parent();
+                    try p.next();
+                },
+                else => {
+                    p.node.tag = .value;
+                    p.node.missing = true;
+                    p.node.loc.start = p.token.loc.start;
+                    p.node.loc.end = p.node.loc.start;
+                    p.parent();
+                    try p.addError(.{
+                        .unexpected_token = .{
+                            .token = p.token,
+                            .expected = &.{.value},
+                        },
+                    });
                 },
             },
 
-            // only set at .rsb
-            .array_comma,
-
+            .map_field_key,
             .tag,
             .identifier,
             .string,
@@ -610,18 +829,6 @@ pub fn init(
     }
 }
 
-fn next(self: *Ast) error{Syntax}!Tokenizer.Token {
-    const token = self.tokenizer.next(self.code);
-    if (token.tag == .invalid) {
-        if (self.diag) |d| {
-            d.tok = token;
-            d.err = .invalid_token;
-        }
-        return error.Syntax;
-    }
-    return token;
-}
-
 pub fn format(
     self: Ast,
     comptime fmt: []const u8,
@@ -631,7 +838,7 @@ pub fn format(
     _ = fmt;
     _ = options;
 
-    try render(self.nodes.items, self.code, out_stream);
+    try render(self.nodes, self.code, out_stream);
 }
 
 const RenderMode = enum { horizontal, vertical };
@@ -747,20 +954,22 @@ fn renderValue(
                 try w.writeAll("[]");
                 return;
             }
-            const mode: RenderMode = if (hasMultilineSiblings(node.first_child_id, nodes)) blk: {
-                break :blk .vertical;
-            } else .horizontal;
+            const mode: RenderMode = if (hasMultilineSiblings(node.first_child_id, nodes))
+                .vertical
+            else blk: {
+                const start = nodes[node.last_child_id].loc.end;
+                const end = node.loc.end;
+                if (std.mem.indexOfScalar(u8, code[start..end], ',') != null) {
+                    break :blk .vertical;
+                }
+                break :blk .horizontal;
+            };
 
-            try w.writeAll("[");
+            switch (mode) {
+                .vertical => try w.writeAll("[\n"),
+                .horizontal => try w.writeAll("["),
+            }
             try renderArray(indent + 1, mode, node.first_child_id, nodes, code, w);
-            try w.writeAll("]");
-        },
-        .array_comma => {
-            std.debug.assert(node.first_child_id != 0);
-
-            try w.writeAll("[\n");
-            try renderArray(indent + 1, .vertical, node.first_child_id, nodes, code, w);
-            try printIndent(indent, w);
             try w.writeAll("]");
         },
 
@@ -954,8 +1163,8 @@ test "basics" {
 
     var diag: Diagnostic = .{ .path = null };
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try Ast.init(std.testing.allocator, case, true, &diag);
-    defer ast.deinit();
+    const ast = try Ast.init(std.testing.allocator, case, true, true, &diag);
+    defer ast.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{}", .{ast});
 }
 
@@ -972,8 +1181,8 @@ test "vertical" {
 
     var diag: Diagnostic = .{ .path = null };
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try Ast.init(std.testing.allocator, case, true, &diag);
-    defer ast.deinit();
+    const ast = try Ast.init(std.testing.allocator, case, true, true, &diag);
+    defer ast.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{}", .{ast});
 }
 
@@ -993,7 +1202,7 @@ test "complex" {
 
     var diag: Diagnostic = .{ .path = null };
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try Ast.init(std.testing.allocator, case, true, &diag);
-    defer ast.deinit();
+    const ast = try Ast.init(std.testing.allocator, case, true, true, &diag);
+    defer ast.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{}", .{ast});
 }

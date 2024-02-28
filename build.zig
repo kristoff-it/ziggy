@@ -39,6 +39,7 @@ pub fn build(b: *std.Build) void {
     ziggy_exe.root_module.addImport("lsp", lsp.module("lsp"));
 
     const run_exe = b.addRunArtifact(ziggy_exe);
+    if (b.args) |args| run_exe.addArgs(args);
     const run_exe_step = b.step("run", "Run the Ziggy tool");
     run_exe_step.dependOn(&run_exe.step);
 

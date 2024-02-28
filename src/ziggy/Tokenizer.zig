@@ -171,6 +171,13 @@ const State = enum {
     comment,
 };
 
+pub fn peek(self: *Tokenizer, code: [:0]const u8) Token {
+    const idx = self.idx;
+    const t = self.next(code);
+    self.idx = idx;
+    return t;
+}
+
 pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
     var state: State = .start;
     var res: Token = .{
