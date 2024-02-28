@@ -253,7 +253,7 @@ pub fn init(
     };
     if (diagnostic) |d| d.code = code;
     defer p.deinit();
-    p.document();
+    p.document() catch {};
     return p.buildTree();
 }
 
@@ -262,7 +262,7 @@ pub fn deinit(p: *Parser) void {
 }
 
 /// document = top_comment* (top_level_struct | value)?
-fn document(p: *Parser) void {
+fn document(p: *Parser) !void {
     const m = p.open();
     while (p.consume(.top_comment_line)) {}
 
@@ -270,7 +270,7 @@ fn document(p: *Parser) void {
         const token = p.peek(0);
         switch (token.tag) {
             .eof => break,
-            .dot, .comment => p.topLevelStruct(),
+            .dot, .comment => try p.topLevelStruct(),
             .lb,
             .lsb,
             .at,
@@ -281,16 +281,16 @@ fn document(p: *Parser) void {
             .true,
             .false,
             .null,
-            => p.value(),
+            => try p.value(),
             else => {
                 // "expected a top level struct or value"
-                p.advanceWithError(.{ .unexpected_token = .{
+                try p.advanceWithError(.{ .unexpected_token = .{
                     .token = token,
                     .expected = &.{
                         .lb,    .lsb,     .at,   .string, .line_string,
                         .float, .integer, .true, .false,  .null,
                     },
-                } }) catch return;
+                } });
             },
         }
     }
@@ -304,14 +304,14 @@ fn comments(p: *Parser) void {
 }
 
 /// top_level_struct = struct_field (',' struct_field)* ','? comment*
-fn topLevelStruct(p: *Parser) void {
+fn topLevelStruct(p: *Parser) !void {
     const m = p.open();
-    p.structField();
+    try p.structField();
 
     // note: we must check for eof AFTER eating a comma so that we don't
     // continue parsing struct fields after a final trailing comma
     while (p.consume(.comma) and !p.eof()) {
-        p.structField();
+        try p.structField();
     }
 
     _ = p.consume(.comma);
@@ -320,20 +320,20 @@ fn topLevelStruct(p: *Parser) void {
 }
 
 /// struct_field = comment* '.' identifier '=' value
-fn structField(p: *Parser) void {
+fn structField(p: *Parser) !void {
     const m = p.open();
     p.comments();
-    p.expect(.dot) catch return;
-    p.expect(.identifier) catch return;
-    p.expect(.eql) catch return;
-    p.value();
+    try p.expect(.dot);
+    try p.expect(.identifier);
+    try p.expect(.eql);
+    try p.value();
     _ = p.close(m, .struct_field);
 }
 
 /// value =
 ///   struct | map | array | tag_string | string | float
 /// | integer | true | false | null
-fn value(p: *Parser) void {
+fn value(p: *Parser) Diagnostic.Error.ZigError!void {
     const m = p.open();
     const token = p.peek(0);
     switch (token.tag) {
@@ -341,26 +341,26 @@ fn value(p: *Parser) void {
             const token1 = p.peek(1);
             if (token1.tag != .lb) {
                 // "expected struct"
-                p.advanceWithErrorNoOpen(m, .{
+                try p.advanceWithErrorNoOpen(m, .{
                     .unexpected_token = .{
                         .token = token1,
                         .expected = &.{.dot},
                     },
-                }) catch return;
+                });
             }
 
             p.advance();
-            p.structOrMap(m) catch return;
+            try p.structOrMap(m);
         },
         .lb => {
-            p.structOrMap(m) catch return;
+            try p.structOrMap(m);
         },
         .lsb => {
-            p.array();
+            try p.array();
             _ = p.close(m, .array);
         },
         .at => {
-            p.tagString();
+            try p.tagString();
             _ = p.close(m, .tag_string);
         },
         .string => {
@@ -394,7 +394,7 @@ fn value(p: *Parser) void {
         },
         else => {
             // "expected a value"
-            p.advanceWithErrorNoOpen(m, .{
+            try p.advanceWithErrorNoOpen(m, .{
                 .unexpected_token = .{
                     .token = token,
                     .expected = &.{
@@ -402,7 +402,7 @@ fn value(p: *Parser) void {
                         .float, .integer, .true, .false,  .null,
                     },
                 },
-            }) catch return;
+            });
         },
     }
 }
@@ -411,11 +411,11 @@ fn structOrMap(p: *Parser, m: MarkOpened) !void {
     const token = p.peek(1);
     switch (token.tag) {
         .dot => {
-            p.struct_();
+            try p.struct_();
             _ = p.close(m, .@"struct");
         },
         .string => {
-            p.map();
+            try p.map();
             _ = p.close(m, .map);
         },
         else => {
@@ -431,66 +431,66 @@ fn structOrMap(p: *Parser, m: MarkOpened) !void {
 }
 
 /// tag_string = '@' identifier '(' string ')'
-fn tagString(p: *Parser) void {
+fn tagString(p: *Parser) !void {
     const m = p.open();
-    p.expect(.at) catch return;
-    p.expect(.identifier) catch return;
-    p.expect(.lp) catch return;
-    p.expect(.string) catch return;
-    p.expect(.rp) catch return;
+    try p.expect(.at);
+    try p.expect(.identifier);
+    try p.expect(.lp);
+    try p.expect(.string);
+    try p.expect(.rp);
     _ = p.close(m, .tag_string);
 }
 
 /// array = '[' (array_elem,  (',' array_elem)*)? ','? comment* ']'
 /// array_elem = comment* value
-fn array(p: *Parser) void {
+fn array(p: *Parser) !void {
     // mark open/close is handled in value()
-    p.expect(.lsb) catch return;
+    try p.expect(.lsb);
 
     while (!p.atAny(&.{ .rsb, .eof })) {
         p.comments();
-        p.value();
+        try p.value();
         if (!p.consume(.comma)) break;
     }
 
     _ = p.consume(.comma);
     p.comments();
-    p.expect(.rsb) catch return;
+    try p.expect(.rsb);
 }
 
 /// struct = struct_name? '{' (struct_field,  (',' struct_field)* )? comment* '}'
-fn struct_(p: *Parser) void {
+fn struct_(p: *Parser) !void {
     // mark open/close is handled in value()
     _ = p.consume(.identifier);
-    p.expect(.lb) catch return;
+    try p.expect(.lb);
 
     while (!p.atAny(&.{ .rb, .eof })) {
-        p.structField();
+        try p.structField();
         if (!p.consume(.comma)) break;
     }
 
     _ = p.consume(.comma);
     p.comments();
-    p.expect(.rb) catch return;
+    try p.expect(.rb);
 }
 
 /// map = '{' (map_field,  (',' map_field)* )? comment* '}'
 /// map_field = comment* string ':' value
-fn map(p: *Parser) void {
+fn map(p: *Parser) !void {
     // mark open/close is handled in value()
-    p.expect(.lb) catch return;
+    try p.expect(.lb);
 
     while (!p.atAny(&.{ .rb, .eof })) {
         p.comments();
-        p.expect(.string) catch return;
-        p.expect(.colon) catch return;
-        p.value();
+        try p.expect(.string);
+        try p.expect(.colon);
+        try p.value();
         if (!p.consume(.comma)) break;
     }
 
     _ = p.consume(.comma);
     p.comments();
-    p.expect(.rb) catch return;
+    try p.expect(.rb);
 }
 
 fn peek(p: *Parser, offset: u32) Token {
