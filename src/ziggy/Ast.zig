@@ -191,7 +191,26 @@ pub fn init(
                 else => {
                     const last_child = p.nodes.items[p.node.last_child_id];
                     switch (last_child.tag) {
-                        .root, .top_comment => try p.addChild(.value),
+                        .root, .top_comment => {
+                            while (true) : (try p.next()) {
+                                switch (p.token.tag) {
+                                    .identifier => {
+                                        if (p.peek() == .lb) {
+                                            break;
+                                        } else {
+                                            try p.addError(.{
+                                                .unexpected_token = .{
+                                                    .token = p.token,
+                                                    .expected = &.{},
+                                                },
+                                            });
+                                        }
+                                    },
+                                    else => break,
+                                }
+                            }
+                            try p.addChild(.value);
+                        },
                         else => {
                             while (p.token.tag != .eof) : (try p.next()) {
                                 try p.addError(.{
@@ -352,7 +371,7 @@ pub fn init(
                                 },
 
                                 .dot, .comma, .rb, .rsb, .eof => {
-                                    p.node.loc.start = p.token.loc.end;
+                                    p.node.loc.end = p.token.loc.end;
                                     try p.addChild(.value);
                                     p.node.missing = true;
                                     p.node.loc.start = p.token.loc.start;
@@ -416,13 +435,13 @@ pub fn init(
                         while (true) : (try p.next()) {
                             switch (p.token.tag) {
                                 .comma => {
-                                    p.node.loc.start = p.token.loc.end;
+                                    p.node.loc.end = p.token.loc.end;
                                     p.parent();
                                     try p.next();
                                     break;
                                 },
                                 .dot, .rb, .rsb, .eof => {
-                                    p.node.loc.start = p.token.loc.start;
+                                    p.node.loc.end = p.token.loc.start;
                                     p.parent();
                                     break;
                                 },
@@ -555,7 +574,7 @@ pub fn init(
                                     try p.next();
                                     break;
                                 },
-                                .rb => {
+                                .rb, .eof => {
                                     p.node.loc.end = p.token.loc.start;
                                     p.parent();
                                     break;
@@ -573,7 +592,7 @@ pub fn init(
                                 else => try p.addError(.{
                                     .unexpected_token = .{
                                         .token = p.token,
-                                        .expected = &.{ .string, .rb },
+                                        .expected = &.{},
                                     },
                                 }),
                             }
@@ -582,9 +601,18 @@ pub fn init(
                 }
             },
             .array => {
-                if (p.node.last_child_id != 0 and
-                    p.nodes.items[p.node.last_child_id].tag != .comment)
-                {
+                const last_child = p.nodes.items[p.node.last_child_id];
+                log.debug(" last: '{s}'", .{@tagName(last_child.tag)});
+
+                // while (p.token.tag == .comment) : (try p.next()) {
+                //     try p.addChild(.comment);
+                //     p.node.loc = p.token.loc;
+                //     p.parent();
+                // }
+
+                if (p.node.last_child_id == 0) {
+                    p.node.loc.start = p.token.loc.start;
+                } else {
                     if (p.token.tag == .comma) {
                         try p.next();
                     } else {
@@ -599,18 +627,54 @@ pub fn init(
                     }
                 }
 
-                while (p.token.tag == .comment) : (try p.next()) {
-                    try p.addChild(.comment);
-                    p.node.loc = p.token.loc;
-                    p.parent();
-                }
-
-                if (p.token.tag == .rsb) {
-                    p.node.loc.end = p.token.loc.end;
-                    p.parent();
-                    try p.next();
-                } else {
-                    try p.addChild(.value);
+                while (true) : (try p.next()) {
+                    switch (p.token.tag) {
+                        .rsb, .eof => {
+                            if (p.token.tag == .rsb) {
+                                p.node.loc.end = p.token.loc.end;
+                                try p.next();
+                            } else {
+                                p.node.loc.end = p.token.loc.start;
+                                try p.addError(.{
+                                    .unexpected_token = .{
+                                        .token = p.token,
+                                        .expected = &.{.comma},
+                                    },
+                                });
+                            }
+                            p.parent();
+                            break;
+                        },
+                        .colon => {
+                            try p.addChild(.value);
+                            p.node.missing = true;
+                            p.node.loc = p.token.loc;
+                            p.parent();
+                            break;
+                        },
+                        .rb, .invalid, .eql => try p.addError(.{
+                            .unexpected_token = .{
+                                .token = p.token,
+                                .expected = &.{.value},
+                            },
+                        }),
+                        .identifier => {
+                            if (p.peek() == .lb) {
+                                break;
+                            } else {
+                                try p.addError(.{
+                                    .unexpected_token = .{
+                                        .token = p.token,
+                                        .expected = &.{},
+                                    },
+                                });
+                            }
+                        },
+                        else => {
+                            try p.addChild(.value);
+                            break;
+                        },
+                    }
                 }
             },
 

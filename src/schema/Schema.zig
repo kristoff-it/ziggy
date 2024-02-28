@@ -13,6 +13,7 @@ const log = std.log.scoped(.schema);
 root: Rule,
 code: [:0]const u8,
 nodes: []const Ast.Node,
+allows_unknown_literals: bool = false,
 literals: std.StringHashMapUnmanaged(LiteralRule) = .{},
 structs: std.StringArrayHashMapUnmanaged(StructRule) = .{},
 

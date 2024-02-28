@@ -15,31 +15,31 @@ pub const std_options: std.Options = .{
     .logFn = logging.logFn,
 };
 
-// pub fn panic(
-//     msg: []const u8,
-//     trace: ?*std.builtin.StackTrace,
-//     ret_addr: ?usize,
-// ) noreturn {
-//     std.log.err("{s}\n\n{?}", .{ msg, trace });
-//     blk: {
-//         const out = logging.log_file orelse break :blk;
-//         const w = out.writer();
-//         if (builtin.strip_debug_info) {
-//             w.print("Unable to dump stack trace: debug info stripped\n", .{}) catch return;
-//             break :blk;
-//         }
-//         const debug_info = std.debug.getSelfDebugInfo() catch |err| {
-//             w.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch break :blk;
-//             break :blk;
-//         };
-//         std.debug.writeCurrentStackTrace(w, debug_info, .no_color, ret_addr) catch |err| {
-//             w.print("Unable to dump stack trace: {s}\n", .{@errorName(err)}) catch break :blk;
-//             break :blk;
-//         };
-//     }
-//     if (builtin.mode == .Debug) @breakpoint();
-//     std.process.exit(1);
-// }
+pub fn panic(
+    msg: []const u8,
+    trace: ?*std.builtin.StackTrace,
+    ret_addr: ?usize,
+) noreturn {
+    std.log.err("{s}\n\n{?}", .{ msg, trace });
+    blk: {
+        const out = logging.log_file orelse break :blk;
+        const w = out.writer();
+        if (builtin.strip_debug_info) {
+            w.print("Unable to dump stack trace: debug info stripped\n", .{}) catch return;
+            break :blk;
+        }
+        const debug_info = std.debug.getSelfDebugInfo() catch |err| {
+            w.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch break :blk;
+            break :blk;
+        };
+        std.debug.writeCurrentStackTrace(w, debug_info, .no_color, ret_addr) catch |err| {
+            w.print("Unable to dump stack trace: {s}\n", .{@errorName(err)}) catch break :blk;
+            break :blk;
+        };
+    }
+    if (builtin.mode == .Debug) @breakpoint();
+    std.process.exit(1);
+}
 
 pub const Command = enum { lsp, query, fmt, check, convert, help };
 
