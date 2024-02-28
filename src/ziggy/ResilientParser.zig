@@ -193,12 +193,20 @@ pub const TreeFmt = struct {
     }
 };
 
-const Child = union(enum) {
+pub const Child = union(enum) {
     token: Token,
     tree: Tree,
 
     pub fn deinit(c: *Child, gpa: mem.Allocator) void {
         if (c.* == .tree) c.tree.deinit(gpa);
+    }
+    pub fn format(c: Child, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        switch (c) {
+            .token => try writer.print("token={s}", .{@tagName(c.token.tag)}),
+            .tree => try writer.print("tree={s}", .{@tagName(c.tree.tag)}),
+        }
     }
 };
 
@@ -326,7 +334,6 @@ fn structField(p: *Parser) void {
 ///   struct | map | array | tag_string | string | float
 /// | integer | true | false | null
 fn value(p: *Parser) void {
-    std.log.debug("value {s}", .{@tagName(p.peek(0).tag)});
     const m = p.open();
     const token = p.peek(0);
     switch (token.tag) {
@@ -518,7 +525,7 @@ fn expect(p: *Parser, tag: Token.Tag) !void {
 
 fn at(p: *Parser, tag: Token.Tag) bool {
     const tok = p.peek(0);
-    std.log.debug("at({s}) {s}:'{s}'", .{ @tagName(tag), @tagName(tok.tag), tok.loc.src(p.code) });
+    // std.log.debug("at({s}) {s}:'{s}'", .{ @tagName(tag), @tagName(tok.tag), tok.loc.src(p.code) });
     return tag == tok.tag;
 }
 
@@ -556,7 +563,6 @@ fn eof(p: *Parser) bool {
 }
 
 fn open(p: *Parser) MarkOpened {
-    std.log.debug("open", .{});
     const mark: MarkOpened = @enumFromInt(p.events.items.len);
     p.events.append(p.gpa, .{ .open = .err }) catch @panic("OOM");
     return mark;
@@ -569,7 +575,6 @@ fn open(p: *Parser) MarkOpened {
 // }
 
 fn close(p: *Parser, m: MarkOpened, tag: Tree.Tag) MarkClosed {
-    std.log.debug("close {s}", .{@tagName(tag)});
     p.events.items[m.toInt()] = .{ .open = tag };
     p.events.append(p.gpa, .close) catch @panic("OOM");
     return m.toClosed();
@@ -718,7 +723,6 @@ test "nested named structs" {
         \\}, 
     );
 
-    std.testing.log_level = .debug;
     try expectFmt(
         \\//! ziggy-schema:  frontmatter.zs
         \\.title = "My Post #1",

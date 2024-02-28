@@ -1,7 +1,7 @@
 pub const Tokenizer = @import("ziggy/Tokenizer.zig");
 pub const Parser = @import("ziggy/Parser.zig");
 pub const Value = @import("ziggy/Value.zig");
-pub const Ast = @import("ziggy/Ast.zig");
+pub const Ast = @import("ziggy/ResilientParser.zig");
 pub const Diagnostic = @import("ziggy/Diagnostic.zig");
 pub const parseLeaky = Parser.parseLeaky;
 pub const serializer = @import("ziggy/serializer.zig");
@@ -18,7 +18,6 @@ test {
 
     // _ = Value;
     // _ = serializer;
-    _ = @import("ziggy/ResilientParser.zig");
 }
 
 pub const schema = struct {

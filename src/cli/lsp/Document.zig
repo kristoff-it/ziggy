@@ -108,7 +108,7 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) error{OutOfMemory}!Docu
     };
 
     log.debug("schema: applying", .{});
-    rules.check(arena, ast, &doc.diagnostic) catch return doc;
+    rules.check(arena, ast, &doc.diagnostic, bytes) catch return doc;
 
     return doc;
 }

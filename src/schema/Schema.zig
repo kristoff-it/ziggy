@@ -299,7 +299,7 @@ fn analyzeRule(
 const CheckItem = struct {
     optional: bool = false,
     rule: Rule,
-    doc_node: u32,
+    child: ziggy.Ast.Child,
 };
 
 fn addError(gpa: std.mem.Allocator, diag: ?*ziggy.Diagnostic, err: ziggy.Diagnostic.Error) !void {
@@ -313,54 +313,58 @@ fn addError(gpa: std.mem.Allocator, diag: ?*ziggy.Diagnostic, err: ziggy.Diagnos
 pub fn check(
     self: Schema,
     gpa: std.mem.Allocator,
-    doc: ziggy.Ast,
+    doc: ziggy.Ast.Tree,
     diag: ?*ziggy.Diagnostic,
+    code: [:0]const u8,
 ) !void {
+
     // TODO: check ziggy file against this ruleset
     var stack = std.ArrayList(CheckItem).init(gpa);
     defer stack.deinit();
 
-    var doc_root_val: u32 = 1;
-    if (doc.nodes[1].tag == .top_comment) {
-        doc_root_val = doc.nodes[1].next_id;
+    var doc_root_val: u32 = 0;
+    {
+        const items = doc.children.items;
+        assert(items[0] == .token);
+        const first_child = items[0].token;
+        log.debug("first_child={s}", .{first_child.loc.src(code)});
+        while (items[doc_root_val] == .token and
+            items[doc_root_val].token.tag == .top_comment_line) : (doc_root_val += 1)
+        {}
+        try stack.append(.{
+            .rule = self.root,
+            .child = items[doc_root_val],
+        });
     }
-
-    try stack.append(.{
-        .rule = self.root,
-        .doc_node = doc_root_val,
-    });
 
     while (stack.popOrNull()) |elem| {
         const rule = self.nodes[elem.rule.node];
-        const doc_node = doc.nodes[elem.doc_node];
-        {
-            log.debug("rule '{s}', node '{s}'", .{
-                rule.loc.src(self.code),
-                @tagName(doc_node.tag),
-            });
-            const sel = doc_node.loc.getSelection(doc.code);
-            log.debug("line: {}, col: {}", .{
-                sel.start.line,
-                sel.start.col,
-            });
-        }
+        assert(elem.child == .tree);
+        const tree = elem.child.tree;
 
-        if (doc_node.tag == .value and doc_node.missing) {
-            const rule_src = rule.loc.src(self.code);
-            try addError(gpa, diag, .{
-                .missing = .{
-                    .token = .{
-                        .tag = .identifier,
-                        .loc = doc_node.loc,
-                    },
-                    .expected = rule_src,
-                },
-            });
-            continue;
-        }
+        log.debug(
+            "rule {s} {s}, child {}",
+            .{ @tagName(rule.tag), rule.loc.src(self.code), elem.child },
+        );
+
+        // TODO indicate missing
+        // if (doc_node.tag == .value and doc_node.missing) {
+        //     const rule_src = rule.loc.src(code);
+        //     try addError(gpa, diag, .{
+        //         .missing = .{
+        //             .token = .{
+        //                 .tag = .identifier,
+        //                 .loc = doc_node.loc,
+        //             },
+        //             .expected = rule_src,
+        //         },
+        //     });
+        //     continue;
+        // }
 
         switch (rule.tag) {
-            .optional => switch (doc_node.tag) {
+            else => std.debug.panic("TODO {s}", .{@tagName(rule.tag)}),
+            .optional => switch (tree.tag) {
                 .null => {},
                 else => {
                     const child_rule: Rule = .{ .node = rule.first_child_id };
@@ -369,64 +373,71 @@ pub fn check(
                     try stack.append(.{
                         .optional = true,
                         .rule = child_rule,
-                        .doc_node = elem.doc_node,
+                        .child = elem.child,
                     });
                 },
             },
-            .array => switch (doc_node.tag) {
+            .array => switch (tree.tag) {
                 .array => {
                     //TODO: optimize for simple cases
                     const child_rule: Rule = .{ .node = rule.first_child_id };
                     assert(child_rule.node != 0);
 
-                    var doc_child_id = doc_node.first_child_id;
-                    while (doc_child_id != 0) {
-                        assert(doc.nodes[doc_child_id].tag != .comment);
+                    const items = tree.children.items;
+                    assert(items[items.len - 1].token.tag == .rsb);
+                    // start at 1 to skip first token: '['
+                    var child_id: usize = 1;
+                    while (child_id < items.len - 1) : (child_id += 2) {
+                        const arr_child = items[child_id];
+                        if (arr_child == .token) {
+                            assert(arr_child.token.tag != .comment);
+                        }
                         try stack.append(.{
                             .rule = child_rule,
-                            .doc_node = doc_child_id,
+                            .child = arr_child,
                         });
-
-                        doc_child_id = doc.nodes[doc_child_id].next_id;
                     }
                 },
-                else => try self.typeMismatch(gpa, diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, elem),
             },
-            .map => switch (doc_node.tag) {
-                .struct_or_map => {},
+            .map => switch (tree.tag) {
                 .map => {
                     //TODO: optimize for simple cases
                     const child_rule: Rule = .{ .node = rule.first_child_id };
                     assert(child_rule.node != 0);
-
-                    var doc_child_id = doc_node.first_child_id;
-                    while (doc_child_id != 0) {
-                        assert(doc.nodes[doc_child_id].tag == .map_field);
+                    // maps look like this:
+                    //   '{',
+                    //        fieldname, ':', value, ','
+                    //        fieldname, ':', value, ','?
+                    //   '}'
+                    // in order to iterate values, we start at 3 to skip
+                    // leading curly, fieldname and colon and increment by 4
+                    var child_id: usize = 3;
+                    while (child_id < tree.children.items.len) : (child_id += 4) {
+                        const map_child = tree.children.items[child_id];
+                        log.debug("map_child {}", .{map_child});
                         try stack.append(.{
                             .rule = child_rule,
-                            .doc_node = doc.nodes[doc_child_id].last_child_id,
+                            .child = map_child,
                         });
-
-                        doc_child_id = doc.nodes[doc_child_id].next_id;
                     }
                 },
-
-                else => try self.typeMismatch(gpa, diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, elem),
             },
-            .struct_union => switch (doc_node.tag) {
+            .struct_union => switch (tree.tag) {
                 .@"struct" => {
                     const rule_src = rule.loc.src(self.code);
-
-                    const struct_name_node = doc.nodes[doc_node.first_child_id];
-                    if (struct_name_node.tag != .identifier) {
+                    const struct_name_node = tree.children.items[0];
+                    assert(struct_name_node == .token);
+                    if (struct_name_node.token.tag != .identifier) {
                         try addError(gpa, diag, .{
                             .missing = .{
                                 .token = .{
                                     .tag = .identifier,
                                     .loc = .{
                                         // a struct always has curlies
-                                        .start = doc_node.loc.start -| 1,
-                                        .end = doc_node.loc.start + 1,
+                                        .start = tree.children.items[0].token.loc.start -| 1,
+                                        .end = tree.children.items[0].token.loc.start + 1,
                                     },
                                 },
                                 .expected = rule_src,
@@ -434,17 +445,17 @@ pub fn check(
                         });
                     }
 
-                    const struct_name = struct_name_node.loc.src(doc.code);
+                    const struct_name = struct_name_node.token.loc.src(code);
 
                     var ident_id = rule.first_child_id;
                     assert(ident_id != 0);
                     while (ident_id != 0) {
                         const id_rule = self.nodes[ident_id];
-                        const id_rule_src = id_rule.loc.src(self.code);
+                        const id_rule_src = id_rule.loc.src(code);
                         if (std.mem.eql(u8, struct_name, id_rule_src)) {
                             try stack.append(.{
                                 .rule = .{ .node = ident_id },
-                                .doc_node = elem.doc_node,
+                                .child = elem.child,
                             });
                             continue;
                         }
@@ -455,45 +466,43 @@ pub fn check(
                         .unknown = .{
                             .token = .{
                                 .tag = .identifier,
-                                .loc = struct_name_node.loc,
+                                .loc = struct_name_node.token.loc,
                             },
                             .expected = rule_src,
                         },
                     });
                 },
-                else => try self.typeMismatch(gpa, diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, elem),
             },
-            .identifier => switch (doc_node.tag) {
-                .@"struct", .braceless_struct => {
+            .identifier => switch (tree.tag) {
+                .@"struct", .top_level_struct => {
                     //TODO: optimize for simple cases
                     const name = rule.loc.src(self.code);
+                    log.debug("struct name={s}", .{name});
                     const struct_rule = self.structs.get(name).?;
 
                     var seen_fields = std.StringHashMap(void).init(gpa);
                     defer seen_fields.deinit();
 
-                    var doc_child_id = doc_node.first_child_id;
-                    if (doc.nodes[doc_child_id].tag == .identifier) {
-                        doc_child_id = doc.nodes[doc_child_id].next_id;
-                    }
+                    var child_id: usize = 0;
+                    if (tree.children.items[0] == .token and
+                        tree.children.items[0].token.tag == .identifier)
+                        child_id += 1;
 
-                    while (doc_child_id != 0) {
-                        const field = doc.nodes[doc_child_id];
-                        doc_child_id = field.next_id;
+                    while (child_id < tree.children.items.len) : (child_id += 2) {
+                        const field = tree.children.items[child_id];
+                        assert(field == .tree);
+                        assert(field.tree.tag == .struct_field);
 
-                        assert(field.tag == .struct_field);
-
-                        const field_name_node = doc.nodes[field.first_child_id];
-                        assert(field_name_node.tag == .identifier);
-
-                        const field_name = field_name_node.loc.src(doc.code);
+                        const field_name_node = field.tree.children.items[1];
+                        const field_name = field_name_node.token.loc.src(code);
 
                         const field_rule = struct_rule.fields.get(field_name) orelse {
                             try addError(gpa, diag, .{
                                 .unknown = .{
                                     .token = .{
                                         .tag = .identifier,
-                                        .loc = field_name_node.loc,
+                                        .loc = field_name_node.token.loc,
                                     },
                                     .expected = &.{},
                                 },
@@ -507,7 +516,8 @@ pub fn check(
 
                         try stack.append(.{
                             .rule = field_rule.rule,
-                            .doc_node = field.last_child_id,
+                            // skip first 3 tokens of struct field: dot, name, equal
+                            .child = field.tree.children.items[3],
                         });
                     }
 
@@ -524,8 +534,8 @@ pub fn check(
                                         .token = .{
                                             .tag = .value, // doesn't matter
                                             .loc = .{
-                                                .start = doc_node.loc.end - 1,
-                                                .end = doc_node.loc.end,
+                                                .start = tree.children.items[0].token.loc.end - 1,
+                                                .end = tree.children.items[0].token.loc.end,
                                             },
                                         },
                                         .expected = k,
@@ -535,30 +545,29 @@ pub fn check(
                         }
                     }
                 },
-                else => try self.typeMismatch(gpa, diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, elem),
             },
-            .tag => switch (doc_node.tag) {
-                .tag => {},
-                else => try self.typeMismatch(gpa, diag, doc, elem),
+            .tag => switch (tree.tag) {
+                .tag_string => {},
+                else => try self.typeMismatch(gpa, diag, elem),
             },
-            .bytes => switch (doc_node.tag) {
+            .bytes => switch (tree.tag) {
                 .string, .line_string => {},
-                else => try self.typeMismatch(gpa, diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, elem),
             },
-            .int => switch (doc_node.tag) {
+            .int => switch (tree.tag) {
                 .integer => {},
-                else => try self.typeMismatch(gpa, diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, elem),
             },
-            .float => switch (doc_node.tag) {
+            .float => switch (tree.tag) {
                 .float => {},
-                else => try self.typeMismatch(gpa, diag, doc, elem),
+                else => try self.typeMismatch(gpa, diag, elem),
             },
-            .bool => switch (doc_node.tag) {
-                .bool => {},
-                else => try self.typeMismatch(gpa, diag, doc, elem),
+            .bool => switch (tree.tag) {
+                .true, .false => {},
+                else => try self.typeMismatch(gpa, diag, elem),
             },
             .any => {},
-            else => unreachable,
         }
     }
 }
@@ -567,7 +576,6 @@ fn typeMismatch(
     self: Schema,
     gpa: std.mem.Allocator,
     diag: ?*ziggy.Diagnostic,
-    doc: ziggy.Ast,
     check_item: CheckItem,
 ) !void {
     var rule_node = self.nodes[check_item.rule.node];
@@ -575,16 +583,18 @@ fn typeMismatch(
         rule_node = self.nodes[rule_node.parent_id];
     }
 
-    const found = doc.nodes[check_item.doc_node];
+    const found_child = check_item.child.tree.children.items[0];
 
-    assert(found.tag != .comment);
-    assert(found.tag != .top_comment);
+    assert(found_child == .token);
+    const found_token = found_child.token;
+    assert(found_token.tag != .comment);
+    assert(found_token.tag != .top_comment_line);
 
     try addError(gpa, diag, .{
         .type_mismatch = .{
             .token = .{
                 .tag = .value,
-                .loc = found.loc,
+                .loc = found_token.loc,
             },
             .expected = rule_node.loc.src(self.code),
         },
