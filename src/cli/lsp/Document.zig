@@ -9,7 +9,7 @@ const log = std.log.scoped(.lsp_document);
 arena: std.heap.ArenaAllocator,
 bytes: [:0]const u8,
 diagnostic: ziggy.Diagnostic,
-ast: ?ziggy.Ast = null,
+ast: ?ziggy.LanguageServerAst = null,
 schema_path_loc: ?ziggy.Tokenizer.Token.Loc = null,
 schema: ?LoadedSchema = null,
 
@@ -33,15 +33,14 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) error{OutOfMemory}!Docu
     const arena = doc.arena.allocator();
 
     log.debug("parsing ziggy ast", .{});
-    const ast = ziggy.Ast.init(
+    const ast = ziggy.LanguageServerAst.init(
         arena,
         bytes,
         true,
-        false,
         &doc.diagnostic,
     ) catch return doc;
 
-    const schema_path = findSchemaPath(ast, bytes) orelse return doc;
+    const schema_path = ast.findSchemaPath(bytes) orelse return doc;
     log.debug("detected schema: '{s}'", .{schema_path});
 
     const start_byte: u32 = @intCast(std.mem.indexOf(u8, bytes, schema_path).?);
@@ -102,57 +101,13 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) error{OutOfMemory}!Docu
     };
 
     doc.schema = .{
-        .bytes = bytes,
+        .bytes = schema_file,
         .ast = schema_ast,
         .rules = rules,
     };
 
     log.debug("schema: applying", .{});
-    rules.check(arena, ast, &doc.diagnostic, bytes) catch return doc;
+    ast.check(arena, rules, &doc.diagnostic, bytes) catch return doc;
 
     return doc;
-}
-
-fn findSchemaPath(tree: ziggy.Ast.Tree, bytes: [:0]const u8) ?[]const u8 {
-    const top_comments = tree.children.items[0];
-    if (top_comments == .token and top_comments.token.tag == .top_comment_line) {
-        const schema_line = top_comments.token;
-        const src = schema_line.loc.src(bytes);
-        var it = std.mem.tokenizeScalar(u8, src, ' ');
-        var state: enum { start, comment, schema, colon } = .start;
-        while (it.next()) |tok| switch (state) {
-            .start => {
-                if (std.mem.eql(u8, tok, "//!")) {
-                    state = .comment;
-                } else if (std.mem.eql(u8, tok, "//!ziggy-schema")) {
-                    state = .schema;
-                } else if (std.mem.eql(u8, tok, "//!ziggy-schema:")) {
-                    state = .colon;
-                } else {
-                    return null;
-                }
-            },
-            .comment => {
-                if (std.mem.eql(u8, tok, "ziggy-schema")) {
-                    state = .schema;
-                } else if (std.mem.eql(u8, tok, "ziggy-schema:")) {
-                    state = .colon;
-                } else {
-                    return null;
-                }
-            },
-            .schema => {
-                if (std.mem.eql(u8, tok, ":")) {
-                    state = .colon;
-                } else {
-                    return null;
-                }
-            },
-
-            .colon => {
-                return tok;
-            },
-        };
-    }
-    return null;
 }

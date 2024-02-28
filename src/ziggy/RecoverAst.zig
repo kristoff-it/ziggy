@@ -1,4 +1,4 @@
-const Ast = @This();
+const RecoverAst = @This();
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -55,7 +55,7 @@ pub const Node = struct {
 code: [:0]const u8,
 nodes: []const Node,
 
-pub fn deinit(self: Ast, gpa: std.mem.Allocator) void {
+pub fn deinit(self: RecoverAst, gpa: std.mem.Allocator) void {
     gpa.free(self.nodes);
 }
 
@@ -63,13 +63,12 @@ const Parser = struct {
     gpa: std.mem.Allocator,
     code: [:0]const u8,
     tokenizer: Tokenizer,
-    stop_on_first_error: bool,
     diagnostic: ?*Diagnostic,
     nodes: std.ArrayListUnmanaged(Node) = .{},
     node: *Node = undefined,
     token: Token = undefined,
 
-    pub fn ast(p: *Parser) !Ast {
+    pub fn ast(p: *Parser) !RecoverAst {
         return .{
             .code = p.code,
             .nodes = try p.nodes.toOwnedSlice(p.gpa),
@@ -88,17 +87,17 @@ const Parser = struct {
         p.token = token;
     }
 
-    fn must(p: *Parser, comptime tag: Token.Tag) !void {
-        return p.mustAny(&.{tag});
+    fn must(p: Parser, token: Token, comptime tag: Token.Tag) !void {
+        return p.mustAny(token, &.{tag});
     }
 
-    fn mustAny(p: *Parser, comptime tags: []const Token.Tag) !void {
+    fn mustAny(p: Parser, token: Token, comptime tags: []const Token.Tag) !void {
         for (tags) |t| {
-            if (t == p.token.tag) break;
+            if (t == token.tag) break;
         } else {
             try p.addError(.{
                 .unexpected_token = .{
-                    .token = p.token,
+                    .token = token,
                     .expected = tags,
                 },
             });
@@ -108,8 +107,9 @@ const Parser = struct {
     pub fn addError(p: *Parser, err: Diagnostic.Error) !void {
         if (p.diagnostic) |d| {
             try d.errors.append(p.gpa, err);
+        } else {
+            return err.zigError();
         }
-        return err.zigError();
     }
 
     pub fn addChild(p: *Parser, tag: Node.Tag) !void {
@@ -152,14 +152,12 @@ pub fn init(
     gpa: std.mem.Allocator,
     code: [:0]const u8,
     want_comments: bool,
-    stop_on_first_error: bool,
     diagnostic: ?*Diagnostic,
-) !Ast {
+) !RecoverAst {
     var p: Parser = .{
         .gpa = gpa,
         .code = code,
         .diagnostic = diagnostic,
-        .stop_on_first_error = stop_on_first_error,
         .tokenizer = .{ .want_comments = want_comments },
     };
 
@@ -188,7 +186,42 @@ pub fn init(
                     p.node.loc.start = p.token.loc.start;
                 },
                 .eof => return p.ast(),
-                else => try p.addChild(.value),
+                else => {
+                    const last_child = p.nodes.items[p.node.last_child_id];
+                    switch (last_child.tag) {
+                        .root, .top_comment => {
+                            while (true) : (try p.next()) {
+                                switch (p.token.tag) {
+                                    .identifier => {
+                                        if (p.peek() == .lb) {
+                                            break;
+                                        } else {
+                                            try p.addError(.{
+                                                .unexpected_token = .{
+                                                    .token = p.token,
+                                                    .expected = &.{},
+                                                },
+                                            });
+                                        }
+                                    },
+                                    else => break,
+                                }
+                            }
+                            try p.addChild(.value);
+                        },
+                        else => {
+                            while (p.token.tag != .eof) : (try p.next()) {
+                                try p.addError(.{
+                                    .unexpected_token = .{
+                                        .token = p.token,
+                                        .expected = &.{},
+                                    },
+                                });
+                            }
+                            return p.ast();
+                        },
+                    }
+                },
             },
             .top_comment => switch (p.token.tag) {
                 .top_comment_line => {
@@ -211,16 +244,18 @@ pub fn init(
                     p.parent();
                     try p.next();
                 },
-                .dot => {
-                    try p.addChild(.struct_field);
-                },
-                else => {
+                .rb => {
                     try p.addError(.{
                         .unexpected_token = .{
                             .token = p.token,
-                            .expected = &.{ .dot, .eof },
+                            .expected = &.{},
                         },
                     });
+                    try p.next();
+                },
+                else => {
+                    try p.addChild(.struct_field);
+                    p.node.loc.start = p.token.loc.start;
                 },
             },
 
@@ -243,6 +278,8 @@ pub fn init(
                     p.node.tag = .map;
                 },
                 else => {
+                    p.node.loc.end = p.token.loc.start;
+                    p.parent();
                     try p.addError(.{
                         .unexpected_token = .{
                             .token = p.token,
@@ -264,15 +301,7 @@ pub fn init(
                     p.parent();
                     try p.next();
                 },
-                .dot => try p.addChild(.struct_field),
-                else => {
-                    try p.addError(.{
-                        .unexpected_token = .{
-                            .token = p.token,
-                            .expected = &.{ .dot, .rb },
-                        },
-                    });
-                },
+                else => try p.addChild(.struct_field),
             },
 
             .struct_field => {
@@ -284,26 +313,146 @@ pub fn init(
                     .root => {
                         // first time entering, struct has no children
                         p.node.loc.start = p.token.loc.start;
-                        try p.must(.dot);
-                        try p.next();
-                        try p.must(.identifier);
+                        if (p.token.tag == .dot) {
+                            try p.next();
+                        } else {
+                            try p.addError(.{
+                                .unexpected_token = .{
+                                    .token = p.token,
+                                    .expected = &.{.dot},
+                                },
+                            });
+                        }
+
                         try p.addChild(.identifier);
-                        p.node.loc = p.token.loc;
-                        p.parent();
-                        try p.next();
-                        try p.must(.eql);
-                        try p.next();
+                        if (p.token.tag == .identifier) {
+                            p.node.loc = p.token.loc;
+                            p.parent();
+                            try p.next();
+                        } else {
+                            p.node.missing = true;
+                            p.node.loc.start = p.token.loc.start;
+                            p.node.loc.end = p.node.loc.start;
+                            p.parent();
+                        }
+
+                        // Collect garbage until punctuation
+                        while (true) : (try p.next()) {
+                            log.debug("garbage loop: '{s}'", .{
+                                @tagName(p.token.tag),
+                            });
+                            switch (p.token.tag) {
+                                .eql,
+                                .colon,
+                                // start of a value
+                                .lb,
+                                .lsb,
+                                .at,
+                                .string,
+                                .integer,
+                                .float,
+                                .true,
+                                .false,
+                                .null,
+                                => break,
+                                .identifier => {
+                                    if (p.peek() == .lb) {
+                                        break;
+                                    } else {
+                                        try p.addError(.{
+                                            .unexpected_token = .{
+                                                .token = p.token,
+                                                .expected = &.{},
+                                            },
+                                        });
+                                    }
+                                },
+
+                                .dot, .comma, .rb, .rsb, .eof => {
+                                    p.node.loc.end = p.token.loc.end;
+                                    try p.addChild(.value);
+                                    p.node.missing = true;
+                                    p.node.loc.start = p.token.loc.start;
+                                    p.node.loc.end = p.node.loc.start;
+                                    p.parent();
+                                    p.parent();
+                                    if (p.token.tag == .comma) {
+                                        try p.next();
+                                    }
+                                    break;
+                                },
+                                else => {
+                                    try p.addError(.{
+                                        .unexpected_token = .{
+                                            .token = p.token,
+                                            .expected = &.{},
+                                        },
+                                    });
+                                },
+                            }
+                        }
+                        log.debug("exiting struct_field: '{s}'", .{
+                            @tagName(p.node.tag),
+                        });
+                    },
+                    .identifier => {
+                        log.debug("struct field identifier", .{});
+                        if (p.token.tag == .eql) {
+                            try p.next();
+                        } else {
+                            try p.addError(.{
+                                .unexpected_token = .{
+                                    .token = p.token,
+                                    .expected = &.{.eql},
+                                },
+                            });
+                        }
+
+                        while (true) : (try p.next()) {
+                            switch (p.token.tag) {
+                                else => break,
+                                .identifier => {
+                                    if (p.peek() == .lb) {
+                                        break;
+                                    } else {
+                                        try p.addError(.{
+                                            .unexpected_token = .{
+                                                .token = p.token,
+                                                .expected = &.{},
+                                            },
+                                        });
+                                    }
+                                },
+                            }
+                        }
                         try p.addChild(.value);
                     },
                     else => {
-                        if (p.token.tag == .comma) {
-                            p.node.loc.end = p.token.loc.end;
-                            try p.next();
-                        } else {
-                            p.node.loc.end = p.token.loc.start;
-                            try p.mustAny(&.{ .rb, .eof });
+                        log.debug("struct field final", .{});
+                        // Collect garbage until punctuation
+                        while (true) : (try p.next()) {
+                            switch (p.token.tag) {
+                                .comma => {
+                                    p.node.loc.end = p.token.loc.end;
+                                    p.parent();
+                                    try p.next();
+                                    break;
+                                },
+                                .dot, .rb, .rsb, .eof => {
+                                    p.node.loc.end = p.token.loc.start;
+                                    p.parent();
+                                    break;
+                                },
+                                else => {
+                                    try p.addError(.{
+                                        .unexpected_token = .{
+                                            .token = p.token,
+                                            .expected = &.{.comma},
+                                        },
+                                    });
+                                },
+                            }
                         }
-                        p.parent();
                     },
                 }
             },
@@ -315,21 +464,24 @@ pub fn init(
                     p.parent();
                     try p.next();
                 },
-                .rb => {
-                    p.node.loc.end = p.token.loc.end;
-                    try p.next();
+                .rb, .eof, .dot => {
+                    if (p.token.tag == .rb) {
+                        p.node.loc.end = p.token.loc.end;
+                        try p.next();
+                    } else {
+                        p.node.loc.end = p.token.loc.start;
+                        try p.addError(.{
+                            .unexpected_token = .{
+                                .token = p.token,
+                                .expected = &.{.rb},
+                            },
+                        });
+                    }
                     p.parent();
                 },
-                .string => {
-                    try p.addChild(.map_field);
-                },
                 else => {
-                    try p.addError(.{
-                        .unexpected_token = .{
-                            .token = p.token,
-                            .expected = &.{ .string, .rb },
-                        },
-                    });
+                    try p.addChild(.map_field);
+                    p.node.loc.start = p.token.loc.start;
                 },
             },
 
@@ -340,23 +492,109 @@ pub fn init(
                     .root => {
                         p.node.loc.start = p.token.loc.start;
                         try p.addChild(.map_field_key);
-                        try p.must(.string);
-                        p.node.loc = p.token.loc;
+                        const first_token = p.token;
+                        var found_key = false;
+                        while (true) : (try p.next()) {
+                            switch (p.token.tag) {
+                                .eql, .colon, .comma, .rb => break,
+                                .string => {
+                                    if (found_key) {
+                                        try p.addError(.{
+                                            .unexpected_token = .{
+                                                .token = p.token,
+                                                .expected = &.{ .string, .rb },
+                                            },
+                                        });
+                                    } else {
+                                        found_key = true;
+                                        p.node.loc = p.token.loc;
+                                    }
+                                },
+                                else => try p.addError(.{
+                                    .unexpected_token = .{
+                                        .token = p.token,
+                                        .expected = &.{ .string, .rb },
+                                    },
+                                }),
+                            }
+                        }
+
+                        if (!found_key) {
+                            p.node.missing = true;
+                            p.node.loc.start = first_token.loc.start;
+                            p.node.loc.end = p.node.loc.start + 1;
+                        }
+
                         p.parent();
-                        try p.next();
-                        try p.must(.colon);
-                        try p.next();
-                        try p.addChild(.value);
                     },
-                    else => {
-                        if (p.token.tag == .comma) {
-                            p.node.loc.end = p.token.loc.end;
+                    .map_field_key => {
+                        if (p.token.tag == .colon) {
                             try p.next();
                         } else {
-                            p.node.loc.end = p.token.loc.start;
-                            try p.mustAny(&.{.rb});
+                            try p.addError(.{
+                                .unexpected_token = .{
+                                    .token = p.token,
+                                    .expected = &.{.colon},
+                                },
+                            });
                         }
-                        p.parent();
+                        try p.addChild(.value);
+                        while (true) : (try p.next()) {
+                            switch (p.token.tag) {
+                                .rsb, .invalid, .colon, .eql => try p.addError(.{
+                                    .unexpected_token = .{
+                                        .token = p.token,
+                                        .expected = &.{.value},
+                                    },
+                                }),
+                                .identifier => {
+                                    if (p.peek() == .lb) {
+                                        break;
+                                    } else {
+                                        try p.addError(.{
+                                            .unexpected_token = .{
+                                                .token = p.token,
+                                                .expected = &.{},
+                                            },
+                                        });
+                                    }
+                                },
+                                else => break,
+                            }
+                        }
+                    },
+                    else => {
+                        while (true) : (try p.next()) {
+                            switch (p.token.tag) {
+                                .comma => {
+                                    p.node.loc.end = p.token.loc.end;
+                                    p.parent();
+                                    try p.next();
+                                    break;
+                                },
+                                .rb, .eof => {
+                                    p.node.loc.end = p.token.loc.start;
+                                    p.parent();
+                                    break;
+                                },
+                                .string => {
+                                    p.node.loc.end = p.token.loc.start;
+                                    try p.addError(.{
+                                        .unexpected_token = .{
+                                            .token = p.token,
+                                            .expected = &.{.comma},
+                                        },
+                                    });
+                                    p.parent();
+                                },
+                                else => try p.addError(.{
+                                    .unexpected_token = .{
+                                        .token = p.token,
+                                        .expected = &.{},
+                                    },
+                                }),
+                            }
+                        }
                     },
                 }
             },
@@ -364,16 +602,37 @@ pub fn init(
                 const last_child = p.nodes.items[p.node.last_child_id];
                 log.debug(" last: '{s}'", .{@tagName(last_child.tag)});
 
-                switch (last_child.tag) {
-                    .root => {
-                        p.node.loc.start = p.token.loc.start;
-                    },
-                    .comment => unreachable,
-                    else => {
-                        if (p.token.tag == .comma) {
-                            try p.next();
-                        } else {
-                            if (p.token.tag != .rsb) {
+                // while (p.token.tag == .comment) : (try p.next()) {
+                //     try p.addChild(.comment);
+                //     p.node.loc = p.token.loc;
+                //     p.parent();
+                // }
+
+                if (p.node.last_child_id == 0) {
+                    p.node.loc.start = p.token.loc.start;
+                } else {
+                    if (p.token.tag == .comma) {
+                        try p.next();
+                    } else {
+                        if (p.token.tag != .rsb) {
+                            try p.addError(.{
+                                .unexpected_token = .{
+                                    .token = p.token,
+                                    .expected = &.{.comma},
+                                },
+                            });
+                        }
+                    }
+                }
+
+                while (true) : (try p.next()) {
+                    switch (p.token.tag) {
+                        .rsb, .eof => {
+                            if (p.token.tag == .rsb) {
+                                p.node.loc.end = p.token.loc.end;
+                                try p.next();
+                            } else {
+                                p.node.loc.end = p.token.loc.start;
                                 try p.addError(.{
                                     .unexpected_token = .{
                                         .token = p.token,
@@ -381,24 +640,40 @@ pub fn init(
                                     },
                                 });
                             }
-                        }
-                    },
+                            p.parent();
+                            break;
+                        },
+                        .colon => {
+                            try p.addChild(.value);
+                            p.node.missing = true;
+                            p.node.loc = p.token.loc;
+                            p.parent();
+                            break;
+                        },
+                        .rb, .invalid, .eql => try p.addError(.{
+                            .unexpected_token = .{
+                                .token = p.token,
+                                .expected = &.{.value},
+                            },
+                        }),
+                        .identifier => {
+                            if (p.peek() == .lb) {
+                                break;
+                            } else {
+                                try p.addError(.{
+                                    .unexpected_token = .{
+                                        .token = p.token,
+                                        .expected = &.{},
+                                    },
+                                });
+                            }
+                        },
+                        else => {
+                            try p.addChild(.value);
+                            break;
+                        },
+                    }
                 }
-
-                while (p.token.tag == .comment) : (try p.next()) {
-                    try p.addChild(.comment);
-                    p.node.loc = p.token.loc;
-                    p.parent();
-                }
-
-                if (p.token.tag == .rsb) {
-                    p.node.loc.end = p.token.loc.end;
-                    try p.next();
-                    p.parent();
-                    continue;
-                }
-
-                try p.addChild(.value);
             },
 
             .value => switch (p.token.tag) {
@@ -412,10 +687,10 @@ pub fn init(
                     p.node.loc.start = p.token.loc.start;
                     try p.addChild(.identifier);
                     p.node.loc = p.token.loc;
-                    try p.next();
-                    try p.must(.lb);
-                    try p.next();
                     p.parent();
+                    try p.next();
+                    assert(p.token.tag == .lb);
+                    try p.next();
                 },
                 .lsb => {
                     p.node.tag = .array;
@@ -425,21 +700,59 @@ pub fn init(
                 .at => {
                     p.node.tag = .tag;
                     p.node.loc.start = p.token.loc.start;
+                    const tag_token = p.token;
+
                     try p.next();
-                    try p.must(.identifier);
+
                     try p.addChild(.identifier);
-                    p.node.loc = p.token.loc;
-                    p.parent();
+
+                    if (p.token.tag == .identifier) {
+                        p.node.loc = p.token.loc;
+                        p.parent();
+                        p.node.loc.end = p.token.loc.end;
+                        try p.next();
+                    } else {
+                        p.node.missing = true;
+                        p.node.loc = tag_token.loc;
+                        p.parent();
+                        p.node.loc.end = tag_token.loc.end;
+                    }
+
+                    // TODO: make resilient
+
+                    if (p.token.tag != .lp) {
+                        try p.addError(.{
+                            .unexpected_token = .{
+                                .token = p.token,
+                                .expected = &.{.lp},
+                            },
+                        });
+                    }
+
                     try p.next();
-                    try p.must(.lp);
-                    try p.next();
-                    try p.must(.string);
+                    if (p.token.tag != .string) {
+                        try p.addError(.{
+                            .unexpected_token = .{
+                                .token = p.token,
+                                .expected = &.{.string},
+                            },
+                        });
+                    }
                     try p.addChild(.string);
                     p.node.loc = p.token.loc;
-                    p.parent();
+
                     try p.next();
-                    try p.must(.rp);
-                    p.node.loc.end = p.token.loc.end;
+                    if (p.token.tag != .rp) {
+                        try p.addError(.{
+                            .unexpected_token = .{
+                                .token = p.token,
+                                .expected = &.{.rp},
+                            },
+                        });
+                    }
+
+                    // go up 2 nodes
+                    p.parent();
                     p.parent();
                     try p.next();
                 },
@@ -487,6 +800,11 @@ pub fn init(
                     try p.next();
                 },
                 else => {
+                    p.node.tag = .value;
+                    p.node.missing = true;
+                    p.node.loc.start = p.token.loc.start;
+                    p.node.loc.end = p.node.loc.start;
+                    p.parent();
                     try p.addError(.{
                         .unexpected_token = .{
                             .token = p.token,
@@ -524,18 +842,19 @@ fn addError(gpa: std.mem.Allocator, diag: ?*ziggy.Diagnostic, err: ziggy.Diagnos
 }
 
 pub fn check(
-    doc: ziggy.Ast,
+    self: RecoverAst,
     gpa: std.mem.Allocator,
     rules: ziggy.schema.Schema,
     diag: ?*ziggy.Diagnostic,
+    _: [:0]const u8,
 ) !void {
     // TODO: check ziggy file against this ruleset
     var stack = std.ArrayList(CheckItem).init(gpa);
     defer stack.deinit();
 
     var doc_root_val: u32 = 1;
-    if (doc.nodes[1].tag == .top_comment) {
-        doc_root_val = doc.nodes[1].next_id;
+    if (self.nodes[1].tag == .top_comment) {
+        doc_root_val = self.nodes[1].next_id;
     }
 
     try stack.append(.{
@@ -545,13 +864,13 @@ pub fn check(
 
     while (stack.popOrNull()) |elem| {
         const rule = rules.nodes[elem.rule.node];
-        const doc_node = doc.nodes[elem.doc_node];
+        const doc_node = self.nodes[elem.doc_node];
         {
             log.debug("rule '{s}', node '{s}'", .{
                 rule.loc.src(rules.code),
                 @tagName(doc_node.tag),
             });
-            const sel = doc_node.loc.getSelection(doc.code);
+            const sel = doc_node.loc.getSelection(self.code);
             log.debug("line: {}, col: {}", .{
                 sel.start.line,
                 sel.start.col,
@@ -594,16 +913,16 @@ pub fn check(
 
                     var doc_child_id = doc_node.first_child_id;
                     while (doc_child_id != 0) {
-                        assert(doc.nodes[doc_child_id].tag != .comment);
+                        assert(self.nodes[doc_child_id].tag != .comment);
                         try stack.append(.{
                             .rule = child_rule,
                             .doc_node = doc_child_id,
                         });
 
-                        doc_child_id = doc.nodes[doc_child_id].next_id;
+                        doc_child_id = self.nodes[doc_child_id].next_id;
                     }
                 },
-                else => try doc.typeMismatch(gpa, diag, rules, elem),
+                else => try self.typeMismatch(gpa, diag, rules, elem),
             },
             .map => switch (doc_node.tag) {
                 .struct_or_map => {},
@@ -614,23 +933,23 @@ pub fn check(
 
                     var doc_child_id = doc_node.first_child_id;
                     while (doc_child_id != 0) {
-                        assert(doc.nodes[doc_child_id].tag == .map_field);
+                        assert(self.nodes[doc_child_id].tag == .map_field);
                         try stack.append(.{
                             .rule = child_rule,
-                            .doc_node = doc.nodes[doc_child_id].last_child_id,
+                            .doc_node = self.nodes[doc_child_id].last_child_id,
                         });
 
-                        doc_child_id = doc.nodes[doc_child_id].next_id;
+                        doc_child_id = self.nodes[doc_child_id].next_id;
                     }
                 },
 
-                else => try doc.typeMismatch(gpa, diag, rules, elem),
+                else => try self.typeMismatch(gpa, diag, rules, elem),
             },
             .struct_union => switch (doc_node.tag) {
                 .@"struct" => {
                     const rule_src = rule.loc.src(rules.code);
 
-                    const struct_name_node = doc.nodes[doc_node.first_child_id];
+                    const struct_name_node = self.nodes[doc_node.first_child_id];
                     if (struct_name_node.tag != .identifier) {
                         try addError(gpa, diag, .{
                             .missing = .{
@@ -647,7 +966,7 @@ pub fn check(
                         });
                     }
 
-                    const struct_name = struct_name_node.loc.src(doc.code);
+                    const struct_name = struct_name_node.loc.src(self.code);
 
                     var ident_id = rule.first_child_id;
                     assert(ident_id != 0);
@@ -674,7 +993,7 @@ pub fn check(
                         },
                     });
                 },
-                else => try doc.typeMismatch(gpa, diag, rules, elem),
+                else => try self.typeMismatch(gpa, diag, rules, elem),
             },
             .identifier => switch (doc_node.tag) {
                 .@"struct", .braceless_struct => {
@@ -686,20 +1005,20 @@ pub fn check(
                     defer seen_fields.deinit();
 
                     var doc_child_id = doc_node.first_child_id;
-                    if (doc.nodes[doc_child_id].tag == .identifier) {
-                        doc_child_id = doc.nodes[doc_child_id].next_id;
+                    if (self.nodes[doc_child_id].tag == .identifier) {
+                        doc_child_id = self.nodes[doc_child_id].next_id;
                     }
 
                     while (doc_child_id != 0) {
-                        const field = doc.nodes[doc_child_id];
+                        const field = self.nodes[doc_child_id];
                         doc_child_id = field.next_id;
 
                         assert(field.tag == .struct_field);
 
-                        const field_name_node = doc.nodes[field.first_child_id];
+                        const field_name_node = self.nodes[field.first_child_id];
                         assert(field_name_node.tag == .identifier);
 
-                        const field_name = field_name_node.loc.src(doc.code);
+                        const field_name = field_name_node.loc.src(self.code);
 
                         const field_rule = struct_rule.fields.get(field_name) orelse {
                             try addError(gpa, diag, .{
@@ -748,27 +1067,27 @@ pub fn check(
                         }
                     }
                 },
-                else => try doc.typeMismatch(gpa, diag, rules, elem),
+                else => try self.typeMismatch(gpa, diag, rules, elem),
             },
             .tag => switch (doc_node.tag) {
                 .tag => {},
-                else => try doc.typeMismatch(gpa, diag, rules, elem),
+                else => try self.typeMismatch(gpa, diag, rules, elem),
             },
             .bytes => switch (doc_node.tag) {
                 .string, .line_string => {},
-                else => try doc.typeMismatch(gpa, diag, rules, elem),
+                else => try self.typeMismatch(gpa, diag, rules, elem),
             },
             .int => switch (doc_node.tag) {
                 .integer => {},
-                else => try doc.typeMismatch(gpa, diag, rules, elem),
+                else => try self.typeMismatch(gpa, diag, rules, elem),
             },
             .float => switch (doc_node.tag) {
                 .float => {},
-                else => try doc.typeMismatch(gpa, diag, rules, elem),
+                else => try self.typeMismatch(gpa, diag, rules, elem),
             },
             .bool => switch (doc_node.tag) {
                 .bool => {},
-                else => try doc.typeMismatch(gpa, diag, rules, elem),
+                else => try self.typeMismatch(gpa, diag, rules, elem),
             },
             .any => {},
             else => unreachable,
@@ -777,7 +1096,7 @@ pub fn check(
 }
 
 fn typeMismatch(
-    doc: ziggy.Ast,
+    self: RecoverAst,
     gpa: std.mem.Allocator,
     diag: ?*ziggy.Diagnostic,
     rules: ziggy.schema.Schema,
@@ -788,7 +1107,7 @@ fn typeMismatch(
         rule_node = rules.nodes[rule_node.parent_id];
     }
 
-    const found = doc.nodes[check_item.doc_node];
+    const found = self.nodes[check_item.doc_node];
 
     assert(found.tag != .comment);
     assert(found.tag != .top_comment);
@@ -804,8 +1123,53 @@ fn typeMismatch(
     });
 }
 
+pub fn findSchemaPath(tree: RecoverAst, bytes: [:0]const u8) ?[]const u8 {
+    if (tree.nodes.len < 3) return null;
+
+    const top_comments = tree.nodes[2];
+    if (top_comments.tag == .top_comment_line) {
+        const src = top_comments.loc.src(bytes);
+        var it = std.mem.tokenizeScalar(u8, src, ' ');
+        var state: enum { start, comment, schema, colon } = .start;
+        while (it.next()) |tok| switch (state) {
+            .start => {
+                if (std.mem.eql(u8, tok, "//!")) {
+                    state = .comment;
+                } else if (std.mem.eql(u8, tok, "//!ziggy-schema")) {
+                    state = .schema;
+                } else if (std.mem.eql(u8, tok, "//!ziggy-schema:")) {
+                    state = .colon;
+                } else {
+                    return null;
+                }
+            },
+            .comment => {
+                if (std.mem.eql(u8, tok, "ziggy-schema")) {
+                    state = .schema;
+                } else if (std.mem.eql(u8, tok, "ziggy-schema:")) {
+                    state = .colon;
+                } else {
+                    return null;
+                }
+            },
+            .schema => {
+                if (std.mem.eql(u8, tok, ":")) {
+                    state = .colon;
+                } else {
+                    return null;
+                }
+            },
+
+            .colon => {
+                return tok;
+            },
+        };
+    }
+    return null;
+}
+
 pub fn format(
-    self: Ast,
+    self: RecoverAst,
     comptime fmt: []const u8,
     options: std.fmt.FormatOptions,
     out_stream: anytype,
@@ -1138,7 +1502,7 @@ test "basics" {
 
     var diag: Diagnostic = .{ .path = null };
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try Ast.init(std.testing.allocator, case, true, true, &diag);
+    const ast = try RecoverAst.init(std.testing.allocator, case, true, true, &diag);
     defer ast.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{}", .{ast});
 }
@@ -1156,7 +1520,7 @@ test "vertical" {
 
     var diag: Diagnostic = .{ .path = null };
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try Ast.init(std.testing.allocator, case, true, true, &diag);
+    const ast = try RecoverAst.init(std.testing.allocator, case, true, true, &diag);
     defer ast.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{}", .{ast});
 }
@@ -1177,7 +1541,7 @@ test "complex" {
 
     var diag: Diagnostic = .{ .path = null };
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try Ast.init(std.testing.allocator, case, true, true, &diag);
+    const ast = try RecoverAst.init(std.testing.allocator, case, true, true, &diag);
     defer ast.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{}", .{ast});
 }

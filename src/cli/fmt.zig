@@ -33,11 +33,16 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
         },
         .doc, .unset => {
             var diag: Diagnostic = .{ .path = null };
-            const doc = try Ast.init(gpa, code, true, false, &diag);
+            const doc = Ast.init(gpa, code, true, false, &diag) catch {
+                if (diag.errors.items.len != 0) {
+                    std.debug.print("{}", .{diag});
+                }
+                std.process.exit(1);
+            };
 
             const schema = loadSchema(gpa, cmd.schema);
 
-            try schema.check(gpa, doc, &diag, code);
+            doc.check(gpa, schema, &diag) catch {};
 
             if (diag.errors.items.len != 0) {
                 std.debug.print("{}", .{diag});

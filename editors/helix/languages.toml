@@ -1,5 +1,6 @@
 [language-server.ziggy-lsp]
-command = "ziggy-lsp"
+command = "ziggy"
+args = ["lsp"]
 
 [[language]]
 name = "ziggy"

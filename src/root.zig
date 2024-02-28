@@ -1,11 +1,17 @@
 pub const Tokenizer = @import("ziggy/Tokenizer.zig");
 pub const Parser = @import("ziggy/Parser.zig");
 pub const Value = @import("ziggy/Value.zig");
-pub const Ast = @import("ziggy/ResilientParser.zig");
+pub const Ast = @import("ziggy/Ast.zig");
 pub const Diagnostic = @import("ziggy/Diagnostic.zig");
 pub const parseLeaky = Parser.parseLeaky;
 pub const serializer = @import("ziggy/serializer.zig");
 pub const stringify = serializer.stringify;
+
+const lsp_parser: enum { recover, resilient } = .recover;
+pub const LanguageServerAst = switch (lsp_parser) {
+    .recover => @import("ziggy/RecoverAst.zig"),
+    .resilient => @import("ziggy/ResilientParser.zig"),
+};
 
 // Ziggy documents and schemas can have a maximum size of 4GB
 pub const max_size = 4 * 1024 * 1024 * 1024;

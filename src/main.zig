@@ -5,6 +5,7 @@ const logging = @import("cli/logging.zig");
 const lsp_exe = @import("cli/lsp.zig");
 const fmt_exe = @import("cli/fmt.zig");
 const check_exe = @import("cli/check.zig");
+const convert_exe = @import("cli/convert.zig");
 
 pub const known_folders_config = .{
     .xdg_force_default = true,
@@ -62,7 +63,8 @@ pub fn main() void {
     _ = switch (cmd) {
         .lsp => lsp_exe.run(gpa, args[2..]),
         .fmt => fmt_exe.run(gpa, args[2..]),
-        .check => check_exe.run(gpa, args[2..]),
+        // .check => check_exe.run(gpa, args[2..]),
+        .convert => convert_exe.run(gpa, args[2..]),
         .help => fatalHelp(),
         else => std.debug.panic("TODO cmd={s}", .{@tagName(cmd)}),
     } catch |err| fatal("{s}\n", .{@errorName(err)});
