@@ -315,7 +315,7 @@ pub fn check(
     gpa: std.mem.Allocator,
     doc: ziggy.Ast.Tree,
     diag: ?*ziggy.Diagnostic,
-    code: [:0]const u8,
+    ziggy_code: [:0]const u8,
 ) !void {
 
     // TODO: check ziggy file against this ruleset
@@ -327,7 +327,7 @@ pub fn check(
         const items = doc.children.items;
         assert(items[0] == .token);
         const first_child = items[0].token;
-        log.debug("first_child={s}", .{first_child.loc.src(code)});
+        log.debug("first_child={s}", .{first_child.loc.src(ziggy_code)});
         while (items[doc_root_val] == .token and
             items[doc_root_val].token.tag == .top_comment_line) : (doc_root_val += 1)
         {}
@@ -445,13 +445,13 @@ pub fn check(
                         });
                     }
 
-                    const struct_name = struct_name_node.token.loc.src(code);
+                    const struct_name = struct_name_node.token.loc.src(ziggy_code);
 
                     var ident_id = rule.first_child_id;
                     assert(ident_id != 0);
                     while (ident_id != 0) {
                         const id_rule = self.nodes[ident_id];
-                        const id_rule_src = id_rule.loc.src(code);
+                        const id_rule_src = id_rule.loc.src(ziggy_code);
                         if (std.mem.eql(u8, struct_name, id_rule_src)) {
                             try stack.append(.{
                                 .rule = .{ .node = ident_id },
@@ -495,7 +495,7 @@ pub fn check(
                         assert(field.tree.tag == .struct_field);
 
                         const field_name_node = field.tree.children.items[1];
-                        const field_name = field_name_node.token.loc.src(code);
+                        const field_name = field_name_node.token.loc.src(ziggy_code);
 
                         const field_rule = struct_rule.fields.get(field_name) orelse {
                             try addError(gpa, diag, .{

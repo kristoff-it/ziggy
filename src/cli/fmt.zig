@@ -37,7 +37,7 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
 
             const schema = loadSchema(gpa, cmd.schema);
 
-            try schema.check(gpa, doc, &diag);
+            try schema.check(gpa, doc, &diag, code);
 
             if (diag.errors.items.len != 0) {
                 std.debug.print("{}", .{diag});
