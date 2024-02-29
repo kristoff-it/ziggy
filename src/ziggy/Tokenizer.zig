@@ -188,7 +188,7 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
         },
     };
 
-    while (true) : (self.idx += 1) {
+    while (self.idx < code.len) : (self.idx += 1) {
         const c = code[self.idx];
         switch (state) {
             .start => switch (c) {
@@ -281,35 +281,14 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
             .identifier => switch (c) {
                 'a'...'z', 'A'...'Z', '_', '0'...'9' => continue,
                 else => {
-                    res.loc.end = self.idx;
-                    const src = res.loc.src(code);
-                    if (std.mem.eql(u8, src, "true")) {
-                        res.tag = .true;
-                    } else if (std.mem.eql(u8, src, "false")) {
-                        res.tag = .false;
-                    } else if (std.mem.eql(u8, src, "null")) {
-                        res.tag = .null;
-                    } else {
-                        res.tag = .identifier;
-                    }
+                    self.finishIdentifier(&res, code);
                     break;
                 },
             },
             .number => switch (c) {
                 '0'...'9', '.', '_', '-', '+', 'e', 'E' => continue,
                 else => {
-                    res.loc.end = self.idx;
-                    // TODO: implement this natively
-                    var minus_minus = res.loc;
-                    if (minus_minus.src(code)[0] == '-') {
-                        minus_minus.start += 1;
-                    }
-                    const check = std.zig.parseNumberLiteral(minus_minus.src(code));
-                    res.tag = switch (check) {
-                        .failure => .invalid,
-                        .int, .big_int => .integer,
-                        .float => .float,
-                    };
+                    self.finishNumber(&res, code);
                     break;
                 },
             },
@@ -360,12 +339,7 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
             .comment => switch (c) {
                 0, '\n' => {
                     if (self.want_comments) {
-                        res.loc.end = self.idx;
-                        if (std.mem.startsWith(u8, res.loc.src(code), "//!")) {
-                            res.tag = .top_comment_line;
-                        } else {
-                            res.tag = .comment;
-                        }
+                        self.finishComment(&res, code);
                         break;
                     } else {
                         state = .start;
@@ -376,6 +350,19 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
                 else => {},
             },
         }
+    } else {
+        switch (state) {
+            .start => res.tag = .eof,
+            .comment => {
+                if (self.want_comments) {
+                    self.finishComment(&res, code);
+                } else res.tag = .eof;
+            },
+            .identifier => self.finishIdentifier(&res, code),
+            .number => self.finishNumber(&res, code),
+            else => res.tag = .invalid,
+        }
+        res.loc.end = self.idx;
     }
 
     return res;
@@ -392,34 +379,78 @@ fn evenSlashes(str: []const u8) bool {
     return even;
 }
 
-test "basics" {
-    const case =
-        \\.foo = "bar",
-        \\.bar = false,
-        \\.baz = { .bax = null },
-    ;
+fn finishComment(self: Tokenizer, res: *Token, code: [:0]const u8) void {
+    res.loc.end = self.idx;
+    if (std.mem.startsWith(u8, res.loc.src(code), "//!")) {
+        res.tag = .top_comment_line;
+    } else {
+        res.tag = .comment;
+    }
+}
 
-    const expected: []const Token.Tag = &.{
-        // zig fmt: off
-        .dot, .identifier, .eql, .string, .comma,
-        .dot, .identifier, .eql, .false, .comma,
-        .dot, .identifier, .eql, .lb, .dot, .identifier, .eql, .null, .rb, .comma,
-        // zig fmt: on
+fn finishIdentifier(self: Tokenizer, res: *Token, code: [:0]const u8) void {
+    res.loc.end = self.idx;
+    const src = res.loc.src(code);
+    if (std.mem.eql(u8, src, "true")) {
+        res.tag = .true;
+    } else if (std.mem.eql(u8, src, "false")) {
+        res.tag = .false;
+    } else if (std.mem.eql(u8, src, "null")) {
+        res.tag = .null;
+    } else {
+        res.tag = .identifier;
+    }
+}
+
+fn finishNumber(self: Tokenizer, res: *Token, code: [:0]const u8) void {
+    res.loc.end = self.idx;
+    // TODO: implement this natively
+    var minus_minus = res.loc;
+    if (minus_minus.src(code)[0] == '-') {
+        minus_minus.start += 1;
+    }
+    const check = std.zig.parseNumberLiteral(minus_minus.src(code));
+    res.tag = switch (check) {
+        .failure => .invalid,
+        .int, .big_int => .integer,
+        .float => .float,
     };
+}
 
-    var t: Tokenizer = .{ .want_comments = false };
+fn testCase(
+    case: [:0]const u8,
+    expected: []const Token.Tag,
+    want_comments: bool,
+) !void {
+    var t: Tokenizer = .{ .want_comments = want_comments };
 
     for (expected, 0..) |e, idx| {
         errdefer std.debug.print("failed at index: {}\n", .{idx});
         const tok = t.next(case);
-        errdefer std.debug.print("bad token: {any}\n", .{tok});
+        errdefer std.debug.print("bad token: {s} '{s}'\n", .{ @tagName(tok.tag), tok.loc.src(case) });
         try std.testing.expectEqual(e, tok.tag);
     }
-        try std.testing.expectEqual(t.next(case).tag, .eof);
+}
+
+test "basics" {
+    // zig fmt: off
+    try testCase(
+        \\.foo = "bar",
+        \\.bar = false,
+        \\.baz = { .bax = null },
+    , &.{
+        .dot, .identifier, .eql, .string, .comma,
+        .dot, .identifier, .eql, .false, .comma,
+        .dot, .identifier, .eql, .lb, .dot, .identifier, .eql, .null, .rb, .comma,
+        .eof,
+    }, false);
+    // zig fmt: on
+
 }
 
 test "comments are skipped" {
-    const case =
+    // zig fmt: off
+    try testCase(
         \\.foo = "bar", // comment can be inline
         \\.bar = false,
         \\// bax must be null
@@ -429,51 +460,45 @@ test "comments are skipped" {
         \\},
         \\// can end with a comment
         \\// or even two
-    ;
-
-    const expected: []const Token.Tag = &.{
-        // zig fmt: off
+    ,
+     &.{
         .dot, .identifier, .eql, .string, .comma,
         .dot, .identifier, .eql, .false, .comma,
         .dot, .identifier, .eql, .lb, .dot, .identifier, .eql, .null, .rb, .comma,
-        // zig fmt: on
-    };
-
-    var t: Tokenizer = .{ .want_comments = false };
-
-    for (expected, 0..) |e, idx| {
-        errdefer std.debug.print("failed at index: {}\n", .{idx});
-        const tok = t.next(case);
-        errdefer std.debug.print("bad token: {any}\n", .{tok});
-        try std.testing.expectEqual(e, tok.tag);
-    }
-        try std.testing.expectEqual(t.next(case).tag, .eof);
+        .eof,
+    }, false);
+    // zig fmt: on
 }
 
 test "invalid comments" {
-    const case =
+    // zig fmt: off
+    try testCase(
         \\/invalid
         \\.foo = "bar",
         \\.bar = false,
         \\.baz = { .bax = null },
-    ;
-
-    const expected: []const Token.Tag = &.{
-        // zig fmt: off
+    , &.{
         .invalid, .identifier,
         .dot, .identifier, .eql, .string, .comma,
         .dot, .identifier, .eql, .false, .comma,
         .dot, .identifier, .eql, .lb, .dot, .identifier, .eql, .null, .rb, .comma,
-        // zig fmt: on
-    };
+        .eof,
+    }, false);
+    // zig fmt: on
 
-    var t: Tokenizer = .{ .want_comments = false };
+}
 
-    for (expected, 0..) |e, idx| {
-        errdefer std.debug.print("failed at index: {}\n", .{idx});
-        const tok = t.next(case);
-        errdefer std.debug.print("bad token: {any}\n", .{tok});
-        try std.testing.expectEqual(e, tok.tag);
-    }
-        try std.testing.expectEqual(t.next(case).tag, .eof);
+test "invalid string" {
+    try testCase(
+        \\["a "b"]
+    , &.{ .lsb, .string, .identifier, .invalid, .eof }, false);
+}
+
+test "want comments + trailing" {
+    try testCase(
+        \\//! top comment
+    , &.{ .top_comment_line, .eof }, true);
+    try testCase(
+        \\// comment
+    , &.{ .comment, .eof }, true);
 }
