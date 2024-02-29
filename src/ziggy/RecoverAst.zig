@@ -1123,48 +1123,55 @@ fn typeMismatch(
     });
 }
 
-pub fn findSchemaPath(tree: RecoverAst, bytes: [:0]const u8) ?[]const u8 {
+fn findSchemaLoc(tree: RecoverAst) ?Token.Loc {
     if (tree.nodes.len < 3) return null;
 
     const top_comments = tree.nodes[2];
-    if (top_comments.tag == .top_comment_line) {
-        const src = top_comments.loc.src(bytes);
-        var it = std.mem.tokenizeScalar(u8, src, ' ');
-        var state: enum { start, comment, schema, colon } = .start;
-        while (it.next()) |tok| switch (state) {
-            .start => {
-                if (std.mem.eql(u8, tok, "//!")) {
-                    state = .comment;
-                } else if (std.mem.eql(u8, tok, "//!ziggy-schema")) {
-                    state = .schema;
-                } else if (std.mem.eql(u8, tok, "//!ziggy-schema:")) {
-                    state = .colon;
-                } else {
-                    return null;
-                }
-            },
-            .comment => {
-                if (std.mem.eql(u8, tok, "ziggy-schema")) {
-                    state = .schema;
-                } else if (std.mem.eql(u8, tok, "ziggy-schema:")) {
-                    state = .colon;
-                } else {
-                    return null;
-                }
-            },
-            .schema => {
-                if (std.mem.eql(u8, tok, ":")) {
-                    state = .colon;
-                } else {
-                    return null;
-                }
-            },
+    return if (top_comments.tag == .top_comment_line) top_comments.loc else null;
+}
 
-            .colon => {
-                return tok;
-            },
-        };
-    }
+pub fn findSchemaPath(tree: RecoverAst, bytes: [:0]const u8) ?[]const u8 {
+    const top_comments = tree.findSchemaLoc() orelse return null;
+    return findSchemaPathFromLoc(top_comments, bytes);
+}
+
+pub fn findSchemaPathFromLoc(schema_loc: Token.Loc, bytes: [:0]const u8) ?[]const u8 {
+    const src = schema_loc.src(bytes);
+    var it = std.mem.tokenizeScalar(u8, src, ' ');
+    var state: enum { start, comment, schema, colon } = .start;
+    while (it.next()) |tok| switch (state) {
+        .start => {
+            if (std.mem.eql(u8, tok, "//!")) {
+                state = .comment;
+            } else if (std.mem.eql(u8, tok, "//!ziggy-schema")) {
+                state = .schema;
+            } else if (std.mem.eql(u8, tok, "//!ziggy-schema:")) {
+                state = .colon;
+            } else {
+                return null;
+            }
+        },
+        .comment => {
+            if (std.mem.eql(u8, tok, "ziggy-schema")) {
+                state = .schema;
+            } else if (std.mem.eql(u8, tok, "ziggy-schema:")) {
+                state = .colon;
+            } else {
+                return null;
+            }
+        },
+        .schema => {
+            if (std.mem.eql(u8, tok, ":")) {
+                state = .colon;
+            } else {
+                return null;
+            }
+        },
+
+        .colon => {
+            return tok;
+        },
+    };
     return null;
 }
 
@@ -1493,22 +1500,24 @@ fn renderFields(
     }
 }
 
-test "basics" {
-    const case =
-        \\.foo = "bar",
-        \\.bar = [1, 2, 3],
-        \\
-    ;
-
+fn expectFmt(case: [:0]const u8) !void {
     var diag: Diagnostic = .{ .path = null };
     errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try RecoverAst.init(std.testing.allocator, case, true, true, &diag);
+    const ast = try RecoverAst.init(std.testing.allocator, case, true, &diag);
     defer ast.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{}", .{ast});
 }
 
+test "basics" {
+    try expectFmt(
+        \\.foo = "bar",
+        \\.bar = [1, 2, 3],
+        \\
+    );
+}
+
 test "vertical" {
-    const case =
+    try expectFmt(
         \\.foo = "bar",
         \\.bar = [
         \\    1,
@@ -1516,17 +1525,11 @@ test "vertical" {
         \\    3,
         \\],
         \\
-    ;
-
-    var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try RecoverAst.init(std.testing.allocator, case, true, true, &diag);
-    defer ast.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{}", .{ast});
+    );
 }
 
 test "complex" {
-    const case =
+    try expectFmt(
         \\.foo = "bar",
         \\.bar = [
         \\    1,
@@ -1537,11 +1540,5 @@ test "complex" {
         \\    },
         \\],
         \\
-    ;
-
-    var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
-    const ast = try RecoverAst.init(std.testing.allocator, case, true, true, &diag);
-    defer ast.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{}", .{ast});
+    );
 }
