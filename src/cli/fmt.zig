@@ -1,5 +1,6 @@
 const std = @import("std");
 const ziggy = @import("ziggy");
+const loadSchema = @import("load_schema.zig").loadSchema;
 const Diagnostic = ziggy.Diagnostic;
 const Ast = ziggy.Ast;
 
@@ -53,79 +54,6 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
         },
     }
     try out_buffer.flush();
-}
-
-fn loadSchema(gpa: std.mem.Allocator, path: ?[]const u8) ziggy.schema.Schema {
-    const p = path orelse return defaultSchema();
-
-    var diag: ziggy.schema.Diagnostic = .{ .path = p };
-
-    const schema_file = std.fs.cwd().readFileAllocOptions(
-        gpa,
-        p,
-        ziggy.max_size,
-        null,
-        1,
-        0,
-    ) catch |err| {
-        std.debug.print("error while reading the --schema file: {s}\n\n", .{
-            @errorName(err),
-        });
-        std.process.exit(1);
-    };
-
-    const schema_ast = ziggy.schema.Ast.init(
-        gpa,
-        schema_file,
-        &diag,
-    ) catch |err| {
-        std.debug.print("error while parsing the --schema file: {s}\n\n", .{
-            @errorName(err),
-        });
-        std.debug.print("{}\n", .{diag});
-        std.process.exit(1);
-    };
-
-    const schema = ziggy.schema.Schema.init(
-        gpa,
-        schema_ast.nodes.items,
-        schema_file,
-        &diag,
-    ) catch |err| {
-        std.debug.print("error while parsing the --schema file: {s}\n\n", .{
-            @errorName(err),
-        });
-        std.debug.print("{}\n", .{diag});
-        std.process.exit(1);
-    };
-
-    return schema;
-}
-
-fn defaultSchema() ziggy.schema.Schema {
-    return .{
-        .root = .{ .node = 1 },
-        .code = "any",
-        .allows_unknown_literals = true,
-        .nodes = &.{
-            .{
-                .tag = .root,
-                .loc = .{
-                    .start = 0,
-                    .end = "any".len,
-                },
-                .parent_id = 0,
-            },
-            .{
-                .tag = .any,
-                .loc = .{
-                    .start = 0,
-                    .end = "any".len,
-                },
-                .parent_id = 0,
-            },
-        },
-    };
 }
 
 pub const Command = struct {

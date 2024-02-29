@@ -10,6 +10,10 @@
             .url = "git+https://github.com/kristoff-it/zig-lsp-kit.git#9efbd913672be612b19e0c8932bf145b47b10b87",
             .hash = "1220e7de02c34269ceb849818c3d66c6a745647345c34b968df6df7ac7e84b077917",
         },
+        .yaml = .{
+            .url = "git+https://github.com/kubkon/zig-yaml.git#9308a64224f32184500d8a8178be0066443d65bc",
+            .hash = "122084941d6e06491a85e1356c7cca24a078103d34155e34a10a16a53f420d6bc37b",
+        },
     },
     .paths = .{
         "build.zig",
