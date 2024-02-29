@@ -89,10 +89,12 @@ pub const Tree = struct {
             const items = doc.children.items;
             assert(items[0] == .token);
             const first_child = items[0].token;
-            log.debug("first_child={s}", .{first_child.loc.src(ziggy_code)});
-            while (items[doc_root_val] == .token and
+            log.debug("check first_child={s}", .{first_child.loc.src(ziggy_code)});
+            while (doc_root_val < items.len and
+                items[doc_root_val] == .token and
                 items[doc_root_val].token.tag == .top_comment_line) : (doc_root_val += 1)
             {}
+            if (doc_root_val >= items.len) return; // empty file, nothing to do
             try stack.append(.{
                 .rule = rules.root,
                 .child = items[doc_root_val],
@@ -191,6 +193,7 @@ pub const Tree = struct {
                         const rule_src = rule.loc.src(rules.code);
                         const struct_name_node = tree.children.items[0];
                         assert(struct_name_node == .token);
+                        const name_loc = tree.loc();
                         if (struct_name_node.token.tag != .identifier) {
                             try addErrorCheck(gpa, diag, .{
                                 .missing = .{
@@ -198,8 +201,8 @@ pub const Tree = struct {
                                         .tag = .identifier,
                                         .loc = .{
                                             // a struct always has curlies
-                                            .start = tree.children.items[0].token.loc.start -| 1,
-                                            .end = tree.children.items[0].token.loc.start + 1,
+                                            .start = name_loc.start -| 1,
+                                            .end = name_loc.start + 1,
                                         },
                                     },
                                     .expected = rule_src,
@@ -257,8 +260,8 @@ pub const Tree = struct {
                             assert(field.tree.tag == .struct_field);
 
                             const field_name_node = field.tree.children.items[1];
+                            if (field_name_node != .token) continue;
                             const field_name = field_name_node.token.loc.src(ziggy_code);
-
                             const field_rule = struct_rule.fields.get(field_name) orelse {
                                 try addErrorCheck(gpa, diag, .{
                                     .unknown = .{
@@ -275,12 +278,13 @@ pub const Tree = struct {
                             // duplicate fields should be detected in the doc
                             // via AST contruction.
                             try seen_fields.putNoClobber(field_name, {});
-
-                            try stack.append(.{
-                                .rule = field_rule.rule,
-                                // skip first 3 tokens of struct field: dot, name, equal
-                                .child = field.tree.children.items[3],
-                            });
+                            // guard against incomplete fields / errors
+                            if (field.tree.children.items.len > 3)
+                                try stack.append(.{
+                                    .rule = field_rule.rule,
+                                    // skip first 3 tokens of struct field: dot, name, equal
+                                    .child = field.tree.children.items[3],
+                                });
                         }
 
                         if (seen_fields.count() != struct_rule.fields.count()) {
@@ -298,7 +302,14 @@ pub const Tree = struct {
                                                 .tag = .value, // doesn't matter
                                                 .loc = .{
                                                     .start = field_loc.start - 1,
-                                                    .end = field_loc.end,
+                                                    // FIXME this hack was added because sometimes field_loc.end is set to 0
+                                                    // and start is > 0
+                                                    // TODO find out why is field_loc.end sometimes == 0 and fix it.
+                                                    // make sure to add add a test with a reproduction.
+                                                    .end = if (field_loc.end < field_loc.start)
+                                                        field_loc.start
+                                                    else
+                                                        field_loc.end,
                                                 },
                                             },
                                             .expected = k,
@@ -346,66 +357,37 @@ pub const Tree = struct {
             rule_node = rules.nodes[rule_node.parent_id];
         }
 
-        const found_child = check_item.child.tree.children.items[0];
+        const found_child = check_item.child;
 
-        assert(found_child == .token);
-        const found_token = found_child.token;
-        assert(found_token.tag != .comment);
-        assert(found_token.tag != .top_comment_line);
+        if (found_child == .token) {
+            assert(found_child.token.tag != .comment);
+            assert(found_child.token.tag != .top_comment_line);
+        }
 
         try addErrorCheck(gpa, diag, .{
             .type_mismatch = .{
                 .token = .{
                     .tag = .value,
-                    .loc = found_token.loc,
+                    .loc = found_child.loc(),
                 },
                 .expected = rule_node.loc.src(rules.code),
             },
         });
     }
 
-    pub fn findSchemaPath(tree: Tree, bytes: [:0]const u8) ?[]const u8 {
+    pub fn findSchemaToken(tree: Tree) ?Token {
+        if (tree.children.items.len == 0) return null;
         const top_comments = tree.children.items[0];
-        if (top_comments == .token and top_comments.token.tag == .top_comment_line) {
-            const schema_line = top_comments.token;
-            const src = schema_line.loc.src(bytes);
-            var it = std.mem.tokenizeScalar(u8, src, ' ');
-            var state: enum { start, comment, schema, colon } = .start;
-            while (it.next()) |tok| switch (state) {
-                .start => {
-                    if (std.mem.eql(u8, tok, "//!")) {
-                        state = .comment;
-                    } else if (std.mem.eql(u8, tok, "//!ziggy-schema")) {
-                        state = .schema;
-                    } else if (std.mem.eql(u8, tok, "//!ziggy-schema:")) {
-                        state = .colon;
-                    } else {
-                        return null;
-                    }
-                },
-                .comment => {
-                    if (std.mem.eql(u8, tok, "ziggy-schema")) {
-                        state = .schema;
-                    } else if (std.mem.eql(u8, tok, "ziggy-schema:")) {
-                        state = .colon;
-                    } else {
-                        return null;
-                    }
-                },
-                .schema => {
-                    if (std.mem.eql(u8, tok, ":")) {
-                        state = .colon;
-                    } else {
-                        return null;
-                    }
-                },
+        return if (top_comments == .token and
+            top_comments.token.tag == .top_comment_line)
+            top_comments.token
+        else
+            null;
+    }
 
-                .colon => {
-                    return tok;
-                },
-            };
-        }
-        return null;
+    pub fn findSchemaPath(tree: Tree, bytes: [:0]const u8) ?[]const u8 {
+        const schema_line = tree.findSchemaToken() orelse return null;
+        return @import("RecoverAst.zig").findSchemaPathFromLoc(schema_line.loc, bytes);
     }
 };
 
@@ -633,35 +615,40 @@ fn document(p: *Parser) !void {
     const m = p.open();
     while (p.consume(.top_comment_line)) {}
 
-    while (true) {
-        const token = p.peek(0);
-        switch (token.tag) {
-            .eof => break,
-            .dot, .comment => try p.topLevelStruct(),
-            .lb,
-            .lsb,
-            .at,
-            .string,
-            .line_string,
-            .float,
-            .integer,
-            .true,
-            .false,
-            .null,
-            => try p.value(),
-            else => {
-                // "expected a top level struct or value"
-                try p.advanceWithError(.{ .unexpected_token = .{
-                    .token = token,
-                    .expected = &.{
-                        .lb,    .lsb,     .at,   .string, .line_string,
-                        .float, .integer, .true, .false,  .null,
-                    },
-                } });
-            },
-        }
+    const token = p.peek(0);
+    switch (token.tag) {
+        .eof => {},
+        .dot, .comment => try p.topLevelStruct(),
+        .lb,
+        .lsb,
+        .at,
+        .string,
+        .line_string,
+        .float,
+        .integer,
+        .true,
+        .false,
+        .null,
+        => try p.value(),
+        else => {
+            // "expected a top level struct or value"
+            try p.advanceWithError(.{ .unexpected_token = .{
+                .token = token,
+                .expected = &.{.value},
+            } });
+        },
     }
 
+    if (!p.eof()) {
+        const m2 = p.open();
+        var tok = p.peek(0);
+        tok.loc.end = @intCast(p.code.len);
+        try p.addError(.{
+            .unexpected_token = .{ .token = tok, .expected = &.{.eof} },
+        });
+        while (!p.eof()) p.advance();
+        _ = p.close(m2, .err);
+    }
     _ = p.close(m, .document);
 }
 
@@ -675,9 +662,11 @@ fn topLevelStruct(p: *Parser) !void {
     const m = p.open();
     try p.structField();
 
-    // note: we must check for eof AFTER eating a comma so that we don't
-    // continue parsing struct fields after a final trailing comma
-    while (p.consume(.comma) and !p.eof()) {
+    while (p.peek(0).tag == .comma) {
+        p.advance();
+        // eof check is necessary so that we don't continue parsing
+        // struct fields after a final trailing comma
+        if (p.eof()) break;
         try p.structField();
     }
 
@@ -688,6 +677,7 @@ fn topLevelStruct(p: *Parser) !void {
 
 /// struct_field = comment* '.' identifier '=' value
 fn structField(p: *Parser) !void {
+    assert(!p.eof());
     const m = p.open();
     p.comments();
     try p.expect(.dot);
@@ -714,6 +704,7 @@ fn value(p: *Parser) Diagnostic.Error.ZigError!void {
                         .expected = &.{.dot},
                     },
                 });
+                return;
             }
 
             p.advance();
@@ -759,15 +750,15 @@ fn value(p: *Parser) Diagnostic.Error.ZigError!void {
             p.advance();
             _ = p.close(m, .null);
         },
+        .eof => {
+            _ = p.close(m, .err);
+        },
         else => {
             // "expected a value"
             try p.advanceWithErrorNoOpen(m, .{
                 .unexpected_token = .{
                     .token = token,
-                    .expected = &.{
-                        .lb,    .lsb,     .at,   .string, .line_string,
-                        .float, .integer, .true, .false,  .null,
-                    },
+                    .expected = &.{.value},
                 },
             });
         },
@@ -831,8 +822,12 @@ fn struct_(p: *Parser) !void {
     _ = p.consume(.identifier);
     try p.expect(.lb);
 
-    while (!p.atAny(&.{ .rb, .eof })) {
-        try p.structField();
+    while (true) {
+        const token = p.peek(0);
+        switch (token.tag) {
+            .dot, .comment => try p.structField(),
+            else => break,
+        }
         if (!p.consume(.comma)) break;
     }
 
@@ -892,7 +887,7 @@ fn expect(p: *Parser, tag: Token.Tag) !void {
 
 fn at(p: *Parser, tag: Token.Tag) bool {
     const tok = p.peek(0);
-    // std.log.debug("at({s}) {s}:'{s}'", .{ @tagName(tag), @tagName(tok.tag), tok.loc.src(p.code) });
+    // log.debug("at({s}) {s}:'{s}'", .{ @tagName(tag), @tagName(tok.tag), tok.loc.src(p.code) });
     return tag == tok.tag;
 }
 
@@ -952,7 +947,7 @@ fn buildTree(p: *Parser) !Tree {
     var stack = std.ArrayList(Tree).init(p.gpa);
     defer stack.deinit();
     for (p.events.items) |event| {
-        // std.log.debug("build_tree() event={}", .{event});
+        // log.debug("build_tree() event={}", .{event});
         switch (event) {
             .open => |tag| try stack.append(.{ .tag = tag }),
             .close => {
@@ -972,22 +967,31 @@ fn buildTree(p: *Parser) !Tree {
     }
 
     const tree = stack.pop();
-    assert(stack.items.len == 0);
     assert(p.tokenizer.next(p.code).tag == .eof);
+    if (stack.items.len != 0) {
+        log.debug("unhandled stack item tree {}", .{tree.fmt(p.code)});
+        for (stack.items) |x| log.debug("unhandled stack item tag {s}", .{@tagName(x.tag)});
+        assert(false);
+    }
     return tree;
 }
 
-fn expectFmt(case: [:0]const u8) !void {
+pub fn expectFmtEql(case: [:0]const u8) !void {
+    try expectFmt(case, case);
+}
+
+pub fn expectFmt(case: [:0]const u8, expected: []const u8) !void {
     var diag = Diagnostic{ .path = null };
     defer diag.errors.deinit(std.testing.allocator);
     errdefer std.debug.print("{}\n", .{diag});
-    var tree = try init(std.testing.allocator, case, true, false, &diag);
+    var tree = try init(std.testing.allocator, case, true, &diag);
+    // std.debug.print("{}\n", .{tree.fmt(case)});
     defer tree.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{pretty}", .{tree.fmt(case)});
+    try std.testing.expectFmt(expected, "{pretty}", .{tree.fmt(case)});
 }
 
 test "basics" {
-    try expectFmt(
+    try expectFmtEql(
         \\.foo = "bar",
         \\.bar = [1, 2, 3],
         \\
@@ -995,7 +999,7 @@ test "basics" {
 }
 
 test "vertical" {
-    try expectFmt(
+    try expectFmtEql(
         \\.foo = "bar",
         \\.bar = [
         \\    1,
@@ -1007,7 +1011,7 @@ test "vertical" {
 }
 
 test "complex" {
-    try expectFmt(
+    try expectFmtEql(
         \\.foo = "bar",
         \\.bar = [
         \\    1,
@@ -1026,7 +1030,7 @@ test "complex" {
 }
 
 test "comments" {
-    try expectFmt(
+    try expectFmtEql(
         \\//! top comment
         \\//! top comment2
         \\// foo field comment
@@ -1039,32 +1043,31 @@ test "comments" {
 }
 
 test "top level non-struct values" {
-    try expectFmt("true");
-    try expectFmt("false");
-    try expectFmt("null");
-    try expectFmt(
+    try expectFmtEql("true");
+    try expectFmtEql("false");
+    try expectFmtEql("null");
+    try expectFmtEql(
         \\"top str"
     );
-    try expectFmt("123");
-    try expectFmt("123.45");
-    try expectFmt("{.a = 1, .b = 2}");
-    try expectFmt(
+    try expectFmtEql("123");
+    try expectFmtEql("123.45");
+    try expectFmtEql("{.a = 1, .b = 2}");
+    try expectFmtEql(
         \\{"a": 1, "b": 2}
     );
-    try expectFmt(
+    try expectFmtEql(
         \\[true, false, null, "str", 123, {.a = 1, .b = 2}, {"a": 1, "b": 2}]
     );
 }
 
 test "misc" {
-    try expectFmt("[]");
-    // FIXME: re-enable this test case which panics @Tokenizer.zig:190:55
-    // try testCase("");
-    try expectFmt("{}");
+    try expectFmtEql("[]");
+    try expectFmtEql("");
+    try expectFmtEql("{}");
 }
 
 test "line string" {
-    try expectFmt(
+    try expectFmtEql(
         \\{
         \\    "extended_description": 
         \\        \\Lorem ipsum dolor something something,
@@ -1075,12 +1078,24 @@ test "line string" {
 }
 
 test "invalid" {
-    try expectFmt(".a = , ");
-    try expectFmt(".a = 1,\n, ");
+    try expectFmtEql(".a = , ");
+    try expectFmtEql(".a = 1,\n, ");
+    try expectFmtEql(
+        \\.a = t ,
+        \\.b = 1
+    );
+    try expectFmtEql(
+        \\.x = [],
+        \\.
+    );
+    // FIXME everything after '.a = 1' is an error tree. not sure what to do
+    // about the lost whitespace. what should be rendered there?
+    try expectFmt(".a = 1 .b = 2", ".a = 1.b = 2");
+    try expectFmt(".a = ; ", ".a = (invalid)");
 }
 
 test "nested named structs" {
-    try expectFmt(
+    try expectFmtEql(
         \\{
         \\    "asrt1": Remote {
         \\        .url = "arst",
@@ -1089,7 +1104,7 @@ test "nested named structs" {
         \\}, 
     );
 
-    try expectFmt(
+    try expectFmtEql(
         \\//! ziggy-schema:  frontmatter.zs
         \\.title = "My Post #1",
         \\.date = @date("2024-02-18T10:00:00"),

@@ -194,7 +194,7 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
             .start => switch (c) {
                 0 => {
                     res.tag = .eof;
-                    res.loc.start = @intCast(code.len - 1);
+                    res.loc.start = @intCast(code.len -| 1); // code.len may == 0
                     res.loc.end = @intCast(code.len);
                     break;
                 },
@@ -272,6 +272,7 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
                 '\\' => state = .line_string_start,
                 '/' => state = .comment_start,
                 else => {
+                    self.idx += 1;
                     res.tag = .invalid;
                     res.loc.end = self.idx;
                     break;
@@ -314,6 +315,7 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
             },
             .string => switch (c) {
                 0, '\n' => {
+                    self.idx += 1;
                     res.tag = .invalid;
                     res.loc.end = self.idx;
                     break;
@@ -332,6 +334,7 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
             .line_string_start => switch (c) {
                 '\\' => state = .line_string,
                 else => {
+                    self.idx += 1;
                     res.tag = .invalid;
                     res.loc.end = self.idx;
                     break;
@@ -348,6 +351,7 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
             .comment_start => switch (c) {
                 '/' => state = .comment,
                 else => {
+                    self.idx += 1;
                     res.tag = .invalid;
                     res.loc.end = self.idx;
                     break;
