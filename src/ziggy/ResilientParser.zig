@@ -86,9 +86,8 @@ pub const Tree = struct {
         var doc_root_val: u32 = 0;
         {
             const items = doc.children.items;
-            assert(items[0] == .token);
-            const first_child = items[0].token;
-            log.debug("check first_child={s}", .{first_child.loc.src(ziggy_code)});
+            if (items.len == 0) return;
+            log.debug("check() first_child={s}", .{items[0].loc().src(ziggy_code)});
             while (doc_root_val < items.len and
                 items[doc_root_val] == .token and
                 items[doc_root_val].token.tag == .top_comment_line) : (doc_root_val += 1)
@@ -109,21 +108,22 @@ pub const Tree = struct {
                 "rule {s} {s}, child {}",
                 .{ @tagName(rule.tag), rule.loc.src(rules.code), elem.child },
             );
-
-            // TODO indicate missing
-            // if (doc_node.tag == .value and doc_node.missing) {
-            //     const rule_src = rule.loc.src(code);
-            // try addErrorCheck(gpa, diag, .{
-            //         .missing = .{
-            //             .token = .{
-            //                 .tag = .identifier,
-            //                 .loc = doc_node.loc,
-            //             },
-            //             .expected = rule_src,
-            //         },
-            //     });
-            //     continue;
-            // }
+            if (tree.tag == .err) {
+                // TODO more descriptive reporting
+                try addErrorCheck(gpa, diag, .{
+                    .unexpected_token = .{
+                        .token = .{
+                            .tag = .invalid,
+                            .loc = tree.loc(),
+                        },
+                        .expected = switch (rule.tag) {
+                            .struct_field => &.{.dot},
+                            else => &.{},
+                        },
+                    },
+                });
+                continue;
+            }
 
             switch (rule.tag) {
                 else => std.debug.panic("TODO {s}", .{@tagName(rule.tag)}),
@@ -147,6 +147,7 @@ pub const Tree = struct {
                         assert(child_rule.node != 0);
 
                         const items = tree.children.items;
+                        if (items[items.len - 1] != .token) continue;
                         assert(items[items.len - 1].token.tag == .rsb);
                         // start at 1 to skip first token: '['
                         var child_id: usize = 1;
@@ -255,13 +256,44 @@ pub const Tree = struct {
 
                         while (child_id < tree.children.items.len) : (child_id += 2) {
                             const field = tree.children.items[child_id];
-                            assert(field == .tree);
+                            switch (field) {
+                                .token => {
+                                    // TODO more descriptive reporting
+                                    try addErrorCheck(gpa, diag, .{
+                                        .unknown = .{
+                                            .token = .{
+                                                .tag = .identifier,
+                                                .loc = field.token.loc,
+                                            },
+                                            .expected = &.{},
+                                        },
+                                    });
+                                    continue;
+                                },
+                                .tree => |field_tree| switch (field_tree.tag) {
+                                    .struct_field => {},
+                                    else => {
+                                        // TODO more descriptive reporting
+                                        try addErrorCheck(gpa, diag, .{
+                                            .unknown = .{
+                                                .token = .{
+                                                    .tag = .identifier,
+                                                    .loc = field_tree.loc(),
+                                                },
+                                                .expected = &.{},
+                                            },
+                                        });
+                                        continue;
+                                    },
+                                },
+                            }
                             assert(field.tree.tag == .struct_field);
-
+                            if (field.tree.children.items.len < 2) continue;
                             const field_name_node = field.tree.children.items[1];
                             if (field_name_node != .token) continue;
                             const field_name = field_name_node.token.loc.src(ziggy_code);
                             const field_rule = struct_rule.fields.get(field_name) orelse {
+                                // TODO more descriptive reporting
                                 try addErrorCheck(gpa, diag, .{
                                     .unknown = .{
                                         .token = .{
@@ -278,12 +310,15 @@ pub const Tree = struct {
                             // via AST contruction.
                             try seen_fields.putNoClobber(field_name, {});
                             // guard against incomplete fields / errors
-                            if (field.tree.children.items.len > 3)
+                            if (field.tree.children.items.len > 3) {
                                 try stack.append(.{
                                     .rule = field_rule.rule,
                                     // skip first 3 tokens of struct field: dot, name, equal
                                     .child = field.tree.children.items[3],
                                 });
+                            } else {
+                                // TODO maybe check for errors
+                            }
                         }
 
                         if (seen_fields.count() != struct_rule.fields.count()) {
@@ -661,12 +696,34 @@ fn topLevelStruct(p: *Parser) !void {
     const m = p.open();
     try p.structField();
 
-    while (p.peek(0).tag == .comma) {
-        p.advance();
-        // eof check is necessary so that we don't continue parsing
-        // struct fields after a final trailing comma
-        if (p.eof()) break;
-        try p.structField();
+    while (true) {
+        const token = p.peek(0);
+        log.debug("topLevelStruct {}", .{token.tag});
+        switch (token.tag) {
+            .comma => {
+                p.advance();
+                // eof check is necessary so that we don't continue parsing
+                // struct fields after a final trailing comma
+                if (p.peek(0).tag == .eof) break;
+
+                try p.structField();
+            },
+            .eof => break,
+            .dot => {
+                // report error and try to recover on dot
+                try p.addError(.{ .missing = .{
+                    .token = token,
+                    .expected = Token.Tag.comma.lexeme(),
+                } });
+                try p.structField();
+            },
+            else => {
+                try p.advanceWithError(.{ .missing = .{
+                    .token = token,
+                    .expected = Token.Tag.comma.lexeme(),
+                } });
+            },
+        }
     }
 
     _ = p.consume(.comma);
@@ -677,6 +734,7 @@ fn topLevelStruct(p: *Parser) !void {
 /// struct_field = comment* '.' identifier '=' value
 fn structField(p: *Parser) !void {
     assert(!p.eof());
+    if (p.at(.comma)) return; // allow for recovery
     const m = p.open();
     p.comments();
     try p.expect(.dot);
@@ -700,7 +758,7 @@ fn value(p: *Parser) Diagnostic.Error.ZigError!void {
                 try p.advanceWithErrorNoOpen(m, .{
                     .unexpected_token = .{
                         .token = token1,
-                        .expected = &.{.dot},
+                        .expected = &.{.lb},
                     },
                 });
                 return;
@@ -750,6 +808,15 @@ fn value(p: *Parser) Diagnostic.Error.ZigError!void {
             _ = p.close(m, .null);
         },
         .eof => {
+            _ = p.close(m, .err);
+        },
+        .comma => { // allow for recovery, don't advance
+            try p.addError(.{
+                .unexpected_token = .{
+                    .token = token,
+                    .expected = &.{.value},
+                },
+            });
             _ = p.close(m, .err);
         },
         else => {
@@ -877,10 +944,30 @@ fn consume(p: *Parser, tag: Token.Tag) bool {
     return false;
 }
 
+// this makes it possible to avoid memory errors without allocating below in
+// expect() where we need to return a non-static slice.
+const static_token_tags = blk: {
+    const fields = @typeInfo(Token.Tag).Enum.fields;
+    var result: [fields.len][1]Token.Tag = undefined;
+    for (fields, 0..) |f, i| {
+        result[i][0] = @enumFromInt(f.value);
+    }
+    break :blk result;
+};
+
 fn expect(p: *Parser, tag: Token.Tag) !void {
     if (p.consume(tag)) return;
     try p.addError(.{
-        .unexpected_token = .{ .token = p.peek(0), .expected = &.{tag} },
+        .unexpected_token = .{
+            .token = p.peek(0),
+            // prevent memory errors by returning a pointer to static memory.
+            // this allows us to avoid the following problems:
+            //   UAF:          .expected = &.{tag}
+            //   memory leak:  .expected = try p.gpa.dupe(&.{tag})
+            // duping the slice would require a way to free it later on after
+            // the lsp diagnostics are printed.
+            .expected = &static_token_tags[@intFromEnum(tag)],
+        },
     });
 }
 
@@ -895,6 +982,7 @@ fn atAny(p: *Parser, tags: []const Token.Tag) bool {
 }
 
 fn addError(p: Parser, err: Diagnostic.Error) !void {
+    log.debug("addError {}", .{err.fmt(p.code, null)});
     if (p.diagnostic) |d| {
         try d.errors.append(p.gpa, err);
     }
@@ -972,6 +1060,7 @@ fn buildTree(p: *Parser) !Tree {
         for (stack.items) |x| log.debug("unhandled stack item tag {s}", .{@tagName(x.tag)});
         assert(false);
     }
+    // log.debug("tree\n{}\n", .{tree.fmt(p.code)});
     return tree;
 }
 
@@ -1077,8 +1166,8 @@ test "line string" {
 }
 
 test "invalid" {
-    try expectFmtEql(".a = , ");
-    try expectFmtEql(".a = 1,\n, ");
+    try expectFmtEql(".a = ,\n");
+    try expectFmtEql(".a = 1,\n,\n");
     try expectFmtEql(
         \\.a = t ,
         \\.b = 1
@@ -1095,6 +1184,16 @@ test "invalid" {
         \\["a "b"] 
     ,
         \\["a "b (invalid)
+    );
+    try expectFmt(
+        \\.title = "My Post #1
+    ,
+        \\.title = (invalid)
+        ,
+    );
+    try expectFmtEql(
+        \\.layout = .title = "asdf",
+        \\
     );
 }
 
@@ -1139,4 +1238,72 @@ test "nested named structs" {
         \\},
         \\
     );
+}
+
+test "maps" {
+    try expectFmtEql(
+        \\{"asdf": 1}
+    );
+    try expectFmtEql(
+        \\.foo = {"asdf": 1}
+    );
+    try expectFmtEql(
+        \\.foo = Foo {"asdf": 1}
+    );
+}
+
+test "tree.check" {
+    // i'm leaving this here for now as a way to debug Tree.check()
+    // TODO either remove this or turn it into a test helper
+    if (true) return error.SkipZigTest;
+    std.testing.log_level = .debug;
+    const code =
+        \\//! ziggy-schema:  fm.zs
+        \\
+        \\.title = "My Post #1
+    ;
+    const alloc = std.testing.allocator;
+    var diag = Diagnostic{ .path = null };
+    std.debug.print("{}\n", .{diag});
+    var tree = try init(alloc, code, false, &diag);
+
+    defer tree.deinit(alloc);
+    const schema_file =
+        \\root = Frontmatter
+        \\struct Frontmatter {
+        \\  title: ?bytes,
+        \\}
+    ;
+    var schema_ast = try ziggy.schema.Ast.init(
+        alloc,
+        schema_file,
+        null,
+    );
+    defer schema_ast.deinit();
+    var rules = try ziggy.schema.Schema.init(
+        alloc,
+        schema_ast.nodes.items,
+        schema_file,
+        null,
+    );
+    defer rules.deinit(alloc);
+    diag.deinit(alloc);
+    diag = .{ .path = null };
+    try Tree.check(tree, alloc, rules, &diag, code);
+
+    for (diag.errors.items) |e| {
+        switch (e) {
+            inline else => |payload, tag| {
+                const P = @TypeOf(payload);
+                std.debug.print("diag tag {s}\n", .{@tagName(tag)});
+                if (P != void and @hasField(P, "token")) {
+                    std.debug.print("{s} {}\n", .{ @tagName(tag), payload.token.loc });
+                }
+            },
+        }
+    }
+    std.debug.print("errors len {}\n", .{diag.errors.items.len});
+    diag.code = code;
+    std.debug.print("{}\n", .{diag});
+    diag.deinit(alloc);
 }
