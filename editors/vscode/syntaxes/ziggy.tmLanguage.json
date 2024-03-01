@@ -1,0 +1,157 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "Ziggy",
+	"patterns": [
+		{
+			"include": "#strings"
+		},
+		{
+			"include": "#tag_names"
+		},
+		{
+			"include": "#builtins"
+		},
+		{
+			"include": "#comments"
+		},
+		{
+			"include": "#variables"
+		}
+	],
+	"repository": {
+		"tag_names": {
+			"comment": "Built-in functions",
+			"name": "support.function.builtin.ziggy",
+			"match": "@[_a-zA-Z][_a-zA-Z0-9]*"
+		},
+		"builtins": {
+			"patterns": [
+				{
+					"name": "keyword.constant.default.zig",
+					"match": "\\b(null)\\b"
+				},
+				{
+					"name": "keyword.constant.bool.zig",
+					"match": "\\b(true|false)\\b"
+				}
+			]
+		},
+		"comments": {
+			"patterns": [
+				{
+					"name": "comment.line.double-slash.ziggy",
+					"begin": "//",
+					"end": "$",
+					"patterns": [
+						{
+							"include": "#commentContents"
+						}
+					]
+				}
+			]
+		},
+		"commentContents": {
+			"patterns": [
+				{
+					"match": "\\b(TODO|FIXME|XXX|NOTE)\\b:?",
+					"name": "keyword.todo.ziggy"
+				},
+				{
+					"match": "\\b(ziggy-schema)\\b:?",
+					"name": "keyword.ziggy"
+				}
+			]
+		},
+		"variables": {
+			"patterns": [
+				{
+					"name": "meta.variable.ziggy",
+					"patterns": [
+						{
+							"match": "\\b[_a-zA-Z][_a-zA-Z0-9]*\\b",
+							"name": "variable.ziggy"
+						},
+						{
+							"begin": "@\"",
+							"end": "\"",
+							"name": "variable.string.ziggy",
+							"patterns": [
+								{
+									"include": "#stringcontent"
+								}
+							]
+						}
+					]
+				}
+			]
+		},
+		"strings": {
+			"patterns": [
+				{
+					"name": "string.quoted.double.ziggy",
+					"begin": "\"",
+					"end": "\"",
+					"patterns": [
+						{
+							"include": "#stringcontent"
+						}
+					]
+				},
+				{
+					"name": "string.multiline.ziggy",
+					"begin": "\\\\\\\\",
+					"end": "$"
+				},
+				{
+					"name": "string.quoted.single.ziggy",
+					"match": "'([^'\\\\]|\\\\(x\\h{2}|[0-2][0-7]{,2}|3[0-6][0-7]?|37[0-7]?|[4-7][0-7]?|.))'"
+				}
+			]
+		},
+		"stringcontent": {
+			"patterns": [
+				{
+					"name": "constant.character.escape.ziggy",
+					"match": "\\\\([nrt'\"\\\\]|(x[0-9a-fA-F]{2})|(u\\{[0-9a-fA-F]+\\}))"
+				},
+				{
+					"name": "invalid.illegal.unrecognized-string-escape.ziggy",
+					"match": "\\\\."
+				}
+			]
+		},
+		"numbers": {
+			"patterns": [
+				{
+					"name": "constant.numeric.hexfloat.ziggy",
+					"match": "\\b0x[0-9a-fA-F][0-9a-fA-F_]*(\\.[0-9a-fA-F][0-9a-fA-F_]*)?([pP][+-]?[0-9a-fA-F_]+)?\\b"
+				},
+				{
+					"name": "constant.numeric.float.ziggy",
+					"match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?([eE][+-]?[0-9_]+)?\\b"
+				},
+				{
+					"name": "constant.numeric.decimal.ziggy",
+					"match": "\\b[0-9][0-9_]*\\b"
+				},
+				{
+					"name": "constant.numeric.hexadecimal.ziggy",
+					"match": "\\b0x[a-fA-F0-9_]+\\b"
+				},
+				{
+					"name": "constant.numeric.octal.ziggy",
+					"match": "\\b0o[0-7_]+\\b"
+				},
+				{
+					"name": "constant.numeric.binary.ziggy",
+					"match": "\\b0b[01_]+\\b"
+				},
+				{
+					"name": "constant.numeric.invalid.ziggy",
+					"match": "\\b[0-9](([eEpP][+-])|[0-9a-zA-Z_])*(\\.(([eEpP][+-])|[0-9a-zA-Z_])*)?([eEpP][+-])?[0-9a-zA-Z_]*\\b"
+				}
+			]
+		}
+	},
+	"scopeName": "text.ziggy"
+}
