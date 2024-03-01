@@ -15,7 +15,6 @@ const Diagnostic = @import("Diagnostic.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
 const Rule = ziggy.schema.Schema.Rule;
-
 const log = std.log.scoped(.resilient_parser);
 
 pub const Tree = struct {
@@ -1092,6 +1091,11 @@ test "invalid" {
     // about the lost whitespace. what should be rendered there?
     try expectFmt(".a = 1 .b = 2", ".a = 1.b = 2");
     try expectFmt(".a = ; ", ".a = (invalid)");
+    try expectFmt(
+        \\["a "b"] 
+    ,
+        \\["a "b (invalid)
+    );
 }
 
 test "nested named structs" {
