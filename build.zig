@@ -17,9 +17,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .strip = false,
     });
+    unit_tests.filters = if (b.option([]const u8, "test-filter", "test filter")) |filter|
+        b.allocator.dupe([]const u8, &.{filter}) catch @panic("OOM")
+    else
+        &.{};
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     if (b.args) |args| run_unit_tests.addArgs(args);
+    run_unit_tests.has_side_effects = true;
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);

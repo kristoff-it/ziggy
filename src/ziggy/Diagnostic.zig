@@ -276,7 +276,7 @@ pub const Error = union(enum) {
     };
 };
 
-pub fn deinit(self: Diagnostic, gpa: std.mem.Allocator) void {
+pub fn deinit(self: *Diagnostic, gpa: std.mem.Allocator) void {
     self.errors.deinit(gpa);
 }
 
