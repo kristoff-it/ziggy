@@ -1070,7 +1070,13 @@ pub fn check(
                 else => try self.typeMismatch(gpa, diag, rules, elem),
             },
             .tag => switch (doc_node.tag) {
-                .tag => {},
+                .tag => {
+                    const tag_node = self.nodes[doc_node.first_child_id];
+                    const tag_src = tag_node.loc.src(self.code);
+                    const rule_src = rule.loc.src(rules.code)[1..];
+                    if (!std.mem.eql(u8, tag_src, rule_src))
+                        try self.typeMismatch(gpa, diag, rules, elem);
+                },
                 else => try self.typeMismatch(gpa, diag, rules, elem),
             },
             .bytes => switch (doc_node.tag) {

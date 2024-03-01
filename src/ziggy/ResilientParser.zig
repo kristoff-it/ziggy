@@ -330,20 +330,14 @@ pub const Tree = struct {
                                 const k = kv.key_ptr.*;
                                 if (!seen_fields.contains(k)) {
                                     const field_loc = tree.loc();
+                                    assert(field_loc.start <= field_loc.end);
                                     try addErrorCheck(gpa, diag, .{
                                         .missing = .{
                                             .token = .{
                                                 .tag = .value, // doesn't matter
                                                 .loc = .{
                                                     .start = field_loc.start - 1,
-                                                    // FIXME this hack was added because sometimes field_loc.end is set to 0
-                                                    // and start is > 0
-                                                    // TODO find out why is field_loc.end sometimes == 0 and fix it.
-                                                    // make sure to add add a test with a reproduction.
-                                                    .end = if (field_loc.end < field_loc.start)
-                                                        field_loc.start
-                                                    else
-                                                        field_loc.end,
+                                                    .end = field_loc.end,
                                                 },
                                             },
                                             .expected = k,
@@ -356,7 +350,21 @@ pub const Tree = struct {
                     else => try typeMismatch(gpa, rules, diag, elem),
                 },
                 .tag => switch (tree.tag) {
-                    .tag_string => {},
+                    .tag_string => {
+                        // tag_string tree has children '@', ident, '(', string, ')'
+                        if (tree.children.items.len != 1 or
+                            tree.children.items[0] != .tree or
+                            tree.children.items[0].tree.children.items.len < 2)
+                        {
+                            try typeMismatch(gpa, rules, diag, elem);
+                            continue;
+                        }
+                        const tag_src = tree.children.items[0].tree.children
+                            .items[1].loc().src(ziggy_code);
+                        const rule_src = rule.loc.src(rules.code)[1..];
+                        if (!std.mem.eql(u8, tag_src, rule_src))
+                            try typeMismatch(gpa, rules, diag, elem);
+                    },
                     else => try typeMismatch(gpa, rules, diag, elem),
                 },
                 .bytes => switch (tree.tag) {
