@@ -7,7 +7,7 @@ name = "ziggy"
 scope = "text.ziggy"
 roots = []
 injection-regex = "ziggy|zgy"
-file-types = ["ziggy"]
+file-types = ["ziggy", "zgy"]
 comment-token = "//"
 auto-format = true
 formatter = { command = "ziggy" , args = ["fmt", "--stdin"] }
@@ -21,8 +21,8 @@ source = { git = "https://github.com/kristoff-it/ziggy", rev = "0e46579ed878bb28
 name = "ziggy_schema"
 scope = "text.ziggy_schema"
 roots = []
-injection-regex = "ziggy-schema|zs"
-file-types = ["zs"]
+injection-regex = "ziggy-schema|zgy-schema"
+file-types = ["ziggy-schema", "zgy-schema"]
 comment-token = "///"
 indent = { tab-width = 4, unit = "    " }
 formatter = { command = "ziggy" , args = ["fmt", "-", "--type", "schema"] }
