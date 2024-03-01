@@ -4,7 +4,7 @@
   "description": "Ziggy document file format",
   "repository": "https://github.com/kristoff-it/ziggy",
   "publisher": "LorisCro",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "engines": {
     "vscode": "^1.87.0"
   },
@@ -20,7 +20,8 @@
           "ziggy"
         ],
         "extensions": [
-          ".zdoc"
+          ".ziggy",
+          ".zgy"
         ],
         "configuration": "./language-configuration.json"
       },      
@@ -35,7 +36,8 @@
           "zschema"
         ],
         "extensions": [
-          ".zschema"
+          ".ziggy-schema",
+          ".zgy-schema"
         ],
         "configuration": "./schema.language-configuration.json"
       }
