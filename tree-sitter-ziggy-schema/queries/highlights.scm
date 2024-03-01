@@ -5,6 +5,7 @@
 (tag_name) @function
 
 [
+  "unknown"
   "any"
   "struct"
   "root"

@@ -40,6 +40,7 @@ pub const Node = struct {
         float,
         bool,
         any,
+        unknown,
     };
 
     pub fn addChild(
@@ -344,6 +345,12 @@ pub fn init(
                     node = node.parent(&ast.nodes);
                     token = try ast.next();
                 },
+                .unknown_kw => {
+                    node.tag = .unknown;
+                    node.loc = token.loc;
+                    node = node.parent(&ast.nodes);
+                    token = try ast.next();
+                },
                 .bool => {
                     node.tag = .bool;
                     node.loc = token.loc;
@@ -425,6 +432,7 @@ pub fn init(
             .float,
             .int,
             .bool,
+            .unknown,
             .any,
             .bytes,
             => unreachable,
@@ -639,6 +647,7 @@ fn renderExpr(idx: u32, nodes: []const Node, code: [:0]const u8, w: anytype) !vo
         .float,
         .bool,
         .any,
+        .unknown,
         => try w.writeAll(expr.loc.src(code)),
     }
 }

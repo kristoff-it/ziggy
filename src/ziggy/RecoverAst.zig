@@ -1096,6 +1096,7 @@ pub fn check(
                 else => try self.typeMismatch(gpa, diag, rules, elem),
             },
             .any => {},
+            .unknown => {},
             else => unreachable,
         }
     }

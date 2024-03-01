@@ -7,7 +7,7 @@ pub const parseLeaky = Parser.parseLeaky;
 pub const serializer = @import("ziggy/serializer.zig");
 pub const stringify = serializer.stringify;
 
-const lsp_parser: enum { recover, resilient } = .recover;
+const lsp_parser: enum { recover, resilient } = .resilient;
 pub const LanguageServerAst = switch (lsp_parser) {
     .recover => @import("ziggy/RecoverAst.zig"),
     .resilient => @import("ziggy/ResilientParser.zig"),

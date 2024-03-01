@@ -14,6 +14,7 @@ pub const Token = struct {
         struct_kw,
         map_kw,
         any_kw,
+        unknown_kw,
         pipe,
         comma,
         eq,
@@ -45,6 +46,7 @@ pub const Token = struct {
                 .struct_kw => "struct",
                 .map_kw => "map",
                 .any_kw => "any",
+                .unknown_kw => "unknown",
                 .pipe => "|",
                 .comma => ",",
                 .eq => "=",
@@ -229,6 +231,8 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
                         res.tag = .map_kw;
                     } else if (std.mem.eql(u8, src, "any")) {
                         res.tag = .any_kw;
+                    } else if (std.mem.eql(u8, src, "unknown")) {
+                        res.tag = .unknown_kw;
                     } else if (std.mem.eql(u8, src, "root")) {
                         res.tag = .root_kw;
                     } else if (std.mem.eql(u8, src, "enum")) {

@@ -41,6 +41,7 @@ module.exports = grammar({
       "float",
       "bool",
       "any",
+      "unknown",
     ),
 
     struct_union: $ => seq($.identifier, repeat1(seq('|', $.identifier))),
@@ -68,8 +69,6 @@ module.exports = grammar({
       field("docs", optional($.doc_comment)),
       field("key", $.identifier), ':', field("value", $.expr)
     ),
-    
-
     
     doc_comment: _ => repeat1(token(seq('///', /.*/))),    
   }

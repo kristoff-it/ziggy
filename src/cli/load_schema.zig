@@ -51,14 +51,13 @@ pub fn loadSchema(gpa: std.mem.Allocator, path: ?[]const u8) ziggy.schema.Schema
 pub fn defaultSchema() ziggy.schema.Schema {
     return .{
         .root = .{ .node = 1 },
-        .code = "any",
-        .allows_unknown_literals = true,
+        .code = "unknown",
         .nodes = &.{
             .{
                 .tag = .root,
                 .loc = .{
                     .start = 0,
-                    .end = "any".len,
+                    .end = "unknown".len,
                 },
                 .parent_id = 0,
             },
@@ -66,7 +65,7 @@ pub fn defaultSchema() ziggy.schema.Schema {
                 .tag = .any,
                 .loc = .{
                     .start = 0,
-                    .end = "any".len,
+                    .end = "unknown".len,
                 },
                 .parent_id = 0,
             },

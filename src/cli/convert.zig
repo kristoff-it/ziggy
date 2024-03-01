@@ -1,8 +1,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const json = std.json;
 const yaml = @import("yaml");
 const ziggy = @import("ziggy");
+const json = @import("convert/json.zig");
 const loadSchema = @import("load_schema.zig").loadSchema;
 const Diagnostic = ziggy.Diagnostic;
 const Ast = ziggy.Ast;
@@ -22,27 +22,28 @@ fn convertToZiggy(gpa: std.mem.Allocator, cmd: Command) !void {
 
     // in stdin mode only one language will be on
     if (cmd.from.others.json) {
-        var js_diag: json.Diagnostics = .{};
-        var reader = json.reader(gpa, std.io.getStdIn().reader());
-        reader.enableDiagnostics(&js_diag);
+        var diag: ziggy.Diagnostic = .{ .path = null };
+        const r = std.io.getStdIn().reader();
+        const ast = try json.ziggyAst(gpa, schema, &diag, r);
+        _ = ast;
 
-        const root = json.parseFromTokenSource(json.Value, gpa, &reader, .{}) catch |err| {
-            std.debug.print(
-                \\error while reading and parsing from stdin: {s}
-                \\line: {} column: {} byte offset: {}
-            , .{
-                @errorName(err),
-                js_diag.getLine(),
-                js_diag.getColumn(),
-                js_diag.getByteOffset(),
-            });
+        // const root = json.parseFromTokenSource(json.Value, gpa, &reader, .{}) catch |err| {
+        //     std.debug.print(
+        //         \\error while reading and parsing from stdin: {s}
+        //         \\line: {} column: {} byte offset: {}
+        //     , .{
+        //         @errorName(err),
+        //         js_diag.getLine(),
+        //         js_diag.getColumn(),
+        //         js_diag.getByteOffset(),
+        //     });
 
-            std.process.exit(1);
-        };
+        //     std.process.exit(1);
+        // };
 
-        var buffered_writer = std.io.bufferedWriter(std.io.getStdOut().writer());
-        try renderJsonValue(root.value, schema.root, schema, buffered_writer.writer());
-        try buffered_writer.flush();
+        // var buffered_writer = std.io.bufferedWriter(std.io.getStdOut().writer());
+        // try renderJsonValue(root.value, schema.root, schema, buffered_writer.writer());
+        // try buffered_writer.flush();
     } else {
         @panic("TODO: support more file formats");
     }

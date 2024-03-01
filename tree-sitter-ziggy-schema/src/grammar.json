@@ -256,6 +256,10 @@
         {
           "type": "STRING",
           "value": "any"
+        },
+        {
+          "type": "STRING",
+          "value": "unknown"
         }
       ]
     },

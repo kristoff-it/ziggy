@@ -49,4 +49,17 @@ pub fn build(b: *std.Build) void {
     run_exe_step.dependOn(&run_exe.step);
 
     b.installArtifact(ziggy_exe);
+
+    const ziggy_check = b.addExecutable(.{
+        .name = "ziggy_check",
+        .root_source_file = .{ .path = "src/main.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+
+    ziggy_check.root_module.addImport("ziggy", ziggy);
+    ziggy_check.root_module.addImport("known-folders", folders.module("known-folders"));
+    ziggy_check.root_module.addImport("lsp", lsp.module("lsp"));
+    const check = b.step("check", "Check if Tigerbeetle compiles");
+    check.dependOn(&ziggy_check.step);
 }

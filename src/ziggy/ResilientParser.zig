@@ -384,6 +384,7 @@ pub const Tree = struct {
                     else => try typeMismatch(gpa, rules, diag, elem),
                 },
                 .any => {},
+                .unknown => {},
             }
         }
     }

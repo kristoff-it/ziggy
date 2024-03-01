@@ -771,6 +771,7 @@ pub fn check(
                 else => try doc.typeMismatch(gpa, diag, rules, elem),
             },
             .any => {},
+            .unknown => {},
             else => unreachable,
         }
     }
