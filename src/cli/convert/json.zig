@@ -100,7 +100,7 @@ const Converter = struct {
         const rule_src = r.loc.src(c.schema.code);
         const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
         switch (r.tag) {
-            .map, .any => {
+            .map, .any, .unknown => {
                 try c.out.writeAll("{");
                 var token = try c.next();
                 while (token != .object_end) : (token = try c.next()) {
@@ -145,7 +145,7 @@ const Converter = struct {
 
                     try seen_fields.putNoClobber(k, {});
 
-                    try c.out.print(".{} = ", .{std.zig.fmtId(k)});
+                    try c.out.print(".{}=", .{std.zig.fmtId(k)});
                     try c.convertJsonValue(try c.next(), field.rule);
                     try c.out.writeAll(",");
                 }
@@ -164,7 +164,61 @@ const Converter = struct {
                 }
                 try c.out.writeAll("}");
             },
-            .struct_union => @panic("TODO: struct union for json objects"),
+            .struct_union => {
+                // TODO: implement more strategies
+
+                //Tag-is-only-field startegy.
+                //Example layout (remote and local are tag names):
+                //{
+                //   "foo": { "remote": {"url": "...", hash: "..."}},
+                //   "bar": { "local":  {"path": "..."}},
+                //}
+                const key = (try c.next()).string;
+                const key_sel = c.jsonSel();
+                var ident_rule_id = r.first_child_id;
+
+                while (ident_rule_id != 0) {
+                    const ident = c.schema.nodes[ident_rule_id];
+                    const ident_src = ident.loc.src(c.schema.code);
+
+                    if (std.mem.eql(u8, ident_src, key)) {
+                        const token = try c.next();
+                        if (token != .object_begin) {
+                            return c.addError(.{
+                                .type_mismatch = .{
+                                    .name = @tagName(token),
+                                    .sel = c.jsonSel(),
+                                    .expected = rule_src,
+                                },
+                            });
+                        }
+
+                        try c.out.writeAll(key);
+                        try c.convertJsonObject(.{ .node = ident_rule_id });
+                        const end = try c.next();
+                        if (end != .object_end) {
+                            return c.addError(.{
+                                .type_mismatch = .{
+                                    .name = "json_multikey_object",
+                                    .sel = c.jsonSel(),
+                                    .expected = rule_src,
+                                },
+                            });
+                        }
+                        break;
+                    }
+
+                    ident_rule_id = ident.next_id;
+                } else {
+                    return c.addError(.{
+                        .unknown_struct_name = .{
+                            .name = key,
+                            .sel = key_sel,
+                            .expected = rule_src,
+                        },
+                    });
+                }
+            },
             else => {
                 return c.addError(.{
                     .type_mismatch = .{
@@ -214,8 +268,11 @@ const Converter = struct {
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         switch (r.tag) {
-            .bytes, .any => {
+            .bytes, .any, .unknown => {
                 try c.out.print("\"{}\"", .{std.zig.fmtEscapes(str)});
+            },
+            .tag => {
+                try c.out.print("{s}(\"{})\"", .{ rule_src, std.zig.fmtEscapes(str) });
             },
             else => {
                 return c.addError(.{
@@ -237,7 +294,7 @@ const Converter = struct {
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         switch (r.tag) {
-            .int, .float, .any => {
+            .int, .float, .any, .unknown => {
                 try c.out.print("{s}", .{ns});
             },
             else => {
@@ -260,7 +317,7 @@ const Converter = struct {
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         switch (r.tag) {
-            .int, .float, .any => {
+            .int, .float, .any, .unknown => {
                 try c.out.print("{s}", .{num});
             },
             else => {
@@ -284,7 +341,7 @@ const Converter = struct {
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         switch (r.tag) {
-            .bool, .any => {
+            .bool, .any, .unknown => {
                 try c.out.print("{s}", .{@tagName(token)});
             },
             else => {
@@ -306,7 +363,7 @@ const Converter = struct {
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         switch (r.tag) {
-            .optional, .any => {
+            .optional, .any, .unknown => {
                 try c.out.writeAll("null");
             },
             else => {
