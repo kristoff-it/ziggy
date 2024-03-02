@@ -16,35 +16,35 @@ pub const std_options: std.Options = .{
     .logFn = logging.logFn,
 };
 
-pub fn panic(
-    msg: []const u8,
-    trace: ?*std.builtin.StackTrace,
-    ret_addr: ?usize,
-) noreturn {
-    std.log.err("{s}\n\n{?}", .{ msg, trace });
-    blk: {
-        const out = logging.log_file orelse break :blk;
-        const w = out.writer();
-        if (builtin.strip_debug_info) {
-            w.print("Unable to dump stack trace: debug info stripped\n", .{}) catch return;
-            break :blk;
-        }
-        const debug_info = std.debug.getSelfDebugInfo() catch |err| {
-            w.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch break :blk;
-            break :blk;
-        };
-        std.debug.writeCurrentStackTrace(w, debug_info, .no_color, ret_addr) catch |err| {
-            w.print("Unable to dump stack trace: {s}\n", .{@errorName(err)}) catch break :blk;
-            break :blk;
-        };
-    }
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
-}
+// pub fn panic(
+//     msg: []const u8,
+//     trace: ?*std.builtin.StackTrace,
+//     ret_addr: ?usize,
+// ) noreturn {
+//     std.log.err("{s}\n\n{?}", .{ msg, trace });
+//     blk: {
+//         const out = logging.log_file orelse break :blk;
+//         const w = out.writer();
+//         if (builtin.strip_debug_info) {
+//             w.print("Unable to dump stack trace: debug info stripped\n", .{}) catch return;
+//             break :blk;
+//         }
+//         const debug_info = std.debug.getSelfDebugInfo() catch |err| {
+//             w.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch break :blk;
+//             break :blk;
+//         };
+//         std.debug.writeCurrentStackTrace(w, debug_info, .no_color, ret_addr) catch |err| {
+//             w.print("Unable to dump stack trace: {s}\n", .{@errorName(err)}) catch break :blk;
+//             break :blk;
+//         };
+//     }
+//     if (builtin.mode == .Debug) @breakpoint();
+//     std.process.exit(1);
+// }
 
 pub const Command = enum { lsp, query, fmt, check, convert, help };
 
-pub fn main() void {
+pub fn main() !void {
     var gpa_impl: std.heap.GeneralPurposeAllocator(.{}) = .{};
     const gpa = gpa_impl.allocator();
 
@@ -60,14 +60,15 @@ pub fn main() void {
         fatalHelp();
     };
 
-    _ = switch (cmd) {
+    _ = try switch (cmd) {
         .lsp => lsp_exe.run(gpa, args[2..]),
         .fmt => fmt_exe.run(gpa, args[2..]),
         // .check => check_exe.run(gpa, args[2..]),
-        // .convert => convert_exe.run(gpa, args[2..]),
+        .convert => convert_exe.run(gpa, args[2..]),
         .help => fatalHelp(),
         else => std.debug.panic("TODO cmd={s}", .{@tagName(cmd)}),
-    } catch |err| fatal("{s}\n", .{@errorName(err)});
+    };
+    // catch |err| fatal("{s}\n", .{@errorName(err)});
 }
 
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {

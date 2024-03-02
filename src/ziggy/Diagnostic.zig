@@ -9,41 +9,67 @@ const Token = Tokenizer.Token;
 /// This field should be set as needed by users.
 path: ?[]const u8,
 
-/// The data being parsed, this field should not be set manually by users.
-code: [:0]const u8 = "",
 errors: std.ArrayListUnmanaged(Error) = .{},
 
 pub const Error = union(enum) {
     overflow,
     oom,
-    eof: struct {
-        expected: []const Token.Tag,
+    // found an unexpected $name (token, ...)
+    unexpected: struct {
+        name: []const u8,
+        sel: Token.Loc.Selection,
+        expected: []const []const u8,
     },
-    unexpected_token: struct {
-        token: Token,
-        expected: []const Token.Tag,
-    },
-    invalid_token: struct {
-        token: Token,
+    // Invalid syntax, eg 123ab123, use `unecpected` to also report an expected
+    // token / value / etc.
+    syntax: struct {
+        name: []const u8,
+        sel: Token.Loc.Selection,
     },
     duplicate_field: struct {
-        token: Token,
-        original: Token.Loc,
+        name: []const u8,
+        sel: Token.Loc.Selection,
+        original: Token.Loc.Selection,
     },
-    missing: struct {
-        token: Token,
+    // A struct is missing a field and it has no missing_field_name nodes.
+    missing_field: struct {
+        name: []const u8,
+        sel: Token.Loc.Selection,
+    },
+    unknown_field: struct {
+        name: []const u8,
+        sel: Token.Loc.Selection,
+    },
+    // If the value is a struct union, the struct value must have a name.
+    missing_struct_name: struct {
+        // the area where the name shuld be put
+        sel: Token.Loc.Selection,
+        // the expected type expression from schema
         expected: []const u8,
     },
-    unknown: struct {
-        token: Token,
+    unknown_struct_name: struct {
+        name: []const u8,
+        sel: Token.Loc.Selection,
+        // the expected type expression from schema
         expected: []const u8,
     },
+    missing_value: struct {
+        // the area where the name shuld be put
+        sel: Token.Loc.Selection,
+        // the expected type expression from schema
+        expected: []const u8,
+    },
+    // The schema corresponding to this file could not be loaded
+    // (missing file, contains sytnax errors, etc).
     schema: struct {
-        loc: Token.Loc,
+        sel: Token.Loc.Selection,
+        // the error encountered while processing the schema file
         err: anyerror,
     },
+
     type_mismatch: struct {
-        token: Token,
+        name: []const u8,
+        sel: Token.Loc.Selection,
         expected: []const u8,
     },
 
@@ -56,33 +82,23 @@ pub const Error = union(enum) {
         };
     }
 
-    pub fn getErrorSelection(e: Error, code: [:0]const u8) Token.Loc.Selection {
+    pub fn getErrorSelection(e: Error) Token.Loc.Selection {
         return switch (e) {
             .overflow, .oom => .{
                 .start = .{ .line = 0, .col = 0 },
                 .end = .{ .line = 0, .col = 0 },
             },
-            .eof => {
-                const loc: Token.Loc = .{
-                    .start = @intCast(code.len - 1),
-                    .end = @intCast(code.len),
-                };
-                return loc.getSelection(code);
-            },
-            .schema => |s| return s.loc.getSelection(code),
-            inline else => |x| x.token.loc.getSelection(code),
+            inline else => |x| x.sel,
         };
     }
 
-    pub fn fmt(e: Error, code: [:0]const u8, path: ?[]const u8) ErrorFmt {
+    pub fn fmt(e: Error, path: ?[]const u8) ErrorFmt {
         return .{
             .err = e,
-            .code = code,
             .path = path,
         };
     }
     pub const ErrorFmt = struct {
-        code: [:0]const u8,
         path: ?[]const u8,
         err: Error,
 
@@ -97,7 +113,7 @@ pub const Error = union(enum) {
             const lsp = std.mem.eql(u8, fmt_string, "lsp");
 
             if (!lsp) {
-                const start = err_fmt.err.getErrorSelection(err_fmt.code).start;
+                const start = err_fmt.err.getErrorSelection().start;
                 if (err_fmt.path) |p| {
                     try out_stream.print("{s}:{}:{}\n", .{
                         p,
@@ -122,46 +138,13 @@ pub const Error = union(enum) {
                     //     });
                     // }
                 },
-                .invalid_token => |i| {
-                    try out_stream.print("invalid token", .{});
-                    if (!lsp) {
-                        try out_stream.print(": '{s}'", .{
-                            i.token.loc.src(err_fmt.code),
-                        });
-                    }
-                },
-                .eof => |eof| {
-                    if (!lsp) {
-                        try out_stream.print("unexpected EOF, ", .{});
-                    }
-                    try out_stream.print("expected: ", .{});
+                .unexpected => |u| {
+                    try out_stream.print("unexpected {s}", .{u.name});
 
-                    for (eof.expected, 0..) |tag, idx| {
-                        try out_stream.print("'{s}'", .{tag.lexeme()});
-                        if (idx != eof.expected.len - 1) {
-                            try out_stream.print(" or ", .{});
-                        }
-                    }
+                    try out_stream.print(", expected: ", .{});
 
-                    try out_stream.print("\n", .{});
-                },
-                .unexpected_token => |u| {
-                    if (u.token.tag == .eof) {
-                        if (!lsp) {
-                            try out_stream.print("unexpected EOF, ", .{});
-                        }
-                        try out_stream.print("expected: ", .{});
-                    } else {
-                        if (!lsp) {
-                            try out_stream.print("unexpected token: '{s}', ", .{
-                                u.token.loc.src(err_fmt.code),
-                            });
-                        }
-                        try out_stream.print("expected: ", .{});
-                    }
-
-                    for (u.expected, 0..) |tag, idx| {
-                        try out_stream.print("'{s}'", .{tag.lexeme()});
+                    for (u.expected, 0..) |elem, idx| {
+                        try out_stream.print("{s}", .{elem});
                         if (idx != u.expected.len - 1) {
                             try out_stream.print(" or ", .{});
                         }
@@ -169,14 +152,18 @@ pub const Error = union(enum) {
 
                     try out_stream.print("\n", .{});
                 },
+                .syntax => {
+                    try out_stream.print("syntax error\n", .{});
+                },
                 .duplicate_field => |dup| {
                     if (lsp) {
                         try out_stream.print("duplicate field", .{});
                     } else {
-                        const first_sel = dup.original.getSelection(err_fmt.code);
-                        try out_stream.print("found duplicate field '{s}', first definition here:", .{
-                            dup.original.src(err_fmt.code),
-                        });
+                        const first_sel = dup.original;
+                        try out_stream.print(
+                            "duplicate field '{s}', first definition here:",
+                            .{dup.name},
+                        );
                         if (err_fmt.path) |p| {
                             try out_stream.print("\n{s}:{}:{}\n", .{
                                 p,
@@ -191,20 +178,31 @@ pub const Error = union(enum) {
                         }
                     }
                 },
-                .missing => |miss| {
+                .missing_field => {
+                    try out_stream.print("missing field(s)", .{});
+                },
+                .unknown_field => |uf| {
+                    try out_stream.print("unknown field '{s}'", .{uf.name});
+                },
+                .missing_struct_name => |msn| {
                     try out_stream.print(
-                        "missing '{s}'",
-                        .{miss.expected},
+                        "struct union requires name, expected: {s}\n",
+                        .{msn.expected},
                     );
                 },
-                .unknown => |u| {
-                    const name = u.token.loc.src(err_fmt.code);
+                .unknown_struct_name => |usn| {
                     try out_stream.print(
-                        "unknown '{s}'",
-                        .{name},
+                        "unknown struct name, expected: {s}\n",
+                        .{usn.expected},
                     );
                 },
 
+                .missing_value => |mv| {
+                    try out_stream.print(
+                        "missing value, expected: {s}\n",
+                        .{mv.expected},
+                    );
+                },
                 .schema => |s| {
                     try out_stream.print("schema file error: {s}", .{
                         @errorName(s.err),
@@ -213,64 +211,10 @@ pub const Error = union(enum) {
 
                 .type_mismatch => |mism| {
                     try out_stream.print(
-                        "type mismatch, expected '{s}'",
+                        "wrong value type, expected '{s}'",
                         .{mism.expected},
                     );
                 },
-
-                // .missing_struct_name => |msn| {
-                //     if (lsp) {
-                //         try out_stream.print(
-                //             "missing struct name, expected one of ({s})",
-                //             .{msn.expected},
-                //         );
-                //     } else {
-                //         const struct_start = msn.token.loc.getSelection(err_fmt.code);
-                //         try out_stream.print(
-                //             "missing struct name, expected '{s}'",
-                //             .{msn.expected},
-                //         );
-                //         if (err_fmt.path) |p| {
-                //             try out_stream.print("\n{s}:{}:{}\n", .{
-                //                 p,
-                //                 struct_start.start.line,
-                //                 struct_start.start.col,
-                //             });
-                //         } else {
-                //             try out_stream.print(" line: {} col: {}\n", .{
-                //                 struct_start.start.line,
-                //                 struct_start.start.col,
-                //             });
-                //         }
-                //     }
-                // },
-
-                // .wrong_struct_name => |wsn| {
-                //     if (lsp) {
-                //         try out_stream.print(
-                //             "wrong struct name, expected one of ({s})",
-                //             .{wsn.expected},
-                //         );
-                //     } else {
-                //         const struct_name = wsn.token.loc.getSelection(err_fmt.code);
-                //         try out_stream.print(
-                //             "wrong struct name '{s}' expected '{s}'",
-                //             .{ wsn.token.loc.src(err_fmt.code), wsn.expected },
-                //         );
-                //         if (err_fmt.path) |p| {
-                //             try out_stream.print("\n{s}:{}:{}\n", .{
-                //                 p,
-                //                 struct_name.start.line,
-                //                 struct_name.start.col,
-                //             });
-                //         } else {
-                //             try out_stream.print(" line: {} col: {}\n", .{
-                //                 struct_name.start.line,
-                //                 struct_name.start.col,
-                //             });
-                //         }
-                //     }
-                // },
             }
         }
     };
@@ -278,6 +222,7 @@ pub const Error = union(enum) {
 
 pub fn deinit(self: *Diagnostic, gpa: std.mem.Allocator) void {
     self.errors.deinit(gpa);
+    self.locs.deinit(gpa);
 }
 
 pub fn debug(self: Diagnostic) void {
@@ -291,6 +236,6 @@ pub fn format(
     out_stream: anytype,
 ) !void {
     for (self.errors.items) |e| {
-        try e.fmt(self.code, self.path).format(fmt, options, out_stream);
+        try e.fmt(self.path).format(fmt, options, out_stream);
     }
 }

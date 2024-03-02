@@ -111,13 +111,11 @@ pub const Tree = struct {
             if (tree.tag == .err) {
                 // TODO more descriptive reporting
                 try addErrorCheck(gpa, diag, .{
-                    .unexpected_token = .{
-                        .token = .{
-                            .tag = .invalid,
-                            .loc = tree.loc(),
-                        },
+                    .unexpected = .{
+                        .name = "TODO",
+                        .sel = tree.loc().getSelection(ziggy_code),
                         .expected = switch (rule.tag) {
-                            .struct_field => &.{.dot},
+                            .struct_field => lexemes(&.{.eof}),
                             else => &.{},
                         },
                     },
@@ -162,7 +160,7 @@ pub const Tree = struct {
                             });
                         }
                     },
-                    else => try typeMismatch(gpa, rules, diag, elem),
+                    else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
                 },
                 .map => switch (tree.tag) {
                     .map => {
@@ -186,7 +184,7 @@ pub const Tree = struct {
                             });
                         }
                     },
-                    else => try typeMismatch(gpa, rules, diag, elem),
+                    else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
                 },
                 .struct_union => switch (tree.tag) {
                     .@"struct" => {
@@ -196,15 +194,8 @@ pub const Tree = struct {
                         const name_loc = tree.loc();
                         if (struct_name_node.token.tag != .identifier) {
                             try addErrorCheck(gpa, diag, .{
-                                .missing = .{
-                                    .token = .{
-                                        .tag = .identifier,
-                                        .loc = .{
-                                            // a struct always has curlies
-                                            .start = name_loc.start -| 1,
-                                            .end = name_loc.start + 1,
-                                        },
-                                    },
+                                .missing_struct_name = .{
+                                    .sel = name_loc.getSelection(ziggy_code),
                                     .expected = rule_src,
                                 },
                             });
@@ -228,16 +219,14 @@ pub const Tree = struct {
                         }
                         // no match
                         try addErrorCheck(gpa, diag, .{
-                            .unknown = .{
-                                .token = .{
-                                    .tag = .identifier,
-                                    .loc = struct_name_node.token.loc,
-                                },
+                            .unknown_struct_name = .{
+                                .name = struct_name,
+                                .sel = struct_name_node.token.loc.getSelection(ziggy_code),
                                 .expected = rule_src,
                             },
                         });
                     },
-                    else => try typeMismatch(gpa, rules, diag, elem),
+                    else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
                 },
                 .identifier => switch (tree.tag) {
                     .@"struct", .top_level_struct => {
@@ -260,12 +249,9 @@ pub const Tree = struct {
                                 .token => {
                                     // TODO more descriptive reporting
                                     try addErrorCheck(gpa, diag, .{
-                                        .unknown = .{
-                                            .token = .{
-                                                .tag = .identifier,
-                                                .loc = field.token.loc,
-                                            },
-                                            .expected = &.{},
+                                        .unknown_field = .{
+                                            .name = field.token.loc.src(ziggy_code),
+                                            .sel = field.token.loc.getSelection(ziggy_code),
                                         },
                                     });
                                     continue;
@@ -275,11 +261,9 @@ pub const Tree = struct {
                                     else => {
                                         // TODO more descriptive reporting
                                         try addErrorCheck(gpa, diag, .{
-                                            .unknown = .{
-                                                .token = .{
-                                                    .tag = .identifier,
-                                                    .loc = field_tree.loc(),
-                                                },
+                                            .unknown_struct_name = .{
+                                                .name = field_tree.loc().src(ziggy_code),
+                                                .sel = field_tree.loc().getSelection(ziggy_code),
                                                 .expected = &.{},
                                             },
                                         });
@@ -295,12 +279,9 @@ pub const Tree = struct {
                             const field_rule = struct_rule.fields.get(field_name) orelse {
                                 // TODO more descriptive reporting
                                 try addErrorCheck(gpa, diag, .{
-                                    .unknown = .{
-                                        .token = .{
-                                            .tag = .identifier,
-                                            .loc = field_name_node.token.loc,
-                                        },
-                                        .expected = &.{},
+                                    .unknown_field = .{
+                                        .name = field_name,
+                                        .sel = field_name_node.loc().getSelection(ziggy_code),
                                     },
                                 });
                                 continue;
@@ -332,14 +313,8 @@ pub const Tree = struct {
                                     const field_loc = tree.loc();
                                     assert(field_loc.start <= field_loc.end);
                                     try addErrorCheck(gpa, diag, .{
-                                        .missing = .{
-                                            .token = .{
-                                                .tag = .value, // doesn't matter
-                                                .loc = .{
-                                                    .start = field_loc.start - 1,
-                                                    .end = field_loc.end,
-                                                },
-                                            },
+                                        .missing_value = .{
+                                            .sel = field_loc.getSelection(ziggy_code),
                                             .expected = k,
                                         },
                                     });
@@ -347,7 +322,7 @@ pub const Tree = struct {
                             }
                         }
                     },
-                    else => try typeMismatch(gpa, rules, diag, elem),
+                    else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
                 },
                 .tag => switch (tree.tag) {
                     .tag_string => {
@@ -356,32 +331,32 @@ pub const Tree = struct {
                             tree.children.items[0] != .tree or
                             tree.children.items[0].tree.children.items.len < 2)
                         {
-                            try typeMismatch(gpa, rules, diag, elem);
+                            try typeMismatch(gpa, rules, diag, elem, ziggy_code);
                             continue;
                         }
                         const tag_src = tree.children.items[0].tree.children
                             .items[1].loc().src(ziggy_code);
                         const rule_src = rule.loc.src(rules.code)[1..];
                         if (!std.mem.eql(u8, tag_src, rule_src))
-                            try typeMismatch(gpa, rules, diag, elem);
+                            try typeMismatch(gpa, rules, diag, elem, ziggy_code);
                     },
-                    else => try typeMismatch(gpa, rules, diag, elem),
+                    else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
                 },
                 .bytes => switch (tree.tag) {
                     .string, .line_string => {},
-                    else => try typeMismatch(gpa, rules, diag, elem),
+                    else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
                 },
                 .int => switch (tree.tag) {
                     .integer => {},
-                    else => try typeMismatch(gpa, rules, diag, elem),
+                    else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
                 },
                 .float => switch (tree.tag) {
                     .float => {},
-                    else => try typeMismatch(gpa, rules, diag, elem),
+                    else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
                 },
                 .bool => switch (tree.tag) {
                     .true, .false => {},
-                    else => try typeMismatch(gpa, rules, diag, elem),
+                    else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
                 },
                 .any => {},
                 .unknown => {},
@@ -394,6 +369,7 @@ pub const Tree = struct {
         rules: ziggy.schema.Schema,
         diag: ?*ziggy.Diagnostic,
         check_item: CheckItem,
+        ziggy_code: [:0]const u8,
     ) !void {
         var rule_node = rules.nodes[check_item.rule.node];
         if (check_item.optional) {
@@ -409,10 +385,8 @@ pub const Tree = struct {
 
         try addErrorCheck(gpa, diag, .{
             .type_mismatch = .{
-                .token = .{
-                    .tag = .value,
-                    .loc = found_child.loc(),
-                },
+                .name = found_child.loc().src(ziggy_code),
+                .sel = found_child.loc().getSelection(ziggy_code),
                 .expected = rule_node.loc.src(rules.code),
             },
         });
@@ -643,7 +617,6 @@ pub fn init(
         .fuel = 256,
         .tokenizer = .{ .want_comments = want_comments },
     };
-    if (diagnostic) |d| d.code = code;
     defer p.deinit();
     p.document() catch {};
     return p.buildTree();
@@ -675,10 +648,13 @@ fn document(p: *Parser) !void {
         => try p.value(),
         else => {
             // "expected a top level struct or value"
-            try p.advanceWithError(.{ .unexpected_token = .{
-                .token = token,
-                .expected = &.{.value},
-            } });
+            try p.advanceWithError(.{
+                .unexpected = .{
+                    .name = token.loc.src(p.code),
+                    .sel = token.loc.getSelection(p.code),
+                    .expected = &.{"top level struct or value"},
+                },
+            });
         },
     }
 
@@ -687,7 +663,11 @@ fn document(p: *Parser) !void {
         var tok = p.peek(0);
         tok.loc.end = @intCast(p.code.len);
         try p.addError(.{
-            .unexpected_token = .{ .token = tok, .expected = &.{.eof} },
+            .unexpected = .{
+                .name = tok.loc.src(p.code),
+                .sel = tok.loc.getSelection(p.code),
+                .expected = lexemes(&.{.eof}),
+            },
         });
         while (!p.eof()) p.advance();
         _ = p.close(m2, .err);
@@ -720,17 +700,23 @@ fn topLevelStruct(p: *Parser) !void {
             .eof => break,
             .dot => {
                 // report error and try to recover on dot
-                try p.addError(.{ .missing = .{
-                    .token = token,
-                    .expected = Token.Tag.comma.lexeme(),
-                } });
+                try p.addError(.{
+                    .unexpected = .{
+                        .name = token.loc.src(p.code),
+                        .sel = token.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.comma}),
+                    },
+                });
                 try p.structField();
             },
             else => {
-                try p.advanceWithError(.{ .missing = .{
-                    .token = token,
-                    .expected = Token.Tag.comma.lexeme(),
-                } });
+                try p.advanceWithError(.{
+                    .unexpected = .{
+                        .name = token.loc.src(p.code),
+                        .sel = token.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.comma}),
+                    },
+                });
             },
         }
     }
@@ -765,9 +751,10 @@ fn value(p: *Parser) Diagnostic.Error.ZigError!void {
             if (token1.tag != .lb) {
                 // "expected struct"
                 try p.advanceWithErrorNoOpen(m, .{
-                    .unexpected_token = .{
-                        .token = token1,
-                        .expected = &.{.lb},
+                    .unexpected = .{
+                        .name = token1.loc.src(p.code),
+                        .sel = token1.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.lb}),
                     },
                 });
                 return;
@@ -821,9 +808,10 @@ fn value(p: *Parser) Diagnostic.Error.ZigError!void {
         },
         .comma => { // allow for recovery, don't advance
             try p.addError(.{
-                .unexpected_token = .{
-                    .token = token,
-                    .expected = &.{.value},
+                .unexpected = .{
+                    .name = token.loc.src(p.code),
+                    .sel = token.loc.getSelection(p.code),
+                    .expected = lexemes(&.{.value}),
                 },
             });
             _ = p.close(m, .err);
@@ -831,9 +819,10 @@ fn value(p: *Parser) Diagnostic.Error.ZigError!void {
         else => {
             // "expected a value"
             try p.advanceWithErrorNoOpen(m, .{
-                .unexpected_token = .{
-                    .token = token,
-                    .expected = &.{.value},
+                .unexpected = .{
+                    .name = token.loc.src(p.code),
+                    .sel = token.loc.getSelection(p.code),
+                    .expected = lexemes(&.{.value}),
                 },
             });
         },
@@ -854,9 +843,10 @@ fn structOrMap(p: *Parser, m: MarkOpened) !void {
         else => {
             // "expected map or struct"
             try p.advanceWithErrorNoOpen(m, .{
-                .unexpected_token = .{
-                    .token = token,
-                    .expected = &.{ .dot, .string },
+                .unexpected = .{
+                    .name = token.loc.src(p.code),
+                    .sel = token.loc.getSelection(p.code),
+                    .expected = lexemes(&.{ .dot, .string }),
                 },
             });
         },
@@ -953,29 +943,22 @@ fn consume(p: *Parser, tag: Token.Tag) bool {
     return false;
 }
 
-// this makes it possible to avoid memory errors without allocating below in
-// expect() where we need to return a non-static slice.
-const static_token_tags = blk: {
-    const fields = @typeInfo(Token.Tag).Enum.fields;
-    var result: [fields.len][1]Token.Tag = undefined;
-    for (fields, 0..) |f, i| {
-        result[i][0] = @enumFromInt(f.value);
+fn lexemes(comptime tags: []const Token.Tag) []const []const u8 {
+    comptime var out: []const []const u8 = &.{};
+    inline for (tags) |t| {
+        const next: []const []const u8 = &.{comptime t.lexeme()};
+        out = out ++ next;
     }
-    break :blk result;
-};
+    return out;
+}
 
-fn expect(p: *Parser, tag: Token.Tag) !void {
+fn expect(p: *Parser, comptime tag: Token.Tag) !void {
     if (p.consume(tag)) return;
     try p.addError(.{
-        .unexpected_token = .{
-            .token = p.peek(0),
-            // prevent memory errors by returning a pointer to static memory.
-            // this allows us to avoid the following problems:
-            //   UAF:          .expected = &.{tag}
-            //   memory leak:  .expected = try p.gpa.dupe(&.{tag})
-            // duping the slice would require a way to free it later on after
-            // the lsp diagnostics are printed.
-            .expected = &static_token_tags[@intFromEnum(tag)],
+        .unexpected = .{
+            .name = p.peek(0).loc.src(p.code),
+            .sel = p.peek(0).loc.getSelection(p.code),
+            .expected = lexemes(&.{tag}),
         },
     });
 }
@@ -991,7 +974,7 @@ fn atAny(p: *Parser, tags: []const Token.Tag) bool {
 }
 
 fn addError(p: Parser, err: Diagnostic.Error) !void {
-    log.debug("addError {}", .{err.fmt(p.code, null)});
+    log.debug("addError {}", .{err.fmt(null)});
     if (p.diagnostic) |d| {
         try d.errors.append(p.gpa, err);
     }

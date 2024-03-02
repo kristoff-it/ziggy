@@ -24,26 +24,11 @@ fn convertToZiggy(gpa: std.mem.Allocator, cmd: Command) !void {
     if (cmd.from.others.json) {
         var diag: ziggy.Diagnostic = .{ .path = null };
         const r = std.io.getStdIn().reader();
-        const ast = try json.ziggyAst(gpa, schema, &diag, r);
-        _ = ast;
-
-        // const root = json.parseFromTokenSource(json.Value, gpa, &reader, .{}) catch |err| {
-        //     std.debug.print(
-        //         \\error while reading and parsing from stdin: {s}
-        //         \\line: {} column: {} byte offset: {}
-        //     , .{
-        //         @errorName(err),
-        //         js_diag.getLine(),
-        //         js_diag.getColumn(),
-        //         js_diag.getByteOffset(),
-        //     });
-
-        //     std.process.exit(1);
-        // };
-
-        // var buffered_writer = std.io.bufferedWriter(std.io.getStdOut().writer());
-        // try renderJsonValue(root.value, schema.root, schema, buffered_writer.writer());
-        // try buffered_writer.flush();
+        const bytes = json.toZiggy(gpa, schema, &diag, r) catch {
+            std.debug.print("{}\n", .{diag});
+            std.process.exit(1);
+        };
+        try std.io.getStdOut().writeAll(bytes);
     } else {
         @panic("TODO: support more file formats");
     }

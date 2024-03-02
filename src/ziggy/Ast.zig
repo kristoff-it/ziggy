@@ -83,7 +83,12 @@ const Parser = struct {
     fn next(p: *Parser) !void {
         const token = p.tokenizer.next(p.code);
         if (token.tag == .invalid) {
-            try p.addError(.{ .invalid_token = .{ .token = token } });
+            try p.addError(.{
+                .syntax = .{
+                    .name = token.loc.src(p.code),
+                    .sel = token.loc.getSelection(p.code),
+                },
+            });
         }
         p.token = token;
     }
@@ -97,9 +102,10 @@ const Parser = struct {
             if (t == p.token.tag) break;
         } else {
             try p.addError(.{
-                .unexpected_token = .{
-                    .token = p.token,
-                    .expected = tags,
+                .unexpected = .{
+                    .name = p.token.loc.src(p.code),
+                    .sel = p.token.loc.getSelection(p.code),
+                    .expected = lexemes(tags),
                 },
             });
         }
@@ -163,10 +169,6 @@ pub fn init(
         .tokenizer = .{ .want_comments = want_comments },
     };
 
-    if (p.diagnostic) |d| {
-        d.code = p.code;
-    }
-
     errdefer p.nodes.clearAndFree(gpa);
 
     const root_node = try p.nodes.addOne(gpa);
@@ -216,9 +218,10 @@ pub fn init(
                 },
                 else => {
                     try p.addError(.{
-                        .unexpected_token = .{
-                            .token = p.token,
-                            .expected = &.{ .dot, .eof },
+                        .unexpected = .{
+                            .name = p.token.loc.src(p.code),
+                            .sel = p.token.loc.getSelection(code),
+                            .expected = lexemes(&.{ .dot, .eof }),
                         },
                     });
                 },
@@ -244,9 +247,10 @@ pub fn init(
                 },
                 else => {
                     try p.addError(.{
-                        .unexpected_token = .{
-                            .token = p.token,
-                            .expected = &.{ .dot, .string, .rb },
+                        .unexpected = .{
+                            .name = p.token.loc.src(p.code),
+                            .sel = p.token.loc.getSelection(code),
+                            .expected = lexemes(&.{ .dot, .string, .rb }),
                         },
                     });
                 },
@@ -267,9 +271,10 @@ pub fn init(
                 .dot => try p.addChild(.struct_field),
                 else => {
                     try p.addError(.{
-                        .unexpected_token = .{
-                            .token = p.token,
-                            .expected = &.{ .dot, .rb },
+                        .unexpected = .{
+                            .name = p.token.loc.src(p.code),
+                            .sel = p.token.loc.getSelection(p.code),
+                            .expected = lexemes(&.{ .dot, .rb }),
                         },
                     });
                 },
@@ -325,9 +330,10 @@ pub fn init(
                 },
                 else => {
                     try p.addError(.{
-                        .unexpected_token = .{
-                            .token = p.token,
-                            .expected = &.{ .string, .rb },
+                        .unexpected = .{
+                            .name = p.token.loc.src(p.code),
+                            .sel = p.token.loc.getSelection(p.code),
+                            .expected = lexemes(&.{ .string, .rb }),
                         },
                     });
                 },
@@ -375,9 +381,10 @@ pub fn init(
                         } else {
                             if (p.token.tag != .rsb) {
                                 try p.addError(.{
-                                    .unexpected_token = .{
-                                        .token = p.token,
-                                        .expected = &.{.comma},
+                                    .unexpected = .{
+                                        .name = p.token.loc.src(p.code),
+                                        .sel = p.token.loc.getSelection(p.code),
+                                        .expected = lexemes(&.{.comma}),
                                     },
                                 });
                             }
@@ -488,9 +495,10 @@ pub fn init(
                 },
                 else => {
                     try p.addError(.{
-                        .unexpected_token = .{
-                            .token = p.token,
-                            .expected = &.{.value},
+                        .unexpected = .{
+                            .name = p.token.loc.src(p.code),
+                            .sel = p.token.loc.getSelection(p.code),
+                            .expected = lexemes(&.{.value}),
                         },
                     });
                 },
@@ -507,6 +515,15 @@ pub fn init(
             => unreachable,
         }
     }
+}
+
+fn lexemes(comptime tags: []const Token.Tag) []const []const u8 {
+    comptime var out: []const []const u8 = &.{};
+    inline for (tags) |t| {
+        const next: []const []const u8 = &.{comptime t.lexeme()};
+        out = out ++ next;
+    }
+    return out;
 }
 
 const CheckItem = struct {
@@ -561,11 +578,8 @@ pub fn check(
         if (doc_node.tag == .value and doc_node.missing) {
             const rule_src = rule.loc.src(rules.code);
             try addError(gpa, diag, .{
-                .missing = .{
-                    .token = .{
-                        .tag = .identifier,
-                        .loc = doc_node.loc,
-                    },
+                .missing_value = .{
+                    .sel = doc_node.loc.getSelection(doc.code),
                     .expected = rule_src,
                 },
             });
@@ -633,15 +647,9 @@ pub fn check(
                     const struct_name_node = doc.nodes[doc_node.first_child_id];
                     if (struct_name_node.tag != .identifier) {
                         try addError(gpa, diag, .{
-                            .missing = .{
-                                .token = .{
-                                    .tag = .identifier,
-                                    .loc = .{
-                                        // a struct always has curlies
-                                        .start = doc_node.loc.start -| 1,
-                                        .end = doc_node.loc.start + 1,
-                                    },
-                                },
+                            .missing_struct_name = .{
+                                // a struct always has curlies
+                                .sel = doc_node.loc.getSelection(doc.code),
                                 .expected = rule_src,
                             },
                         });
@@ -665,11 +673,9 @@ pub fn check(
                     }
                     // no match
                     try addError(gpa, diag, .{
-                        .unknown = .{
-                            .token = .{
-                                .tag = .identifier,
-                                .loc = struct_name_node.loc,
-                            },
+                        .unknown_struct_name = .{
+                            .name = struct_name,
+                            .sel = struct_name_node.loc.getSelection(doc.code),
                             .expected = rule_src,
                         },
                     });
@@ -703,12 +709,9 @@ pub fn check(
 
                         const field_rule = struct_rule.fields.get(field_name) orelse {
                             try addError(gpa, diag, .{
-                                .unknown = .{
-                                    .token = .{
-                                        .tag = .identifier,
-                                        .loc = field_name_node.loc,
-                                    },
-                                    .expected = &.{},
+                                .unknown_field = .{
+                                    .name = field_name,
+                                    .sel = field_name_node.loc.getSelection(doc.code),
                                 },
                             });
                             continue;
@@ -733,15 +736,9 @@ pub fn check(
                             const k = kv.key_ptr.*;
                             if (!seen_fields.contains(k)) {
                                 try addError(gpa, diag, .{
-                                    .missing = .{
-                                        .token = .{
-                                            .tag = .value, // doesn't matter
-                                            .loc = .{
-                                                .start = doc_node.loc.end - 1,
-                                                .end = doc_node.loc.end,
-                                            },
-                                        },
-                                        .expected = k,
+                                    .missing_field = .{
+                                        .sel = doc_node.loc.getSelection(doc.code),
+                                        .name = k,
                                     },
                                 });
                             }
@@ -796,10 +793,8 @@ fn typeMismatch(
 
     try addError(gpa, diag, .{
         .type_mismatch = .{
-            .token = .{
-                .tag = .value,
-                .loc = found.loc,
-            },
+            .name = "(value)",
+            .sel = found.loc.getSelection(doc.code),
             .expected = rule_node.loc.src(rules.code),
         },
     });

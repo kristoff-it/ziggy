@@ -60,7 +60,7 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) error{OutOfMemory}!Docu
     ) catch |err| {
         try doc.diagnostic.errors.append(arena, .{
             .schema = .{
-                .loc = schema_path_loc,
+                .sel = schema_path_loc.getSelection(bytes),
                 .err = err,
             },
         });
@@ -75,7 +75,7 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) error{OutOfMemory}!Docu
     ) catch |err| {
         try doc.diagnostic.errors.append(arena, .{
             .schema = .{
-                .loc = schema_path_loc,
+                .sel = schema_path_loc.getSelection(bytes),
                 .err = err,
             },
         });
@@ -92,7 +92,7 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) error{OutOfMemory}!Docu
     ) catch |err| {
         try doc.diagnostic.errors.append(arena, .{
             .schema = .{
-                .loc = schema_path_loc,
+                .sel = schema_path_loc.getSelection(bytes),
                 .err = err,
             },
         });

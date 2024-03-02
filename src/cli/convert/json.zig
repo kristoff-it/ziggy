@@ -1,16 +1,17 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const ziggy = @import("ziggy");
 const Diagnostic = ziggy.Diagnostic;
 const Ast = ziggy.Ast;
 const Node = Ast.Node;
 const Token = ziggy.Tokenizer.Token;
 
-pub fn ziggyAst(
+pub fn toZiggy(
     gpa: std.mem.Allocator,
     schema: ziggy.schema.Schema,
     diag: ?*ziggy.Diagnostic,
     r: anytype,
-) !ziggy.Ast {
+) ![]const u8 {
     var buf = std.ArrayList(u8).init(gpa);
     defer buf.deinit();
 
@@ -22,247 +23,301 @@ pub fn ziggyAst(
     var scanner = std.json.Scanner.initCompleteInput(gpa, bytes);
     scanner.enableDiagnostics(&js_diag);
 
-    var p: Parser = .{
+    var out = std.ArrayList(u8).init(gpa);
+    errdefer out.deinit();
+
+    var c: Converter = .{
         .gpa = gpa,
         .code = bytes,
         .tokenizer = &scanner,
-        .diagnostic = diag,
         .json_diag = &js_diag,
+        .diagnostic = diag,
+        .schema = schema,
+        .out = out.writer(),
     };
 
-    if (p.diagnostic) |d| {
-        d.code = p.code;
-    }
+    try c.convertJsonValue(try c.next(), schema.root);
 
-    errdefer {
-        p.nodes.clearAndFree(gpa);
-        p.rules.clearAndFree(gpa);
-    }
-
-    const root_node = try p.nodes.addOne(gpa);
-    root_node.* = .{ .tag = .root, .parent_id = 0 };
-
-    p.rule = schema.root;
-    p.node = root_node;
-    try p.next();
-    while (true) {
-        const rule = p.schema.nodes[p.rule.node];
-        switch (p.node) {
-            .root => switch (p.token) {
-                .object_begin => {
-                    switch (rule.tag) {
-                        .@"struct" => {
-                            try p.addChild(.@"struct", p.rule);
-                        },
-
-                        .map => {
-                            try p.addChild(.map, p.rule);
-                        },
-                    }
-                    p.loc.start = p.jsonLoc().start;
-                },
-                .object_end => {
-                    p.loc.end = p.jsonLoc().end;
-                },
-                else => {
-                    try p.addChild(.value, p.rule);
-                },
-            },
-            .@"struct" => {},
-            .value => switch (p.token) {
-                .true => {
-                    if (rule.tag != .bool) {
-                        try p.addError(.{
-                            .type_mismatch = .{
-                                .token = .{
-                                    .tag = .true,
-                                    .loc = p.jsonLoc(),
-                                },
-                            },
-                        });
-                    }
-                    p.tag = .bool;
-                    p.loc = p.jsonLoc();
-                    p.parent();
-                },
-                .false => {
-                    if (rule.tag != .bool) {
-                        try p.addError(.{
-                            .type_mismatch = .{
-                                .token = .{
-                                    .tag = .false,
-                                    .loc = p.jsonLoc(),
-                                },
-                            },
-                        });
-                    }
-                    p.tag = .bool;
-                    p.loc = p.jsonLoc();
-                    p.parent();
-                },
-                .null => {
-                    if (rule.tag != .optional) {
-                        try p.addError(.{
-                            .type_mismatch = .{
-                                .token = .{
-                                    .tag = .null,
-                                    .loc = p.jsonLoc(),
-                                },
-                            },
-                        });
-                    }
-                    p.tag = .null;
-                    p.loc = p.jsonLoc();
-                    p.parent();
-                },
-                .number => {
-                    const t: Token.Tag = if (std.mem.indexOfScalar(u8, p.token, '.') != null)
-                        .float
-                    else
-                        .integer;
-                    if (rule.tag != .integer and rule.tag != .float) {
-                        try p.addError(.{
-                            .type_mismatch = .{
-                                .token = .{
-                                    .tag = t,
-                                    .loc = p.jsonLoc(),
-                                },
-                            },
-                        });
-                    }
-                    p.tag = t;
-                    p.loc = p.jsonLoc();
-                    p.parent();
-                },
-                .string => {
-                    if (rule.tag != .bytes) {
-                        try p.addError(.{
-                            .type_mismatch = .{
-                                .token = .{
-                                    .tag = .bytes,
-                                    .loc = p.jsonLoc(),
-                                },
-                            },
-                        });
-                    }
-                    p.tag = .bytes;
-                    p.loc = p.jsonLoc();
-                    p.parent();
-                },
-            },
-        }
-    }
+    return try out.toOwnedSlice();
 }
 
-const Parser = struct {
+const Converter = struct {
     gpa: std.mem.Allocator,
     code: [:0]const u8,
     tokenizer: *std.json.Scanner,
-    diagnostic: ?*Diagnostic,
     json_diag: *std.json.Diagnostics,
-    rules: std.ArrayListUnmanaged(?ziggy.schema.Schema.Rule) = .{},
-    rule: ?ziggy.schema.Schema.Rule = null,
-    nodes: std.ArrayListUnmanaged(Node) = .{},
-    node: *Node = undefined,
-    token: std.json.Token = undefined,
+    diagnostic: ?*Diagnostic,
+    schema: ziggy.schema.Schema,
+    out: std.ArrayList(u8).Writer,
 
-    pub fn ast(p: *Parser) !ziggy.Ast {
-        return .{
-            .code = p.code,
-            .nodes = try p.nodes.toOwnedSlice(p.gpa),
+    fn jsonSel(p: Converter) Token.Loc.Selection {
+        const start: Token.Loc.Selection.Position = .{
+            .line = @intCast(p.json_diag.getLine()),
+            .col = @intCast(p.json_diag.getColumn()),
         };
-    }
 
-    fn peek(p: *Parser) ziggy.Token.Tag {
-        return p.tokenizer.peek(p.code).tag;
-    }
-
-    fn jsonLoc(p: Parser) Token.Loc {
-        const offset = p.json_diag.getByteOffset();
-        return .{
-            .start = offset,
-            .end = offset + p.token.len,
+        const end: Token.Loc.Selection.Position = .{
+            .line = start.line,
+            .col = start.col + 1,
         };
+        return .{ .start = start, .end = end };
     }
 
-    fn next(p: *Parser) !void {
-        const token = p.tokenizer.next(p.code) catch {
-            const offset = p.js_diag.getByteOffset();
-            try p.addError(.{
-                .invalid_token = .{
-                    .token = .{
-                        .tag = if (offset == p.code.len) .eof else .invalid,
-                        .loc = .{
-                            .start = offset,
-                            .end = offset + 1,
-                        },
-                    },
-                },
+    fn next(p: *Converter) !std.json.Token {
+        return p.tokenizer.next() catch |err| {
+            return p.addError(.{
+                .syntax = .{ .name = @errorName(err), .sel = p.jsonSel() },
             });
         };
-        p.token = token;
     }
 
-    fn must(p: *Parser, comptime tag: Token.Tag) !void {
-        return p.mustAny(&.{tag});
-    }
-
-    fn mustAny(p: *Parser, comptime tags: []const Token.Tag) !void {
-        for (tags) |t| {
-            if (t == p.token.tag) break;
-        } else {
-            try p.addError(.{
-                .unexpected_token = .{
-                    .token = p.token,
-                    .expected = tags,
-                },
-            });
-        }
-    }
-
-    pub fn addError(p: *Parser, err: Diagnostic.Error) !void {
+    pub fn addError(p: *Converter, err: Diagnostic.Error) Diagnostic.Error.ZigError {
         if (p.diagnostic) |d| {
             try d.errors.append(p.gpa, err);
         }
         return err.zigError();
     }
 
-    pub fn addChild(p: *Parser, tag: Node.Tag, rule: ?ziggy.schema.Schema.Rule) !void {
-        const n = p.node;
-        const self_id = p.getId();
-        const new_child_id: u32 = @intCast(p.nodes.items.len);
-        if (n.last_child_id != 0) {
-            const child = &p.nodes.items[n.last_child_id];
-            std.debug.assert(child.next_id == 0);
-            child.next_id = new_child_id;
+    fn convertJsonValue(
+        c: *Converter,
+        token: std.json.Token,
+        rule: ziggy.schema.Schema.Rule,
+    ) anyerror!void {
+        switch (token) {
+            else => @panic("TODO"),
+            .object_end, .array_end => unreachable,
+            .object_begin => try c.convertJsonObject(rule),
+            .array_begin => try c.convertJsonArray(rule),
+            .string => |s| try c.convertJsonString(s, rule),
+            .number => |n| try c.convertJsonNumber(n, rule),
+            .true, .false => try c.convertJsonBool(token, rule),
+            .null => try c.convertJsonNull(rule),
         }
-        if (n.first_child_id == 0) {
-            std.debug.assert(n.last_child_id == 0);
-            n.first_child_id = new_child_id;
-        }
-
-        n.last_child_id = new_child_id;
-        const child = try p.nodes.addOne(p.gpa);
-        child.* = .{ .tag = tag, .parent_id = self_id };
-
-        p.node = child;
-
-        try p.rules.append(p.rule);
-        p.rule = rule;
     }
 
-    pub fn parent(p: *Parser) void {
-        const n = p.node;
-        p.node = &p.nodes.items[n.parent_id];
-        p.rule = p.rules.pop();
+    fn convertJsonObject(c: *Converter, rule: ziggy.schema.Schema.Rule) !void {
+        const r = c.schema.nodes[rule.node];
+        const rule_src = r.loc.src(c.schema.code);
+        const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
+        switch (r.tag) {
+            .map, .any => {
+                try c.out.writeAll("{");
+                var token = try c.next();
+                while (token != .object_end) : (token = try c.next()) {
+                    try c.out.print(
+                        "\"{}\":",
+                        .{std.zig.fmtEscapes(token.string)},
+                    );
+                    try c.convertJsonValue(
+                        try c.next(),
+                        .{ .node = child_rule_id },
+                    );
+                    try c.out.writeAll(",");
+                }
+                try c.out.writeAll("}");
+            },
+            .identifier => {
+                const struct_rule = c.schema.structs.get(rule_src).?; // must be present
+
+                // Duplicates are checked by the JSON parser, so only
+                // missing non-optional fields remain to check.
+                var seen_fields = std.StringHashMap(void).init(c.gpa);
+                defer seen_fields.deinit();
+
+                try c.out.writeAll("{");
+                var token = try c.next();
+                while (token != .object_end) : (token = try c.next()) {
+                    // TODO: would be nice to output the unescaped string
+                    //       directly into our output buffer.
+                    // const k = try std.json.parseFromSliceLeaky([]const u8, c.gpa, token.string, .{});
+                    const k = token.string;
+
+                    // TODO: we actually want to frist re-escape the string
+                    //       using our syntax before checking for it.
+                    const field = struct_rule.fields.get(k) orelse {
+                        return c.addError(.{
+                            .unknown_field = .{
+                                .name = k,
+                                .sel = c.jsonSel(),
+                            },
+                        });
+                    };
+
+                    try seen_fields.putNoClobber(k, {});
+
+                    try c.out.print(".{} = ", .{std.zig.fmtId(k)});
+                    try c.convertJsonValue(try c.next(), field.rule);
+                    try c.out.writeAll(",");
+                }
+
+                // ensure all missing keys are optional
+                for (struct_rule.fields.keys(), struct_rule.fields.values()) |k, v| {
+                    if (seen_fields.contains(k)) continue;
+                    if (c.schema.nodes[v.rule.node].tag != .optional) {
+                        return c.addError(.{
+                            .missing_field = .{
+                                .name = k,
+                                .sel = c.jsonSel(),
+                            },
+                        });
+                    }
+                }
+                try c.out.writeAll("}");
+            },
+            .struct_union => @panic("TODO: struct union for json objects"),
+            else => {
+                return c.addError(.{
+                    .type_mismatch = .{
+                        .name = "json_object",
+                        .sel = c.jsonSel(),
+                        .expected = rule_src,
+                    },
+                });
+            },
+        }
     }
 
-    pub fn getId(p: Parser) u32 {
-        const n = p.node;
-        const idx: u32 = @intCast(
-            (@intFromPtr(n) - @intFromPtr(p.nodes.items.ptr)) / @sizeOf(Node),
-        );
-        std.debug.assert(idx < p.nodes.items.len);
-        return idx;
+    fn convertJsonArray(
+        c: *Converter,
+        rule: ziggy.schema.Schema.Rule,
+    ) !void {
+        const r = c.schema.nodes[rule.node];
+        const rule_src = r.loc.src(c.schema.code);
+        const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
+        switch (r.tag) {
+            .array, .any => {
+                try c.out.writeAll("[");
+                var token = try c.next();
+                while (token != .array_end) : (token = try c.next()) {
+                    try c.convertJsonValue(token, .{ .node = child_rule_id });
+                    try c.out.writeAll(",");
+                }
+                try c.out.writeAll("]");
+            },
+            else => {
+                return c.addError(.{
+                    .type_mismatch = .{
+                        .name = "json_array",
+                        .sel = c.jsonSel(),
+                        .expected = rule_src,
+                    },
+                });
+            },
+        }
+    }
+
+    fn convertJsonString(
+        c: *Converter,
+        str: []const u8,
+        rule: ziggy.schema.Schema.Rule,
+    ) !void {
+        const r = c.schema.nodes[rule.node];
+        const rule_src = r.loc.src(c.schema.code);
+        switch (r.tag) {
+            .bytes, .any => {
+                try c.out.print("\"{}\"", .{std.zig.fmtEscapes(str)});
+            },
+            else => {
+                return c.addError(.{
+                    .type_mismatch = .{
+                        .name = "json_string",
+                        .sel = c.jsonSel(),
+                        .expected = rule_src,
+                    },
+                });
+            },
+        }
+    }
+
+    fn convertJsonNumberString(
+        c: *Converter,
+        ns: []const u8,
+        rule: ziggy.schema.Schema.Rule,
+    ) !void {
+        const r = c.schema.nodes[rule.node];
+        const rule_src = r.loc.src(c.schema.code);
+        switch (r.tag) {
+            .int, .float, .any => {
+                try c.out.print("{s}", .{ns});
+            },
+            else => {
+                return c.addError(.{
+                    .type_mismatch = .{
+                        .name = "json_number_string",
+                        .loc = c.jsonSel(),
+                        .expected = rule_src,
+                    },
+                });
+            },
+        }
+    }
+
+    fn convertJsonNumber(
+        c: *Converter,
+        num: []const u8,
+        rule: ziggy.schema.Schema.Rule,
+    ) !void {
+        const r = c.schema.nodes[rule.node];
+        const rule_src = r.loc.src(c.schema.code);
+        switch (r.tag) {
+            .int, .float, .any => {
+                try c.out.print("{s}", .{num});
+            },
+            else => {
+                return c.addError(.{
+                    .type_mismatch = .{
+                        .name = "json_number",
+                        .sel = c.jsonSel(),
+                        .expected = rule_src,
+                    },
+                });
+            },
+        }
+    }
+
+    fn convertJsonBool(
+        c: *Converter,
+        token: std.json.Token,
+        rule: ziggy.schema.Schema.Rule,
+    ) !void {
+        assert(token == .true or token == .false);
+        const r = c.schema.nodes[rule.node];
+        const rule_src = r.loc.src(c.schema.code);
+        switch (r.tag) {
+            .bool, .any => {
+                try c.out.print("{s}", .{@tagName(token)});
+            },
+            else => {
+                return c.addError(.{
+                    .type_mismatch = .{
+                        .name = "json_bool",
+                        .sel = c.jsonSel(),
+                        .expected = rule_src,
+                    },
+                });
+            },
+        }
+    }
+
+    fn convertJsonNull(
+        c: *Converter,
+        rule: ziggy.schema.Schema.Rule,
+    ) !void {
+        const r = c.schema.nodes[rule.node];
+        const rule_src = r.loc.src(c.schema.code);
+        switch (r.tag) {
+            .optional, .any => {
+                try c.out.writeAll("null");
+            },
+            else => {
+                return c.addError(.{
+                    .type_mismatch = .{
+                        .name = "json_null",
+                        .sel = c.jsonSel(),
+                        .expected = rule_src,
+                    },
+                });
+            },
+        }
     }
 };
