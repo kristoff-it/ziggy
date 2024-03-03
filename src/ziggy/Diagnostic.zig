@@ -139,12 +139,12 @@ pub const Error = union(enum) {
                     // }
                 },
                 .unexpected => |u| {
-                    try out_stream.print("unexpected {s}", .{u.name});
+                    try out_stream.print("unexpected '{s}'", .{u.name});
 
                     try out_stream.print(", expected: ", .{});
 
                     for (u.expected, 0..) |elem, idx| {
-                        try out_stream.print("{s}", .{elem});
+                        try out_stream.print("'{s}'", .{elem});
                         if (idx != u.expected.len - 1) {
                             try out_stream.print(" or ", .{});
                         }
@@ -178,21 +178,21 @@ pub const Error = union(enum) {
                         }
                     }
                 },
-                .missing_field => {
-                    try out_stream.print("missing field(s)", .{});
+                .missing_field => |mf| {
+                    try out_stream.print("missing field: '{s}'", .{mf.name});
                 },
                 .unknown_field => |uf| {
                     try out_stream.print("unknown field '{s}'", .{uf.name});
                 },
                 .missing_struct_name => |msn| {
                     try out_stream.print(
-                        "struct union requires name, expected: {s}\n",
+                        "struct union requires name, expected: '{s}'\n",
                         .{msn.expected},
                     );
                 },
                 .unknown_struct_name => |usn| {
                     try out_stream.print(
-                        "unknown struct name, expected: {s}\n",
+                        "unknown struct name, expected: '{s}'\n",
                         .{usn.expected},
                     );
                 },
@@ -211,7 +211,7 @@ pub const Error = union(enum) {
 
                 .type_mismatch => |mism| {
                     try out_stream.print(
-                        "wrong value type, expected '{s}'",
+                        "wrong value type, expected {s}",
                         .{mism.expected},
                     );
                 },
@@ -222,7 +222,6 @@ pub const Error = union(enum) {
 
 pub fn deinit(self: *Diagnostic, gpa: std.mem.Allocator) void {
     self.errors.deinit(gpa);
-    self.locs.deinit(gpa);
 }
 
 pub fn debug(self: Diagnostic) void {

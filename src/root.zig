@@ -18,11 +18,11 @@ pub const max_size = 4 * 1024 * 1024 * 1024;
 
 test {
     _ = Tokenizer;
-    // _ = Parser;
+    _ = Parser;
     _ = Diagnostic;
     _ = Ast;
 
-    // _ = Value;
+    _ = Value;
     _ = serializer;
     _ = @import("ziggy/RecoverAst.zig");
     _ = @import("ziggy/ResilientParser.zig");

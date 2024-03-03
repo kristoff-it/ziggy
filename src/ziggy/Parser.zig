@@ -23,15 +23,7 @@ pub const ParseOptions = struct {
     };
 };
 
-pub const Error = error{
-    OutOfMemory,
-    UnexpectedToken,
-    MissingField,
-    DuplicateField,
-    UnknownField,
-    Syntax,
-};
-
+pub const Error = Diagnostic.Error.ZigError;
 const Container = enum {
     start,
     @"struct",
@@ -44,6 +36,22 @@ const State = enum {
     struct_lb_or_comma,
     field_dot,
 };
+
+pub fn addError(p: *Parser, err: Diagnostic.Error) Diagnostic.Error.ZigError {
+    if (p.opts.diagnostic) |d| {
+        try d.errors.append(p.gpa, err);
+    }
+    return err.zigError();
+}
+
+fn lexemes(comptime tags: []const Token.Tag) []const []const u8 {
+    comptime var out: []const []const u8 = &.{};
+    inline for (tags) |t| {
+        const next_tag: []const []const u8 = &.{comptime t.lexeme()};
+        out = out ++ next_tag;
+    }
+    return out;
+}
 
 /// Use an arena allocator to avoid leaking allocations when complex types
 /// are involved.
@@ -64,16 +72,13 @@ pub fn parseLeaky(
 
     const extra = parser.next();
     if (extra.tag != .eof) {
-        if (opts.diagnostic) |d| {
-            d.tok = extra;
-            d.err = .{
-                .unexpected_token = .{
-                    .expected = &.{.eof},
-                },
-            };
-        }
-
-        return error.UnexpectedToken;
+        return parser.addError(.{
+            .unexpected = .{
+                .name = "EOF",
+                .sel = extra.loc.getSelection(code),
+                .expected = lexemes(&.{.eof}),
+            },
+        });
     }
 
     return result;
@@ -167,11 +172,12 @@ fn parseUnion(
         }
     }
 
-    if (self.opts.diagnostic) |d| {
-        d.tok = first_tok;
-        d.err = .unknown_field;
-    }
-    return error.UnknownField;
+    return self.addError(.{
+        .unknown_field = .{
+            .name = first_tok.loc.src(self.code),
+            .sel = first_tok.loc.getSelection(self.code),
+        },
+    });
 }
 fn parseStruct(
     self: *Parser,
@@ -224,27 +230,25 @@ fn parseStruct(
         inline for (info.fields, 0..) |f, idx| {
             if (std.mem.eql(u8, f.name, field_name)) {
                 if (fields_seen[idx]) |first_loc| {
-                    if (self.opts.diagnostic) |d| {
-                        d.tok = ident;
-                        d.err = .{
-                            .duplicate_field = .{
-                                .name = f.name,
-                                .first_loc = first_loc,
-                            },
-                        };
-                    }
-                    return error.DuplicateField;
+                    return self.addError(.{
+                        .duplicate_field = .{
+                            .name = ident.loc.src(self.code),
+                            .sel = ident.loc.getSelection(self.code),
+                            .original = first_loc.getSelection(self.code),
+                        },
+                    });
                 }
                 fields_seen[idx] = ident.loc;
                 @field(val, f.name) = try self.parseValue(f.type, self.next());
                 break;
             }
         } else {
-            if (self.opts.diagnostic) |d| {
-                d.tok = ident;
-                d.err = .unknown_field;
-            }
-            return error.UnknownField;
+            return self.addError(.{
+                .unknown_field = .{
+                    .name = ident.loc.src(self.code),
+                    .sel = ident.loc.getSelection(self.code),
+                },
+            });
         }
 
         tok = self.next();
@@ -275,15 +279,12 @@ fn finalizeStruct(
                 const dv_ptr: *field.type = @ptrCast(ptr);
                 @field(val, field.name) = dv_ptr.*;
             } else {
-                if (self.opts.diagnostic) |d| {
-                    d.tok = struct_end;
-                    d.err = .{
-                        .missing_field = .{
-                            .name = field.name,
-                        },
-                    };
-                }
-                return error.MissingField;
+                return self.addError(.{
+                    .missing_field = .{
+                        .name = field.name,
+                        .sel = struct_end.loc.getSelection(self.code),
+                    },
+                });
             }
         }
     }
@@ -303,11 +304,7 @@ fn parseInt(self: *Parser, comptime T: type, num: Token) !T {
 
     try self.must(num, .integer);
     return std.fmt.parseInt(T, num.loc.src(self.code), 10) catch {
-        if (self.opts.diagnostic) |d| {
-            d.tok = num;
-            d.err = .overflow;
-        }
-        return error.Syntax;
+        return self.addError(.overflow);
     };
 }
 
@@ -316,11 +313,7 @@ fn parseFloat(self: *Parser, comptime T: type, num: Token) !T {
 
     try self.must(num, .float);
     return std.fmt.parseFloat(T, num.loc.src(self.code)) catch {
-        if (self.opts.diagnostic) |d| {
-            d.tok = num;
-            d.err = .overflow;
-        }
-        return error.Syntax;
+        return self.addError(.overflow);
     };
 }
 
@@ -418,16 +411,13 @@ pub fn mustAny(
     for (tags) |t| {
         if (t == tok.tag) break;
     } else {
-        if (self.opts.diagnostic) |d| {
-            d.tok = tok;
-            d.err = .{
-                .unexpected_token = .{
-                    .expected = tags,
-                },
-            };
-        }
-
-        return error.UnexpectedToken;
+        return self.addError(.{
+            .unexpected = .{
+                .name = tok.tag.lexeme(),
+                .sel = tok.loc.getSelection(self.code),
+                .expected = lexemes(tags),
+            },
+        });
     }
 }
 
@@ -478,14 +468,16 @@ test "struct - missing bottom curly" {
         bar: bool,
     };
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = parseLeaky(Case, std.testing.allocator, case, opts);
-    try std.testing.expectError(error.UnexpectedToken, result);
+    try std.testing.expectError(error.Syntax, result);
     try std.testing.expectFmt(
-        \\line: 3 col: 17
-        \\unexpected EOF, expected: '.' or '}'
+        \\line: 4 col: 1
+        \\unexpected 'EOF', expected: '.' or '}'
         \\
     , "{}", .{diag});
 }
@@ -501,14 +493,16 @@ test "struct - syntax error" {
         bar: bool,
     };
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = parseLeaky(Case, std.testing.allocator, case, opts);
-    try std.testing.expectError(error.UnexpectedToken, result);
+    try std.testing.expectError(error.Syntax, result);
     try std.testing.expectFmt(
         \\line: 2 col: 8
-        \\unexpected token: '.', expected: 'true' or 'false'
+        \\unexpected '.', expected: 'true' or 'false'
         \\
     , "{}", .{diag});
 }
@@ -524,14 +518,16 @@ test "struct - missing comma" {
         bar: bool,
     };
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = parseLeaky(Case, std.testing.allocator, case, opts);
-    try std.testing.expectError(error.UnexpectedToken, result);
+    try std.testing.expectError(error.Syntax, result);
     try std.testing.expectFmt(
         \\line: 2 col: 1
-        \\unexpected token: '.', expected: ',' or '}' or 'EOF'
+        \\unexpected '.', expected: ',' or '}' or 'EOF'
         \\
     , "{}", .{diag});
 }
@@ -562,14 +558,16 @@ test "struct - missing field" {
         bar: bool,
     };
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = parseLeaky(Case, std.testing.allocator, case, opts);
-    try std.testing.expectError(error.MissingField, result);
+    try std.testing.expectError(error.Syntax, result);
     try std.testing.expectFmt(
-        \\line: 1 col: 13
-        \\missing field 'bar'
+        \\line: 1 col: 14
+        \\missing field: 'bar'
     , "{}", .{diag});
 }
 
@@ -585,14 +583,16 @@ test "struct - duplicate field" {
         bar: bool,
     };
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = parseLeaky(Case, std.testing.allocator, case, opts);
-    try std.testing.expectError(error.DuplicateField, result);
+    try std.testing.expectError(error.Syntax, result);
     try std.testing.expectFmt(
         \\line: 3 col: 2
-        \\found duplicate field 'foo', first definition here: line: 1 col: 2
+        \\duplicate field 'foo', first definition here: line: 1 col: 2
         \\
     , "{}", .{diag});
 }
@@ -609,11 +609,13 @@ test "struct - unknown field" {
         bar: bool,
     };
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = parseLeaky(Case, std.testing.allocator, case, opts);
-    try std.testing.expectError(error.UnknownField, result);
+    try std.testing.expectError(error.Syntax, result);
     try std.testing.expectFmt(
         \\line: 3 col: 2
         \\unknown field 'baz'
@@ -627,7 +629,9 @@ test "string" {
         \\
     ;
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parseLeaky([]const u8, std.testing.allocator, case, opts);
@@ -641,7 +645,9 @@ test "custom string literal" {
         \\
     ;
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parseLeaky([]const u8, std.testing.allocator, case, opts);
@@ -655,7 +661,9 @@ test "int basics" {
         \\
     ;
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parseLeaky(usize, std.testing.allocator, case, opts);
@@ -669,7 +677,9 @@ test "float basics" {
         \\
     ;
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parseLeaky(f64, std.testing.allocator, case, opts);
@@ -683,7 +693,9 @@ test "array basics" {
         \\
     ;
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parseLeaky([]usize, std.testing.allocator, case, opts);
@@ -699,7 +711,9 @@ test "array trailing comma" {
         \\
     ;
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parseLeaky([]usize, std.testing.allocator, case, opts);
@@ -732,7 +746,9 @@ test "optional - string" {
         \\
     ;
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parseLeaky(?[]const u8, std.testing.allocator, case, opts);
@@ -746,7 +762,9 @@ test "optional - null" {
         \\
     ;
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parseLeaky(?[]const u8, std.testing.allocator, case, opts);
@@ -760,7 +778,9 @@ test "tagged string" {
         \\
     ;
 
-    var diag: Diagnostic = .{ .code = case, .path = null };
+    var diag: Diagnostic = .{ .path = null };
+    defer diag.deinit(std.testing.allocator);
+
     const opts: ParseOptions = .{ .diagnostic = &diag };
 
     const result = try parseLeaky([]const u8, std.testing.allocator, case, opts);

@@ -55,15 +55,13 @@ pub fn Map(comptime T: type) type {
                     },
                     .string => {
                         if (has_identifier) {
-                            if (parser.opts.diagnostic) |d| {
-                                d.tok = tok;
-                                d.err = .{
-                                    .unexpected_token = .{
-                                        .expected = &.{.dot},
-                                    },
-                                };
-                            }
-                            return error.Syntax;
+                            return parser.addError(.{
+                                .unexpected = .{
+                                    .name = tok.loc.src(parser.code),
+                                    .sel = tok.loc.getSelection(parser.code),
+                                    .expected = &.{"'.'"},
+                                },
+                            });
                         }
 
                         const data = try parseFields(parser, .map, tok, true);
