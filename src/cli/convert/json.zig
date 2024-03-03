@@ -167,7 +167,7 @@ const Converter = struct {
             .struct_union => {
                 // TODO: implement more strategies
 
-                //Tag-is-only-field startegy.
+                //Tag-is-only-field strategy.
                 //Example layout (remote and local are tag names):
                 //{
                 //   "foo": { "remote": {"url": "...", hash: "..."}},
