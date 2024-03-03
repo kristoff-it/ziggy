@@ -70,7 +70,7 @@ pub fn main() !void {
     _ = switch (cmd) {
         .lsp => lsp_exe.run(gpa, args[2..]),
         .fmt => fmt_exe.run(gpa, args[2..]),
-        // .check => check_exe.run(gpa, args[2..]),
+        .check => check_exe.run(gpa, args[2..]),
         .convert => convert_exe.run(gpa, args[2..]),
         .help => fatalHelp(),
         else => std.debug.panic("TODO cmd={s}", .{@tagName(cmd)}),

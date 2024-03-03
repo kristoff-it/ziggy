@@ -103,7 +103,7 @@ fn checkFile(
         &diag,
     ) catch fatalDiag(diag);
 
-    schema.check(arena, doc_ast, &diag, doc_file) catch fatalDiag(diag);
+    doc_ast.check(arena, schema, &diag) catch fatalDiag(diag);
     std.debug.print("{}\n", .{diag});
 }
 
@@ -149,13 +149,13 @@ pub const Command = struct {
         std.debug.print(
             \\Usage: ziggy check SCHEMA DOC [DOC...] [OPTIONS]
             \\
-            \\   Checks input paths against a Ziggy schema.
+            \\   Checks input paths against a Ziggy Schema.
             \\   If DOC is a directory, it will be searched  
             \\   recursively for Ziggy files. 
             \\
             \\Options:
             \\
-            \\--help, -h       Prints this help and extits
+            \\--help, -h       Print this help and exit.
         , .{});
 
         std.process.exit(1);
