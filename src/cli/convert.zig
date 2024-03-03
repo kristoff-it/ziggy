@@ -398,7 +398,7 @@ pub const Command = struct {
             std.process.exit(1);
         }
 
-        if (ziggy_paths.items.len > 0) {
+        if (ziggy_paths.items.len > 0 or stdin == .ziggy) {
             if (json_paths.items.len > 0 or
                 yaml_paths.items.len > 0 or
                 toml_paths.items.len > 0)
@@ -424,7 +424,7 @@ pub const Command = struct {
         } else {
             if (to) |t| {
                 if (t != .ziggy) {
-                    std.debug.print("error: when not converting from other file formats, then the destination format must be 'ziggy'\n", .{});
+                    std.debug.print("error: when converting from other file formats, then the destination format must be 'ziggy'\n", .{});
                     std.process.exit(1);
                 }
             }
