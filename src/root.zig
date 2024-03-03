@@ -35,9 +35,9 @@ pub const schema = struct {
     pub const Ast = @import("schema/Ast.zig");
 };
 
-// test {
-//     _ = schema.Diagnostic;
-//     _ = schema.Tokenizer;
-//     _ = schema.Schema;
-//     _ = schema.Ast;
-// }
+test {
+    _ = schema.Diagnostic;
+    _ = schema.Tokenizer;
+    _ = schema.Schema;
+    _ = schema.Ast;
+}
