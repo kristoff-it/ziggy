@@ -57,7 +57,7 @@ code: [:0]const u8,
 nodes: []const Node,
 suggestions: []const Suggestion = &.{},
 
-const Suggestion = struct {
+pub const Suggestion = struct {
     loc: Token.Loc,
     completions: []const Completion = &.{},
 

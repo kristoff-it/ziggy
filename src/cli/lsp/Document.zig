@@ -9,7 +9,7 @@ const log = std.log.scoped(.lsp_document);
 arena: std.heap.ArenaAllocator,
 bytes: [:0]const u8,
 diagnostic: ziggy.Diagnostic,
-ast: ?ziggy.LanguageServerAst = null,
+ast: ?if (ziggy.lsp_parser == .recover) ziggy.LanguageServerAst else ziggy.LanguageServerAst.Tree = null,
 schema_path_loc: ?ziggy.Tokenizer.Token.Loc = null,
 schema: ?LoadedSchema = null,
 
