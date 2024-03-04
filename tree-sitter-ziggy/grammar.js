@@ -28,11 +28,11 @@ module.exports = grammar({
         optional($.top_comment),
         optional(choice(
           $.top_level_struct,
-          $._value,
+          $.value,
         )),
       ),
 
-    _value: $ => choice(
+    value: $ => choice(
       $.struct,
       $.map,
       $.array,
@@ -62,7 +62,7 @@ module.exports = grammar({
       '.',
       field('key', $.identifier),
       '=',
-      field('value', $._value),
+      field('value', $.value),
     ),
 
     map: $ => seq(
@@ -76,14 +76,14 @@ module.exports = grammar({
       optional($.comment),
       field('key', $.string),
       ':',
-      field('value', $._value),
+      field('value', $.value),
     ),
 
     array: $ => seq('[', commaSep($.array_elem), optional($.comment),']'),
 
     array_elem: $ => seq(
       optional($.comment),
-      $._value,
+      $.value,
     ),
 
     tag_string: $ => seq('@', field('name', $.tag), '(', $.string, ')'),

@@ -11,12 +11,17 @@ pub fn build(b: *std.Build) void {
         .strip = false,
     });
 
+    const treez = b.dependency("treez", .{});
+    ziggy.addImport("treez", treez.module("treez"));
+
     const unit_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/root.zig" },
         .target = target,
         .optimize = optimize,
         .strip = false,
     });
+
+    unit_tests.root_module.addImport("treez", treez.module("treez"));
     unit_tests.filters = if (b.option([]const u8, "test-filter", "test filter")) |filter|
         b.allocator.dupe([]const u8, &.{filter}) catch @panic("OOM")
     else
@@ -36,12 +41,16 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const tree_sitter = treez.artifact("tree-sitter");
+    const tree_sitter_ziggy = b.dependency("tree-sitter-ziggy", .{}).artifact("tree-sitter-ziggy");
     const folders = b.dependency("known-folders", .{});
     const lsp = b.dependency("zig-lsp-kit", .{});
 
     ziggy_exe.root_module.addImport("ziggy", ziggy);
     ziggy_exe.root_module.addImport("known-folders", folders.module("known-folders"));
     ziggy_exe.root_module.addImport("lsp", lsp.module("lsp"));
+    ziggy_exe.linkLibrary(tree_sitter);
+    ziggy_exe.linkLibrary(tree_sitter_ziggy);
 
     const run_exe = b.addRunArtifact(ziggy_exe);
     if (b.args) |args| run_exe.addArgs(args);
@@ -50,16 +59,6 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(ziggy_exe);
 
-    const ziggy_check = b.addExecutable(.{
-        .name = "ziggy_check",
-        .root_source_file = .{ .path = "src/main.zig" },
-        .target = target,
-        .optimize = optimize,
-    });
-
-    ziggy_check.root_module.addImport("ziggy", ziggy);
-    ziggy_check.root_module.addImport("known-folders", folders.module("known-folders"));
-    ziggy_check.root_module.addImport("lsp", lsp.module("lsp"));
     const check = b.step("check", "Check if Tigerbeetle compiles");
-    check.dependOn(&ziggy_check.step);
+    check.dependOn(&ziggy_exe.step);
 }

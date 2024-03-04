@@ -40,7 +40,9 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) error{OutOfMemory}!Docu
         &doc.diagnostic,
     ) catch return doc;
 
-    const schema_path = ast.findSchemaPath(bytes) orelse return doc;
+    // const schema_path = ast.findSchemaPath(bytes) orelse return doc;
+    if (true) return doc;
+    const schema_path = "";
     log.debug("detected schema: '{s}'", .{schema_path});
 
     const start_byte: u32 = @intCast(std.mem.indexOf(u8, bytes, schema_path).?);

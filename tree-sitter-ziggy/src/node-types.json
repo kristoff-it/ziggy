@@ -27,47 +27,11 @@
       "required": true,
       "types": [
         {
-          "type": "array",
-          "named": true
-        },
-        {
           "type": "comment",
           "named": true
         },
         {
-          "type": "false",
-          "named": true
-        },
-        {
-          "type": "float",
-          "named": true
-        },
-        {
-          "type": "integer",
-          "named": true
-        },
-        {
-          "type": "map",
-          "named": true
-        },
-        {
-          "type": "null",
-          "named": true
-        },
-        {
-          "type": "string",
-          "named": true
-        },
-        {
-          "type": "struct",
-          "named": true
-        },
-        {
-          "type": "tag_string",
-          "named": true
-        },
-        {
-          "type": "true",
+          "type": "value",
           "named": true
         }
       ]
@@ -87,42 +51,6 @@
       "required": false,
       "types": [
         {
-          "type": "array",
-          "named": true
-        },
-        {
-          "type": "false",
-          "named": true
-        },
-        {
-          "type": "float",
-          "named": true
-        },
-        {
-          "type": "integer",
-          "named": true
-        },
-        {
-          "type": "map",
-          "named": true
-        },
-        {
-          "type": "null",
-          "named": true
-        },
-        {
-          "type": "string",
-          "named": true
-        },
-        {
-          "type": "struct",
-          "named": true
-        },
-        {
-          "type": "tag_string",
-          "named": true
-        },
-        {
           "type": "top_comment",
           "named": true
         },
@@ -131,7 +59,7 @@
           "named": true
         },
         {
-          "type": "true",
+          "type": "value",
           "named": true
         }
       ]
@@ -195,43 +123,7 @@
         "required": true,
         "types": [
           {
-            "type": "array",
-            "named": true
-          },
-          {
-            "type": "false",
-            "named": true
-          },
-          {
-            "type": "float",
-            "named": true
-          },
-          {
-            "type": "integer",
-            "named": true
-          },
-          {
-            "type": "map",
-            "named": true
-          },
-          {
-            "type": "null",
-            "named": true
-          },
-          {
-            "type": "string",
-            "named": true
-          },
-          {
-            "type": "struct",
-            "named": true
-          },
-          {
-            "type": "tag_string",
-            "named": true
-          },
-          {
-            "type": "true",
+            "type": "value",
             "named": true
           }
         ]
@@ -331,43 +223,7 @@
         "required": true,
         "types": [
           {
-            "type": "array",
-            "named": true
-          },
-          {
-            "type": "false",
-            "named": true
-          },
-          {
-            "type": "float",
-            "named": true
-          },
-          {
-            "type": "integer",
-            "named": true
-          },
-          {
-            "type": "map",
-            "named": true
-          },
-          {
-            "type": "null",
-            "named": true
-          },
-          {
-            "type": "string",
-            "named": true
-          },
-          {
-            "type": "struct",
-            "named": true
-          },
-          {
-            "type": "tag_string",
-            "named": true
-          },
-          {
-            "type": "true",
+            "type": "value",
             "named": true
           }
         ]
@@ -439,6 +295,57 @@
         },
         {
           "type": "struct_field",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "value",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "array",
+          "named": true
+        },
+        {
+          "type": "false",
+          "named": true
+        },
+        {
+          "type": "float",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
+          "type": "map",
+          "named": true
+        },
+        {
+          "type": "null",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "struct",
+          "named": true
+        },
+        {
+          "type": "tag_string",
+          "named": true
+        },
+        {
+          "type": "true",
           "named": true
         }
       ]
