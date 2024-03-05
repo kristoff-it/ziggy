@@ -226,10 +226,10 @@ fn snippetString(
         .bytes => try w.writeAll("\"$0\""),
         .any, .unknown, .int, .float, .bool => try w.writeAll("$0"),
         .array => try w.writeAll("[$0]"),
-        .map => try w.writeAll("{{$0}}"),
+        .map => try w.writeAll("{$0}"),
         .tag => try w.print("{s}($0)", .{rule.loc.src(schema.code)}),
         .identifier => try w.print("{s} {{$0}}", .{rule.loc.src(schema.code)}),
-        .struct_union => try w.writeAll("$1 {{$0}}"),
+        .struct_union => try w.writeAll("$1 {$0}"),
     }
 
     try w.writeAll(",");

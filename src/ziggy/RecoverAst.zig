@@ -1098,7 +1098,7 @@ pub fn check(
                                 if (any_suggestion and !seen_fields.contains(k)) {
                                     try completions.append(.{
                                         .name = kv.key_ptr.*,
-                                        .type = self.nodes[v.rule.node].loc.src(self.code),
+                                        .type = rules.nodes[v.rule.node].loc.src(rules.code),
                                         .desc = v.help.doc,
                                         .snippet = v.help.snippet,
                                     });
@@ -1109,7 +1109,7 @@ pub fn check(
                                 if (any_suggestion) {
                                     try completions.append(.{
                                         .name = kv.key_ptr.*,
-                                        .type = self.nodes[v.rule.node].loc.src(self.code),
+                                        .type = rules.nodes[v.rule.node].loc.src(rules.code),
                                         .desc = v.help.doc,
                                         .snippet = v.help.snippet,
                                     });
