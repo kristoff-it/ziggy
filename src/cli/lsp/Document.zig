@@ -33,7 +33,7 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) error{OutOfMemory}!Docu
     const arena = doc.arena.allocator();
 
     log.debug("parsing ziggy ast", .{});
-    const ast = ziggy.LanguageServerAst.init(
+    var ast = ziggy.LanguageServerAst.init(
         arena,
         bytes,
         true,
@@ -108,6 +108,8 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) error{OutOfMemory}!Docu
 
     log.debug("schema: applying", .{});
     ast.check(arena, rules, &doc.diagnostic, bytes) catch return doc;
+
+    doc.ast = ast;
 
     return doc;
 }

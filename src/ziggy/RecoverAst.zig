@@ -13,6 +13,7 @@ const log = std.log.scoped(.ziggy_ast);
 pub const Node = struct {
     tag: Tag,
     loc: Token.Loc = undefined,
+    sel: Token.Loc.Selection = undefined,
     missing: bool = false,
 
     // 0 = root node (root node has itself as parent)
@@ -54,6 +55,19 @@ pub const Node = struct {
 
 code: [:0]const u8,
 nodes: []const Node,
+suggestions: []const Suggestion = &.{},
+
+const Suggestion = struct {
+    loc: Token.Loc,
+    completions: []const Completion = &.{},
+
+    pub const Completion = struct {
+        name: []const u8,
+        type: []const u8,
+        desc: []const u8,
+        snippet: []const u8,
+    };
+};
 
 pub fn deinit(self: RecoverAst, gpa: std.mem.Allocator) void {
     gpa.free(self.nodes);
@@ -870,7 +884,7 @@ fn addError(gpa: std.mem.Allocator, diag: ?*ziggy.Diagnostic, err: ziggy.Diagnos
 }
 
 pub fn check(
-    self: RecoverAst,
+    self: *RecoverAst,
     gpa: std.mem.Allocator,
     rules: ziggy.schema.Schema,
     diag: ?*ziggy.Diagnostic,
@@ -879,6 +893,14 @@ pub fn check(
     // TODO: check ziggy file against this ruleset
     var stack = std.ArrayList(CheckItem).init(gpa);
     defer stack.deinit();
+
+    var suggestions = std.ArrayList(Suggestion).init(gpa);
+    defer {
+        self.suggestions = suggestions.toOwnedSlice() catch blk: {
+            suggestions.deinit();
+            break :blk &.{};
+        };
+    }
 
     var doc_root_val: u32 = 1;
     if (self.nodes[1].tag == .top_comment) {
@@ -1025,6 +1047,8 @@ pub fn check(
                         doc_child_id = self.nodes[doc_child_id].next_id;
                     }
 
+                    const suggestions_start = suggestions.items.len;
+
                     while (doc_child_id != 0) {
                         const field = self.nodes[doc_child_id];
                         doc_child_id = field.next_id;
@@ -1037,6 +1061,13 @@ pub fn check(
                         const field_name = field_name_node.loc.src(self.code);
 
                         const field_rule = struct_rule.fields.get(field_name) orelse {
+                            log.debug("appending suggestion at {}", .{field_name_node.loc});
+                            try suggestions.append(.{
+                                .loc = .{
+                                    .start = field.loc.start,
+                                    .end = field_name_node.loc.end,
+                                },
+                            });
                             try addError(gpa, diag, .{
                                 .unknown_field = .{
                                     .name = field_name,
@@ -1058,12 +1089,31 @@ pub fn check(
 
                     if (seen_fields.count() != struct_rule.fields.count()) {
                         var it = struct_rule.fields.iterator();
+                        var completions = std.ArrayList(Suggestion.Completion).init(gpa);
+                        const any_suggestion = suggestions_start != suggestions.items.len;
                         while (it.next()) |kv| {
-                            if (rules.nodes[kv.value_ptr.rule.node].tag == .optional) {
+                            const k = kv.key_ptr.*;
+                            const v = kv.value_ptr;
+                            if (rules.nodes[v.rule.node].tag == .optional) {
+                                if (any_suggestion and !seen_fields.contains(k)) {
+                                    try completions.append(.{
+                                        .name = kv.key_ptr.*,
+                                        .type = self.nodes[v.rule.node].loc.src(self.code),
+                                        .desc = v.help.doc,
+                                        .snippet = v.help.snippet,
+                                    });
+                                }
                                 continue;
                             }
-                            const k = kv.key_ptr.*;
                             if (!seen_fields.contains(k)) {
+                                if (any_suggestion) {
+                                    try completions.append(.{
+                                        .name = kv.key_ptr.*,
+                                        .type = self.nodes[v.rule.node].loc.src(self.code),
+                                        .desc = v.help.doc,
+                                        .snippet = v.help.snippet,
+                                    });
+                                }
                                 try addError(gpa, diag, .{
                                     .missing_field = .{
                                         .name = k,
@@ -1071,6 +1121,10 @@ pub fn check(
                                     },
                                 });
                             }
+                        }
+
+                        for (suggestions.items[suggestions_start..]) |*s| {
+                            s.completions = completions.items;
                         }
                     }
                 },
@@ -1510,6 +1564,18 @@ fn renderFields(
             },
         }
     }
+}
+
+pub fn completionsForOffset(
+    ast: RecoverAst,
+    offset: u32,
+) []const Suggestion.Completion {
+    for (ast.suggestions) |s| {
+        if (s.loc.start <= offset and s.loc.end >= offset) {
+            return s.completions;
+        }
+    }
+    return &.{};
 }
 
 fn expectFmt(case: [:0]const u8) !void {

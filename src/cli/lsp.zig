@@ -178,31 +178,69 @@ pub const Handler = struct {
     }
 
     pub fn completion(
-        _: Handler,
+        self: Handler,
         arena: std.mem.Allocator,
         request: types.CompletionParams,
     ) !ResultType("textDocument/completion") {
-        _ = request;
-        var completions: std.ArrayListUnmanaged(types.CompletionItem) = .{};
-
-        try completions.append(arena, types.CompletionItem{
-            .label = "ziggy",
-            .kind = .Text,
-            .documentation = .{ .string = "Is a Zig-flavored data format" },
-        });
-
-        try completions.append(arena, types.CompletionItem{
-            .label = "zls",
-            .kind = .Function,
-            .documentation = .{ .string = "is a Zig LSP" },
-        });
-
-        return .{
+        const file = self.files.get(request.textDocument.uri) orelse return .{
             .CompletionList = types.CompletionList{
                 .isIncomplete = false,
-                .items = completions.items,
+                .items = &.{},
             },
         };
+        const offset = file.offsetFromPosition(
+            request.position.line,
+            request.position.character,
+        );
+
+        log.debug("completion at offset {}", .{offset});
+
+        switch (file) {
+            .ziggy => |z| {
+                const ast = z.ast orelse return .{
+                    .CompletionList = types.CompletionList{
+                        .isIncomplete = false,
+                        .items = &.{},
+                    },
+                };
+
+                const ziggy_completion = ast.completionsForOffset(offset);
+
+                const completions = try arena.alloc(
+                    types.CompletionItem,
+                    ziggy_completion.len,
+                );
+
+                for (completions, ziggy_completion) |*c, zc| {
+                    c.* = .{
+                        .label = zc.name,
+                        .labelDetails = .{ .detail = zc.type },
+                        .kind = .Field,
+                        .insertText = zc.snippet,
+                        .insertTextFormat = .Snippet,
+                        .documentation = .{
+                            .MarkupContent = .{
+                                .kind = .markdown,
+                                .value = zc.desc,
+                            },
+                        },
+                    };
+                }
+
+                return .{
+                    .CompletionList = types.CompletionList{
+                        .isIncomplete = false,
+                        .items = completions,
+                    },
+                };
+            },
+            .ziggy_schema => return .{
+                .CompletionList = types.CompletionList{
+                    .isIncomplete = false,
+                    .items = &.{},
+                },
+            },
+        }
     }
 
     pub fn gotoDefinition(

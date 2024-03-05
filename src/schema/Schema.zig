@@ -28,9 +28,14 @@ pub const StructRule = struct {
     fields: std.StringArrayHashMapUnmanaged(Field) = .{},
 
     pub const Field = struct {
-        comment: u32,
         name: u32,
         rule: Rule,
+        help: Help,
+
+        pub const Help = struct {
+            snippet: []const u8,
+            doc: []const u8,
+        };
     };
 };
 
@@ -137,7 +142,8 @@ pub fn init(
             const rule_id = nodes[name_id].next_id;
             assert(rule_id != 0);
 
-            const gop = try fields.getOrPut(gpa, nodes[name_id].loc.src(code));
+            const field_name = nodes[name_id].loc.src(code);
+            const gop = try fields.getOrPut(gpa, field_name);
             if (gop.found_existing) {
                 if (diagnostic) |d| {
                     d.tok = .{
@@ -153,9 +159,12 @@ pub fn init(
                 return error.DuplicateField;
             }
             gop.value_ptr.* = .{
-                .comment = comment_id,
                 .name = name_id,
                 .rule = .{ .node = rule_id },
+                .help = .{
+                    .snippet = try schema.snippetString(gpa, field_name, rule_id),
+                    .doc = try schema.docString(gpa, comment_id),
+                },
             };
             child_idx = f.next_id;
         }
@@ -196,6 +205,57 @@ pub fn init(
     }
 
     return schema;
+}
+
+fn snippetString(
+    schema: Schema,
+    gpa: std.mem.Allocator,
+    field_name: []const u8,
+    rule_id: u32,
+) ![]const u8 {
+    var out = std.ArrayList(u8).init(gpa);
+    errdefer out.deinit();
+    const w = out.writer();
+    try w.print("{s} = ", .{field_name});
+
+    var rule = schema.nodes[rule_id];
+    if (rule.tag == .optional) rule = schema.nodes[rule.first_child_id];
+
+    switch (rule.tag) {
+        else => unreachable,
+        .bytes => try w.writeAll("\"$0\""),
+        .any, .unknown, .int, .float, .bool => try w.writeAll("$0"),
+        .array => try w.writeAll("[$0]"),
+        .map => try w.writeAll("{{$0}}"),
+        .tag => try w.print("{s}($0)", .{rule.loc.src(schema.code)}),
+        .identifier => try w.print("{s} {{$0}}", .{rule.loc.src(schema.code)}),
+        .struct_union => try w.writeAll("$1 {{$0}}"),
+    }
+
+    try w.writeAll(",");
+    return out.toOwnedSlice();
+}
+
+fn docString(schema: Schema, gpa: std.mem.Allocator, node_id: u32) ![]const u8 {
+    const node = schema.nodes[node_id];
+    if (node.tag != .doc_comment) return "";
+
+    var out = std.ArrayList(u8).init(gpa);
+    errdefer out.deinit();
+
+    var line_id = node.first_child_id;
+    while (line_id != 0) {
+        const line = schema.nodes[line_id];
+        assert(line.tag == .doc_comment_line);
+        const src = line.loc.src(schema.code)[3..];
+        try out.appendSlice(src);
+        line_id = line.next_id;
+        if (line_id != 0) {
+            try out.append('\n');
+        }
+    }
+
+    return try out.toOwnedSlice();
 }
 
 pub fn deinit(self: *Schema, gpa: std.mem.Allocator) void {

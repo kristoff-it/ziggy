@@ -14,6 +14,22 @@ pub const File = union(Language) {
             inline else => |*x| x.deinit(),
         }
     }
+    // Clamps the returned value to code.len
+    pub fn offsetFromPosition(f: File, line: u32, col: u32) u32 {
+        const code = switch (f) {
+            inline else => |d| d.bytes,
+        };
+
+        var count: u32 = 0;
+        var idx: u32 = 0;
+        while (count < line) : (idx += 1) {
+            if (code[idx] == '\n') {
+                count += 1;
+            }
+        }
+
+        return @min(code.len, idx + col);
+    }
 };
 
 const log = std.log.scoped(.ziggy_lsp);
