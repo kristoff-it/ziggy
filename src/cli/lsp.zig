@@ -249,37 +249,19 @@ pub const Handler = struct {
         request: types.DefinitionParams,
     ) !ResultType("textDocument/definition") {
         const file = self.files.get(request.textDocument.uri) orelse return null;
-        const doc = switch (file) {
-            .ziggy => |doc| doc,
-            .ziggy_schema => return null,
-        };
-        const schema_loc = doc.schema_path_loc orelse return null;
+        if (file == .ziggy_schema) return null;
 
-        const sel = schema_loc.getSelection(doc.bytes);
-        const pos = request.position;
-        if (pos.line == sel.start.line - 1 and
-            pos.character >= sel.start.col and pos.character < sel.end.col)
-        {
-            const schema_path_loc = doc.schema_path_loc orelse return null;
-            const doc_dir = std.fs.path.dirname(request.textDocument.uri) orelse return null;
-            const path = try std.fs.path.join(arena, &.{
-                doc_dir,
-                schema_path_loc.src(doc.bytes),
-            });
-            return .{
-                .Definition = types.Definition{
-                    .Location = .{
-                        .uri = path,
-                        .range = .{
-                            .start = .{ .line = 0, .character = 0 },
-                            .end = .{ .line = 0, .character = 0 },
-                        },
+        return .{
+            .Definition = types.Definition{
+                .Location = .{
+                    .uri = try std.fmt.allocPrint(arena, "{s}-schema", .{request.textDocument.uri}),
+                    .range = .{
+                        .start = .{ .line = 0, .character = 0 },
+                        .end = .{ .line = 0, .character = 0 },
                     },
                 },
-            };
-        }
-
-        return null;
+            },
+        };
     }
 
     pub fn hover(
@@ -288,6 +270,9 @@ pub const Handler = struct {
         request: types.HoverParams,
         offset_encoding: offsets.Encoding,
     ) !?types.Hover {
+        _ = offset_encoding; // autofix
+        _ = arena; // autofix
+
         const file = self.files.get(request.textDocument.uri) orelse return null;
 
         const doc = switch (file) {
@@ -295,51 +280,20 @@ pub const Handler = struct {
             .ziggy_schema => return null,
         };
 
-        const schema = doc.schema orelse return null;
+        const offset = file.offsetFromPosition(
+            request.position.line,
+            request.position.character,
+        );
+        log.debug("hover at offset {}", .{offset});
 
-        const idx = offsets.maybePositionToIndex(
-            doc.bytes,
-            request.position,
-            offset_encoding,
-        ) orelse return null;
-
-        log.debug("hover ok on doc with schema", .{});
-
-        var start = idx;
-        while (start != 0) switch (doc.bytes[start]) {
-            'a'...'z', '_', '0'...'9' => start -= 1,
-            '@' => break,
-            else => return null,
-        };
-
-        log.debug("found start", .{});
-
-        if (doc.bytes.len == 0 or doc.bytes[start] != '@') return null;
-
-        var end = idx;
-        while (true) switch (doc.bytes[end]) {
-            'a'...'z', '_', '0'...'9' => end += 1,
-            else => break,
-        };
-
-        var buf = std.ArrayList(u8).init(arena);
-        const literal = schema.rules.literals.get(doc.bytes[start..end][1..]) orelse return null;
-
-        var docs_node_id = literal.comment;
-        if (docs_node_id == 0) return null;
-        while (docs_node_id != 0) {
-            const doc_node = schema.ast.nodes.items[docs_node_id];
-            if (doc_node.tag != .doc_comment) break;
-            try buf.appendSlice(doc_node.loc.src(schema.ast.code)[3..]);
-            try buf.append('\n');
-            docs_node_id = doc_node.next_id;
-        }
+        const ast = doc.ast orelse return null;
+        const h = ast.hoverForOffset(offset) orelse return null;
 
         return types.Hover{
             .contents = .{
                 .MarkupContent = .{
                     .kind = .markdown,
-                    .value = buf.items,
+                    .value = h,
                 },
             },
         };

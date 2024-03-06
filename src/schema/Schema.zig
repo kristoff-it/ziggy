@@ -20,6 +20,7 @@ pub const LiteralRule = struct {
     comment: u32,
     name: u32,
     expr: u32,
+    hover: []const u8,
 };
 
 pub const StructRule = struct {
@@ -103,6 +104,7 @@ pub fn init(
             .comment = comment_id,
             .name = name_id,
             .expr = expr_id,
+            .hover = try schema.docString(gpa, comment_id),
         };
         idx = literal.next_id;
     }

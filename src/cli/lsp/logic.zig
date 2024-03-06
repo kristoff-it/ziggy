@@ -1,5 +1,6 @@
 const std = @import("std");
 const lsp = @import("lsp");
+const ziggy = @import("ziggy");
 const Handler = @import("../lsp.zig").Handler;
 const Document = @import("Document.zig");
 const Schema = @import("Schema.zig");
@@ -87,7 +88,13 @@ pub fn loadFile(
             }
         },
         .ziggy => {
-            var doc = try Document.init(self.gpa, new_text);
+            const schema = try schemaForZiggy(self, arena, uri);
+
+            var doc = try Document.init(
+                self.gpa,
+                new_text,
+                schema,
+            );
             errdefer doc.deinit();
 
             log.debug("document init", .{});
@@ -135,4 +142,35 @@ pub fn loadFile(
     );
 
     defer self.gpa.free(msg);
+}
+
+pub fn schemaForZiggy(self: *Handler, arena: std.mem.Allocator, uri: []const u8) !?Schema {
+    const path = try std.fmt.allocPrint(arena, "{s}-schema", .{uri["file://".len..]});
+    log.debug("trying to find schema at '{s}'", .{path});
+    const result = self.files.get(path) orelse {
+        const bytes = std.fs.cwd().readFileAllocOptions(
+            self.gpa,
+            path,
+            ziggy.max_size,
+            null,
+            1,
+            0,
+        ) catch return null;
+        log.debug("schema loaded", .{});
+        var schema = Schema.init(self.gpa, bytes);
+        errdefer schema.deinit();
+
+        const gpa_path = try self.gpa.dupe(u8, path);
+        errdefer self.gpa.free(gpa_path);
+
+        try self.files.putNoClobber(
+            self.gpa,
+            gpa_path,
+            .{ .ziggy_schema = schema },
+        );
+        return schema;
+    };
+
+    if (result == .ziggy_schema) return result.ziggy_schema;
+    return null;
 }

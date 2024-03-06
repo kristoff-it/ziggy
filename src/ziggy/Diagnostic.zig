@@ -64,7 +64,7 @@ pub const Error = union(enum) {
     schema: struct {
         sel: Token.Loc.Selection,
         // the error encountered while processing the schema file
-        err: anyerror,
+        err: []const u8,
     },
 
     type_mismatch: struct {
@@ -205,7 +205,7 @@ pub const Error = union(enum) {
                 },
                 .schema => |s| {
                     try out_stream.print("schema file error: {s}", .{
-                        @errorName(s.err),
+                        s.err,
                     });
                 },
 

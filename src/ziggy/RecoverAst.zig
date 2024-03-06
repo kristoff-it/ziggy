@@ -56,6 +56,12 @@ pub const Node = struct {
 code: [:0]const u8,
 nodes: []const Node,
 suggestions: []const Suggestion = &.{},
+hovers: []const Hover = &.{},
+
+pub const Hover = struct {
+    loc: Token.Loc,
+    hover: []const u8,
+};
 
 pub const Suggestion = struct {
     loc: Token.Loc,
@@ -895,9 +901,15 @@ pub fn check(
     defer stack.deinit();
 
     var suggestions = std.ArrayList(Suggestion).init(gpa);
+    var hovers = std.ArrayList(Hover).init(gpa);
+
     defer {
         self.suggestions = suggestions.toOwnedSlice() catch blk: {
             suggestions.deinit();
+            break :blk &.{};
+        };
+        self.hovers = hovers.toOwnedSlice() catch blk: {
+            hovers.deinit();
             break :blk &.{};
         };
     }
@@ -1081,6 +1093,11 @@ pub fn check(
                         // via AST contruction.
                         try seen_fields.putNoClobber(field_name, {});
 
+                        try hovers.append(.{
+                            .loc = .{ .start = field.loc.start, .end = field_name_node.loc.end },
+                            .hover = field_rule.help.doc,
+                        });
+
                         try stack.append(.{
                             .rule = field_rule.rule,
                             .doc_node = field.last_child_id,
@@ -1135,8 +1152,14 @@ pub fn check(
                     const tag_node = self.nodes[doc_node.first_child_id];
                     const tag_src = tag_node.loc.src(self.code);
                     const rule_src = rule.loc.src(rules.code)[1..];
-                    if (!std.mem.eql(u8, tag_src, rule_src))
+                    if (!std.mem.eql(u8, tag_src, rule_src)) {
                         try self.typeMismatch(gpa, diag, rules, elem);
+                    } else {
+                        try hovers.append(.{
+                            .loc = doc_node.loc,
+                            .hover = rules.literals.get(rule_src).?.hover,
+                        });
+                    }
                 },
                 else => try self.typeMismatch(gpa, diag, rules, elem),
             },
@@ -1564,6 +1587,18 @@ fn renderFields(
             },
         }
     }
+}
+
+pub fn hoverForOffset(
+    ast: RecoverAst,
+    offset: u32,
+) ?[]const u8 {
+    for (ast.hovers) |s| {
+        if (s.loc.start <= offset and s.loc.end >= offset) {
+            return s.hover;
+        }
+    }
+    return null;
 }
 
 pub fn completionsForOffset(
