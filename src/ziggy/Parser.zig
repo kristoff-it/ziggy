@@ -276,7 +276,7 @@ fn finalizeStruct(
     inline for (info.fields, 0..) |field, idx| {
         if (fields_seen[idx] == null) {
             if (field.default_value) |ptr| {
-                const dv_ptr: *field.type = @ptrCast(ptr);
+                const dv_ptr: *const field.type = @ptrCast(ptr);
                 @field(val, field.name) = dv_ptr.*;
             } else {
                 return self.addError(.{
