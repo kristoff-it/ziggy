@@ -4,7 +4,7 @@
 
 ### 1. Add the following lines to your `nvim-treesitter` config
 
-The following snipped should be pasted inside of 
+The following lines should be pasted inside of your config file.
 
 ```lua
 local parser_config = require("nvim-treesitter.parsers").get_parser_configs()
@@ -42,6 +42,8 @@ vim.filetype.add({
 
 ### 2. Copy the queries into your runtime path
 
+NOTE: '-T' makes it so you can run the command multiple times without nesting new copies of `queries` more deeply than intended. Also macOS doesn't support it.
+
 - `cp -rT tree-sitter-ziggy/queries NVIM_RUNTIME_PATH/queries/ziggy`
 - `cp -rT tree-sitter-ziggy-schema/queries NVIM_RUNTIME_PATH/queries/ziggy_schema`
 
@@ -49,7 +51,6 @@ vim.filetype.add({
 
 - `:TSInstall ziggy`
 - `:TSInstall ziggy_schema`
-
 
 ## Autoformatting
 By using the `ziggy` CLI tool.
@@ -79,7 +80,6 @@ formatters_by_ft = {
 ```
 
 ## LSP
-
 Add the following to your Neovim config:
 
 ```lua

@@ -5,6 +5,8 @@
   - `cp -rT tree-sitter-ziggy/queries HELIX_RUNTIME_PATH/queries/ziggy`
   - `cp -rT tree-sitter-ziggy-schema/queries HELIX_RUNTIME_PATH/queries/ziggy_schema`
 
+NOTE: '-T' makes it so you can run the command multiple times without nesting new copies of `queries` more deeply than intended. Also macOS doesn't support it.
+
 
 2. In your Helix **config directory** (usually `~/.config/helix/`create `languages.toml` and copy in the relevant sections from the `languages.toml` file present in this directory.
 
