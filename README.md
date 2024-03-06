@@ -134,6 +134,9 @@ Development status:
 - [ ] query 
 - [x] check 
 - [ ] convert 
+  - [x] JSON to Ziggy 
+  - [ ] YAML to Ziggy 
+  - [ ] TOML to Ziggy 
 - [x] lsp 
 - [x] help 
 
@@ -143,9 +146,8 @@ various editors.
 
 Development status:
 - [x] Helix
-- [ ] Vim / Neovim
-- [ ] VSCode
-- [ ] Sublime
+- [x] Neovim
+- [x] VSCode
 
 Is your editor not listed / done yet? Feel free to PR it!
 
@@ -489,7 +491,7 @@ Development status:
 - [x] LSP (`ziggy lsp --schema`)
 - [x] Analysis of Schema files (https://github.com/kristoff-it/ziggy/issues/9)
 - [x] Schema compliance for Ziggy files (`ziggy check`, `ziggy lsp`)
-- [ ] Schema file support in `ziggy convert`
+- [x] Schema file support in `ziggy convert`
 
 ### Binary Format
 **Note: this part is still vaporware**
