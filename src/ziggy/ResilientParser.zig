@@ -16,10 +16,13 @@ const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
 const Rule = ziggy.schema.Schema.Rule;
 const log = std.log.scoped(.resilient_parser);
+const RecoverAst = @import("RecoverAst.zig");
+const Suggestion = RecoverAst.Suggestion;
 
 pub const Tree = struct {
     tag: Tree.Tag,
     children: std.ArrayListUnmanaged(Child) = .{},
+    suggestions: []const Suggestion = &.{},
 
     pub const Tag = enum {
         err,
@@ -29,6 +32,7 @@ pub const Tree = struct {
         struct_field,
         array,
         map,
+        map_field,
         string,
         line_string,
         tag_string,
@@ -72,7 +76,7 @@ pub const Tree = struct {
     }
 
     pub fn check(
-        doc: Tree,
+        doc: *Tree,
         gpa: std.mem.Allocator,
         rules: ziggy.schema.Schema,
         diag: ?*ziggy.Diagnostic,
@@ -83,16 +87,29 @@ pub const Tree = struct {
         var stack = std.ArrayList(CheckItem).init(gpa);
         defer stack.deinit();
 
+        var suggestions = std.ArrayList(Suggestion).init(gpa);
+        defer {
+            doc.suggestions = suggestions.toOwnedSlice() catch blk: {
+                suggestions.deinit();
+                break :blk &.{};
+            };
+        }
+
         var doc_root_val: u32 = 0;
         {
             const items = doc.children.items;
+            log.debug("check() items len {}", .{items.len});
             if (items.len == 0) return;
             log.debug("check() first_child={s}", .{items[0].loc().src(ziggy_code)});
             while (doc_root_val < items.len and
                 items[doc_root_val] == .token and
                 items[doc_root_val].token.tag == .top_comment_line) : (doc_root_val += 1)
             {}
-            if (doc_root_val >= items.len) return; // empty file, nothing to do
+
+            log.debug("check() doc_root_val {} children {} returning {}", .{ doc_root_val, items.len, doc_root_val >= items.len });
+            if (doc_root_val >= items.len) return;
+            assert(doc_root_val < items.len);
+            log.debug("check() root tag {} children {any}", .{ items[doc_root_val].tree.tag, items[doc_root_val].tree.children.items });
             try stack.append(.{
                 .rule = rules.root,
                 .child = items[doc_root_val],
@@ -109,17 +126,20 @@ pub const Tree = struct {
                 .{ @tagName(rule.tag), rule.loc.src(rules.code), elem.child },
             );
             if (tree.tag == .err) {
-                // TODO more descriptive reporting
-                try addErrorCheck(gpa, diag, .{
-                    .unexpected = .{
-                        .name = "TODO",
-                        .sel = tree.loc().getSelection(ziggy_code),
-                        .expected = switch (rule.tag) {
-                            .struct_field => lexemes(&.{.eof}),
-                            else => &.{},
-                        },
-                    },
-                });
+                // TODO when to add error. what are we expecting? is this a
+                //      good place to handle completions for empty file?
+
+                // try addErrorCheck(gpa, diag, .{
+                //     .unexpected = .{
+                //         .name = "error",
+                //         .sel = tree.loc().getSelection(ziggy_code),
+                //         .expected = switch (rule.tag) {
+                //             .struct_field => lexemes(&.{.eof}),
+                //             else => &.{},
+                //         },
+                //     },
+                // });
+                log.debug("TODO handle err tree: {}", .{tree.fmt(ziggy_code)});
                 continue;
             }
 
@@ -146,13 +166,17 @@ pub const Tree = struct {
 
                         const items = tree.children.items;
                         if (items[items.len - 1] != .token) continue;
-                        assert(items[items.len - 1].token.tag == .rsb);
+
                         // start at 1 to skip first token: '['
                         var child_id: usize = 1;
-                        while (child_id < items.len - 1) : (child_id += 2) {
+                        while (child_id < items.len) : (child_id += 1) {
                             const arr_child = items[child_id];
                             if (arr_child == .token) {
                                 assert(arr_child.token.tag != .comment);
+                                switch (arr_child.token.tag) {
+                                    .comma, .rsb => continue,
+                                    else => {},
+                                }
                             }
                             try stack.append(.{
                                 .rule = child_rule,
@@ -169,19 +193,28 @@ pub const Tree = struct {
                         assert(child_rule.node != 0);
                         // maps look like this:
                         //   '{',
-                        //        fieldname, ':', value, ','
-                        //        fieldname, ':', value, ','?
+                        //        mapfield
+                        //          fieldname, ':', value
+                        //        ','?
+                        //        mapfield
+                        //          fieldname, ':', value
+                        //        ','?
                         //   '}'
-                        // in order to iterate values, we start at 3 to skip
-                        // leading curly, fieldname and colon and increment by 4
-                        var child_id: usize = 3;
-                        while (child_id < tree.children.items.len) : (child_id += 4) {
+                        // to add map values, loop over map_field children
+                        // adding 3rd child
+                        var child_id: usize = 0;
+                        while (child_id < tree.children.items.len) : (child_id += 1) {
                             const map_child = tree.children.items[child_id];
                             log.debug("map_child {}", .{map_child});
-                            try stack.append(.{
-                                .rule = child_rule,
-                                .child = map_child,
-                            });
+                            if (map_child == .tree and
+                                map_child.tree.tag == .map_field and
+                                map_child.tree.children.items.len >= 3)
+                            {
+                                try stack.append(.{
+                                    .rule = child_rule,
+                                    .child = map_child.tree.children.items[2],
+                                });
+                            }
                         }
                     },
                     else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
@@ -243,17 +276,21 @@ pub const Tree = struct {
                             tree.children.items[0].token.tag == .identifier)
                             child_id += 1;
 
-                        while (child_id < tree.children.items.len) : (child_id += 2) {
+                        const suggestions_start = suggestions.items.len;
+                        log.debug("tree with {} children", .{tree.children.items.len});
+                        while (child_id < tree.children.items.len) : (child_id += 1) {
                             const field = tree.children.items[child_id];
+                            // log.debug("field {}\nchildren {any}", .{ field, field.tree.children.items });
                             switch (field) {
-                                .token => {
+                                .token => |t| {
                                     // TODO more descriptive reporting
-                                    try addErrorCheck(gpa, diag, .{
-                                        .unknown_field = .{
-                                            .name = field.token.loc.src(ziggy_code),
-                                            .sel = field.token.loc.getSelection(ziggy_code),
-                                        },
-                                    });
+                                    if (t.tag != .comma)
+                                        try addErrorCheck(gpa, diag, .{
+                                            .unknown_field = .{
+                                                .name = field.token.loc.src(ziggy_code),
+                                                .sel = field.token.loc.getSelection(ziggy_code),
+                                            },
+                                        });
                                     continue;
                                 },
                                 .tree => |field_tree| switch (field_tree.tag) {
@@ -277,19 +314,27 @@ pub const Tree = struct {
                             if (field_name_node != .token) continue;
                             const field_name = field_name_node.token.loc.src(ziggy_code);
                             const field_rule = struct_rule.fields.get(field_name) orelse {
-                                // TODO more descriptive reporting
-                                try addErrorCheck(gpa, diag, .{
-                                    .unknown_field = .{
-                                        .name = field_name,
-                                        .sel = field_name_node.loc().getSelection(ziggy_code),
+                                log.debug("appending suggestion at {}", .{field_name_node.token.loc});
+                                try suggestions.append(.{
+                                    .loc = .{
+                                        .start = field.loc().start,
+                                        .end = field_name_node.loc().end,
                                     },
                                 });
+                                if (field_name.len != 0)
+                                    try addErrorCheck(gpa, diag, .{
+                                        .unknown_field = .{
+                                            .name = field_name,
+                                            .sel = field_name_node.loc().getSelection(ziggy_code),
+                                        },
+                                    });
                                 continue;
                             };
 
-                            // duplicate fields should be detected in the doc
-                            // via AST contruction.
-                            try seen_fields.putNoClobber(field_name, {});
+                            // duplicate fields are detected during parsing and
+                            // diagnostic errors produced.  but they appear as
+                            // normal struct_field trees here.
+                            try seen_fields.put(field_name, {});
                             // guard against incomplete fields / errors
                             if (field.tree.children.items.len > 3) {
                                 try stack.append(.{
@@ -298,27 +343,55 @@ pub const Tree = struct {
                                     .child = field.tree.children.items[3],
                                 });
                             } else {
-                                // TODO maybe check for errors
+                                // field likely has errors which have already
+                                // been diagnosed
                             }
                         }
-
+                        log.debug("seen_fields.count {} struct_rule.fields.count {}", .{ seen_fields.count(), struct_rule.fields.count() });
                         if (seen_fields.count() != struct_rule.fields.count()) {
-                            var it = struct_rule.fields.iterator();
-                            while (it.next()) |kv| {
-                                if (rules.nodes[kv.value_ptr.rule.node].tag == .optional) {
+                            var completions = std.ArrayList(Suggestion.Completion).init(gpa);
+                            const any_suggestion = suggestions_start != suggestions.items.len;
+                            log.debug("any_suggestion {} suggestions {}", .{ any_suggestion, suggestions.items.len });
+
+                            for (struct_rule.fields.keys(), struct_rule.fields.values()) |k, v| {
+                                if (rules.nodes[v.rule.node].tag == .optional) {
+                                    if (any_suggestion and !seen_fields.contains(k)) {
+                                        try completions.append(.{
+                                            .name = k,
+                                            .type = rules.nodes[v.rule.node].loc.src(rules.code),
+                                            .desc = v.help.doc,
+                                            .snippet = v.help.snippet,
+                                        });
+                                    }
                                     continue;
                                 }
-                                const k = kv.key_ptr.*;
+
                                 if (!seen_fields.contains(k)) {
-                                    const field_loc = tree.loc();
-                                    assert(field_loc.start <= field_loc.end);
+                                    if (any_suggestion) {
+                                        try completions.append(.{
+                                            .name = k,
+                                            .type = rules.nodes[v.rule.node].loc.src(rules.code),
+                                            .desc = v.help.doc,
+                                            .snippet = v.help.snippet,
+                                        });
+                                    }
+                                    // FIXME: this loc isn't correct for nested
+                                    // structs, only top level.  figure out how
+                                    // to get parent loc.
+                                    var dloc = doc.loc();
+                                    dloc.start = dloc.end -| 1;
+                                    assert(dloc.start <= dloc.end);
                                     try addErrorCheck(gpa, diag, .{
-                                        .missing_value = .{
-                                            .sel = field_loc.getSelection(ziggy_code),
-                                            .expected = k,
+                                        .missing_field = .{
+                                            .sel = dloc.getSelection(ziggy_code),
+                                            .name = k,
                                         },
                                     });
                                 }
+                            }
+                            log.debug("completions {} suggestions {}", .{ completions.items.len, suggestions.items[suggestions_start..].len });
+                            for (suggestions.items[suggestions_start..]) |*s| {
+                                s.completions = completions.items;
                             }
                         }
                     },
@@ -404,7 +477,21 @@ pub const Tree = struct {
 
     pub fn findSchemaPath(tree: Tree, bytes: [:0]const u8) ?[]const u8 {
         const schema_line = tree.findSchemaToken() orelse return null;
-        return @import("RecoverAst.zig").findSchemaPathFromLoc(schema_line.loc, bytes);
+        return RecoverAst.findSchemaPathFromLoc(schema_line.loc, bytes);
+    }
+
+    pub fn completionsForOffset(
+        ast: Tree,
+        offset: u32,
+    ) []const RecoverAst.Suggestion.Completion {
+        log.debug("completionsForOffset() suggestions len {}", .{ast.suggestions.len});
+        for (ast.suggestions) |s| {
+            log.debug("completionsForOffset() offset {} loc start/end {}/{}", .{ offset, s.loc.start, s.loc.end });
+            if (s.loc.start <= offset and s.loc.end >= offset) {
+                return s.completions;
+            }
+        }
+        return &.{};
     }
 };
 
@@ -568,6 +655,7 @@ pub const Child = union(enum) {
     pub fn deinit(c: *Child, gpa: mem.Allocator) void {
         if (c.* == .tree) c.tree.deinit(gpa);
     }
+
     pub fn format(c: Child, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;
@@ -633,8 +721,32 @@ fn document(p: *Parser) !void {
 
     const token = p.peek(0);
     switch (token.tag) {
-        .eof => {},
+        .eof => {
+            // FIXME: remove this hack. this was added trying to get
+            // completions for a file which contains only a top schema line
+            // to appear when a '.' is typed. this is an attempt to appease
+            // check() which can only add completions when there is a
+            // top_level_struct tree with a struct_field child
+
+            // idea 1, abandoned
+            // add a dummy err tree
+            // const m2 = p.open();
+            // _ = p.close(m2, .err);
+
+            // idea 2
+            const m2 = p.open();
+            const m3 = p.open();
+            // these 4 events allow check() to get into completion code path
+            // but the completions still don't appear when a '.' is typed
+            try p.events.append(p.gpa, .advance);
+            try p.events.append(p.gpa, .advance);
+            try p.events.append(p.gpa, .advance);
+            try p.events.append(p.gpa, .advance);
+            _ = p.close(m3, .struct_field);
+            _ = p.close(m2, .top_level_struct);
+        },
         .dot, .comment => try p.topLevelStruct(),
+        .identifier,
         .lb,
         .lsb,
         .at,
@@ -647,10 +759,9 @@ fn document(p: *Parser) !void {
         .null,
         => try p.value(),
         else => {
-            // "expected a top level struct or value"
             try p.advanceWithError(.{
                 .unexpected = .{
-                    .name = token.loc.src(p.code),
+                    .name = token.tag.lexeme(),
                     .sel = token.loc.getSelection(p.code),
                     .expected = &.{"top level struct or value"},
                 },
@@ -664,7 +775,7 @@ fn document(p: *Parser) !void {
         tok.loc.end = @intCast(p.code.len);
         try p.addError(.{
             .unexpected = .{
-                .name = tok.loc.src(p.code),
+                .name = tok.tag.lexeme(),
                 .sel = tok.loc.getSelection(p.code),
                 .expected = lexemes(&.{.eof}),
             },
@@ -682,61 +793,194 @@ fn comments(p: *Parser) void {
 
 /// top_level_struct = struct_field (',' struct_field)* ','? comment*
 fn topLevelStruct(p: *Parser) !void {
+    log.debug("topLevelStruct()", .{});
     const m = p.open();
-    try p.structField();
-
-    while (true) {
-        const token = p.peek(0);
-        log.debug("topLevelStruct {}", .{token.tag});
-        switch (token.tag) {
-            .comma => {
-                p.advance();
-                // eof check is necessary so that we don't continue parsing
-                // struct fields after a final trailing comma
-                if (p.peek(0).tag == .eof) break;
-
-                try p.structField();
-            },
-            .eof => break,
-            .dot => {
-                // report error and try to recover on dot
-                try p.addError(.{
-                    .unexpected = .{
-                        .name = token.loc.src(p.code),
-                        .sel = token.loc.getSelection(p.code),
-                        .expected = lexemes(&.{.comma}),
-                    },
-                });
-                try p.structField();
-            },
-            else => {
-                try p.advanceWithError(.{
-                    .unexpected = .{
-                        .name = token.loc.src(p.code),
-                        .sel = token.loc.getSelection(p.code),
-                        .expected = lexemes(&.{.comma}),
-                    },
-                });
-            },
-        }
-    }
-
-    _ = p.consume(.comma);
-    p.comments();
+    try p.structBody(.top_level);
     _ = p.close(m, .top_level_struct);
 }
 
-/// struct_field = comment* '.' identifier '=' value
-fn structField(p: *Parser) !void {
-    assert(!p.eof());
-    if (p.at(.comma)) return; // allow for recovery
-    const m = p.open();
+/// struct_body = (comment* '.' identifier '=' value)+
+fn structBody(p: *Parser, mode: enum { top_level, nested }) !void {
+    var seen_fields = std.StringHashMap(Token.Loc).init(p.gpa);
+    defer seen_fields.deinit();
+
+    while (true) {
+        p.comments();
+        const t, const t1, const t2, const t3 = p.peekLen(4);
+        log.debug(
+            "structBody() {s} {s} {s} {s}",
+            .{ t.tag.lexeme(), t1.tag.lexeme(), t2.tag.lexeme(), t3.tag.lexeme() },
+        );
+
+        switch (t.tag) {
+            .dot => {},
+            .rb => {
+                if (seen_fields.count() == 0) {
+                    try p.addError(.{ .unexpected = .{
+                        .name = t.tag.lexeme(),
+                        .sel = t.loc.getSelection(p.code),
+                        .expected = if (mode == .nested)
+                            lexemes(&.{ .dot, .rb })
+                        else
+                            lexemes(&.{.dot}),
+                    } });
+                }
+                break;
+            },
+            .eof => {
+                if (mode == .nested)
+                    try p.addError(.{ .unexpected = .{
+                        .name = t.tag.lexeme(),
+                        .sel = t.loc.getSelection(p.code),
+                        .expected = lexemes(&.{ .dot, .rb }),
+                    } });
+                break;
+            },
+            else => {
+                try p.advanceWithError(.{ .unexpected = .{
+                    .name = t.tag.lexeme(),
+                    .sel = t.loc.getSelection(p.code),
+                    .expected = if (mode == .nested)
+                        lexemes(&.{ .dot, .rb })
+                    else
+                        lexemes(&.{.dot}),
+                } });
+                continue;
+            },
+        }
+        {
+            // this block allows to defer closing the struct_field tree instead
+            // of scattering many p.close() calls at exit points.  it also
+            // allows a trailing comma token to come after this struct_field
+            // tree is closed.
+            const m = p.open();
+            p.advance();
+            defer _ = p.close(m, .struct_field);
+
+            switch (t1.tag) {
+                .identifier => {
+                    const gop = try seen_fields.getOrPut(t1.loc.src(p.code));
+                    if (gop.found_existing) {
+                        try p.addError(.{ .duplicate_field = .{
+                            .name = t1.tag.lexeme(),
+                            .sel = t1.loc.getSelection(p.code),
+                            .original = gop.value_ptr.getSelection(p.code),
+                        } });
+                    } else gop.value_ptr.* = t1.loc;
+                },
+                .rb, .eof => {
+                    try p.addError(.{ .unexpected = .{
+                        .name = t1.tag.lexeme(),
+                        .sel = t1.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.identifier}),
+                    } });
+                    break;
+                },
+                .dot => {
+                    try p.addError(.{ .unexpected = .{
+                        .name = t1.tag.lexeme(),
+                        .sel = t1.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.identifier}),
+                    } });
+                    continue;
+                },
+                else => {
+                    try p.advanceWithError(.{ .unexpected = .{
+                        .name = t1.tag.lexeme(),
+                        .sel = t1.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.identifier}),
+                    } });
+                    continue;
+                },
+            }
+            p.advance();
+
+            switch (t2.tag) {
+                .eql => {},
+                .rb, .eof => {
+                    try p.addError(.{ .unexpected = .{
+                        .name = t2.tag.lexeme(),
+                        .sel = t2.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.eql}),
+                    } });
+                    break;
+                },
+                .dot => {
+                    try p.addError(.{ .unexpected = .{
+                        .name = t2.tag.lexeme(),
+                        .sel = t2.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.eql}),
+                    } });
+                    continue;
+                },
+                else => {
+                    try p.advanceWithError(.{ .unexpected = .{
+                        .name = t2.tag.lexeme(),
+                        .sel = t2.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.eql}),
+                    } });
+                    continue;
+                },
+            }
+            p.advance();
+
+            switch (t3.tag) {
+                .identifier,
+                .lb,
+                .lsb,
+                .at,
+                .string,
+                .line_string,
+                .float,
+                .integer,
+                .true,
+                .false,
+                .null,
+                => try p.value(),
+                .rb, .eof => {
+                    try p.addError(.{ .unexpected = .{
+                        .name = t3.tag.lexeme(),
+                        .sel = t3.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.value}),
+                    } });
+                    break;
+                },
+                .comma => {
+                    try p.addError(.{ .unexpected = .{
+                        .name = t3.tag.lexeme(),
+                        .sel = t3.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.value}),
+                    } });
+                },
+                .dot => {
+                    try p.addError(.{ .unexpected = .{
+                        .name = t3.tag.lexeme(),
+                        .sel = t3.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.comma}),
+                    } });
+                    continue;
+                },
+                else => try p.advanceWithError(.{ .unexpected = .{
+                    .name = t3.tag.lexeme(),
+                    .sel = t3.loc.getSelection(p.code),
+                    .expected = lexemes(&.{.value}),
+                } }),
+            }
+        }
+
+        const t4 = p.peek(0);
+        switch (t4.tag) {
+            .comma => p.advance(),
+            .dot => try p.addError(.{ .unexpected = .{
+                .name = t4.tag.lexeme(),
+                .sel = t4.loc.getSelection(p.code),
+                .expected = lexemes(&.{.comma}),
+            } }),
+            else => break,
+        }
+    }
+
     p.comments();
-    try p.expect(.dot);
-    try p.expect(.identifier);
-    try p.expect(.eql);
-    try p.value();
-    _ = p.close(m, .struct_field);
 }
 
 /// value =
@@ -744,27 +988,44 @@ fn structField(p: *Parser) !void {
 /// | integer | true | false | null
 fn value(p: *Parser) Diagnostic.Error.ZigError!void {
     const m = p.open();
-    const token = p.peek(0);
-    switch (token.tag) {
+    const t, const t1 = p.peekLen(2);
+    log.debug("value() {s} {s}", .{ @tagName(t.tag), @tagName(t1.tag) });
+
+    switch (t.tag) {
         .identifier => {
-            const token1 = p.peek(1);
-            if (token1.tag != .lb) {
-                // "expected struct"
+            if (t1.tag != .lb) {
                 try p.advanceWithErrorNoOpen(m, .{
                     .unexpected = .{
-                        .name = token1.loc.src(p.code),
-                        .sel = token1.loc.getSelection(p.code),
-                        .expected = lexemes(&.{.lb}),
+                        .name = t1.tag.lexeme(),
+                        .sel = t1.loc.getSelection(p.code),
+                        .expected = lexemes(&.{ .lb, .value }),
                     },
                 });
                 return;
             }
-
             p.advance();
-            try p.structOrMap(m);
+            try p.struct_();
+            _ = p.close(m, .@"struct");
         },
-        .lb => {
-            try p.structOrMap(m);
+        .lb => switch (t1.tag) {
+            .string => {
+                try p.map();
+                _ = p.close(m, .map);
+            },
+            .rb => {
+                p.advance();
+                try p.advanceWithErrorNoOpen(m, .{
+                    .unexpected = .{
+                        .name = t1.tag.lexeme(),
+                        .sel = t1.loc.getSelection(p.code),
+                        .expected = lexemes(&.{ .dot, .string }),
+                    },
+                });
+            },
+            else => {
+                try p.struct_();
+                _ = p.close(m, .@"struct");
+            },
         },
         .lsb => {
             try p.array();
@@ -809,8 +1070,8 @@ fn value(p: *Parser) Diagnostic.Error.ZigError!void {
         .comma => { // allow for recovery, don't advance
             try p.addError(.{
                 .unexpected = .{
-                    .name = token.loc.src(p.code),
-                    .sel = token.loc.getSelection(p.code),
+                    .name = t.tag.lexeme(),
+                    .sel = t.loc.getSelection(p.code),
                     .expected = lexemes(&.{.value}),
                 },
             });
@@ -820,33 +1081,9 @@ fn value(p: *Parser) Diagnostic.Error.ZigError!void {
             // "expected a value"
             try p.advanceWithErrorNoOpen(m, .{
                 .unexpected = .{
-                    .name = token.loc.src(p.code),
-                    .sel = token.loc.getSelection(p.code),
+                    .name = t.tag.lexeme(),
+                    .sel = t.loc.getSelection(p.code),
                     .expected = lexemes(&.{.value}),
-                },
-            });
-        },
-    }
-}
-
-fn structOrMap(p: *Parser, m: MarkOpened) !void {
-    const token = p.peek(1);
-    switch (token.tag) {
-        .dot => {
-            try p.struct_();
-            _ = p.close(m, .@"struct");
-        },
-        .string => {
-            try p.map();
-            _ = p.close(m, .map);
-        },
-        else => {
-            // "expected map or struct"
-            try p.advanceWithErrorNoOpen(m, .{
-                .unexpected = .{
-                    .name = token.loc.src(p.code),
-                    .sel = token.loc.getSelection(p.code),
-                    .expected = lexemes(&.{ .dot, .string }),
                 },
             });
         },
@@ -867,13 +1104,58 @@ fn tagString(p: *Parser) !void {
 /// array = '[' (array_elem,  (',' array_elem)*)? ','? comment* ']'
 /// array_elem = comment* value
 fn array(p: *Parser) !void {
+    log.debug("array()", .{});
     // mark open/close is handled in value()
     try p.expect(.lsb);
 
-    while (!p.atAny(&.{ .rsb, .eof })) {
+    while (true) {
         p.comments();
-        try p.value();
-        if (!p.consume(.comma)) break;
+        const t = p.peek(0);
+        log.debug("array() {s}", .{@tagName(t.tag)});
+
+        switch (t.tag) {
+            .identifier,
+            .lb,
+            .lsb,
+            .at,
+            .string,
+            .line_string,
+            .float,
+            .integer,
+            .true,
+            .false,
+            .null,
+            => try p.value(),
+            .rsb, .dot => break, // allow for recovery on dot
+            .eof => {
+                try p.addError(.{ .unexpected = .{
+                    .name = t.tag.lexeme(),
+                    .sel = t.loc.getSelection(p.code),
+                    .expected = lexemes(&.{ .value, .rsb }),
+                } });
+                break;
+            },
+            else => {
+                try p.advanceWithError(.{ .unexpected = .{
+                    .name = t.tag.lexeme(),
+                    .sel = t.loc.getSelection(p.code),
+                    .expected = lexemes(&.{ .value, .rsb }),
+                } });
+            },
+        }
+
+        const t1 = p.peek(0);
+        switch (t1.tag) {
+            .comma => p.advance(),
+            .rsb, .eof => break,
+            else => {
+                try p.advanceWithError(.{ .unexpected = .{
+                    .name = t1.tag.lexeme(),
+                    .sel = t1.loc.getSelection(p.code),
+                    .expected = lexemes(&.{ .comma, .rsb }),
+                } });
+            },
+        }
     }
 
     _ = p.consume(.comma);
@@ -883,56 +1165,162 @@ fn array(p: *Parser) !void {
 
 /// struct = struct_name? '{' (struct_field,  (',' struct_field)* )? comment* '}'
 fn struct_(p: *Parser) !void {
-    // mark open/close is handled in value()
-    _ = p.consume(.identifier);
+    log.debug("struct", .{});
     try p.expect(.lb);
-
-    while (true) {
-        const token = p.peek(0);
-        switch (token.tag) {
-            .dot, .comment => try p.structField(),
-            else => break,
-        }
-        if (!p.consume(.comma)) break;
-    }
-
-    _ = p.consume(.comma);
-    p.comments();
+    try p.structBody(.nested);
     try p.expect(.rb);
 }
 
 /// map = '{' (map_field,  (',' map_field)* )? comment* '}'
 /// map_field = comment* string ':' value
 fn map(p: *Parser) !void {
-    // mark open/close is handled in value()
+    log.debug("map", .{});
     try p.expect(.lb);
+    var seen_any_fields = false;
 
-    while (!p.atAny(&.{ .rb, .eof })) {
+    while (true) {
         p.comments();
-        try p.expect(.string);
-        try p.expect(.colon);
-        try p.value();
-        if (!p.consume(.comma)) break;
+        const t, const t1, const t2 = p.peekLen(3);
+        log.debug(
+            "map() {s} {s} {s}",
+            .{ t.tag.lexeme(), t1.tag.lexeme(), t2.tag.lexeme() },
+        );
+
+        switch (t.tag) {
+            .string => {},
+            .rb => {
+                if (!seen_any_fields) {
+                    try p.addError(.{ .unexpected = .{
+                        .name = t.tag.lexeme(),
+                        .sel = t.loc.getSelection(p.code),
+                        .expected = lexemes(&.{ .string, .rb }),
+                    } });
+                }
+                break;
+            },
+            .eof => {
+                try p.addError(.{ .unexpected = .{
+                    .name = t.tag.lexeme(),
+                    .sel = t.loc.getSelection(p.code),
+                    .expected = lexemes(&.{ .string, .rb }),
+                } });
+                break;
+            },
+            else => {
+                try p.advanceWithError(.{ .unexpected = .{
+                    .name = t.tag.lexeme(),
+                    .sel = t.loc.getSelection(p.code),
+                    .expected = lexemes(&.{ .string, .rb }),
+                } });
+                continue;
+            },
+        }
+        {
+            // this block allows to defer closing the map_field tree instead
+            // of scattering many p.close() calls at exit points.  it also
+            // allows a trailing comma token to come after this map_field
+            // tree is closed.
+            const m = p.open();
+            defer _ = p.close(m, .map_field);
+            p.advance();
+
+            switch (t1.tag) {
+                .colon => {},
+                .rb, .eof => {
+                    try p.addError(.{ .unexpected = .{
+                        .name = t1.tag.lexeme(),
+                        .sel = t1.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.colon}),
+                    } });
+                    break;
+                },
+                else => {
+                    try p.advanceWithError(.{ .unexpected = .{
+                        .name = t1.tag.lexeme(),
+                        .sel = t1.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.colon}),
+                    } });
+                    continue;
+                },
+            }
+            p.advance();
+
+            switch (t2.tag) {
+                .identifier,
+                .lb,
+                .lsb,
+                .at,
+                .string,
+                .line_string,
+                .float,
+                .integer,
+                .true,
+                .false,
+                .null,
+                => try p.value(),
+                .rb, .eof => {
+                    try p.addError(.{ .unexpected = .{
+                        .name = t2.tag.lexeme(),
+                        .sel = t2.loc.getSelection(p.code),
+                        .expected = lexemes(&.{.value}),
+                    } });
+                    break;
+                },
+                else => try p.advanceWithError(.{ .unexpected = .{
+                    .name = t2.tag.lexeme(),
+                    .sel = t2.loc.getSelection(p.code),
+                    .expected = lexemes(&.{.value}),
+                } }),
+            }
+        }
+
+        seen_any_fields = true;
+        const t3 = p.peek(0);
+        switch (t3.tag) {
+            .comma => p.advance(),
+            .rb => break,
+            else => {
+                try p.addError(.{ .unexpected = .{
+                    .name = t3.tag.lexeme(),
+                    .sel = t3.loc.getSelection(p.code),
+                    .expected = lexemes(&.{ .comma, .rb }),
+                } });
+            },
+        }
     }
 
-    _ = p.consume(.comma);
     p.comments();
     try p.expect(.rb);
 }
 
-fn peek(p: *Parser, offset: u32) Token {
+fn peek(p: *Parser, offset: u8) Token {
     if (p.fuel == 0) @panic("parser is stuck");
     p.fuel = p.fuel - 1;
 
     const idx = p.tokenizer.idx;
     defer p.tokenizer.idx = idx;
-    var i: u32 = 0;
+    var i: u8 = 0;
     var tok = p.tokenizer.next(p.code);
     while (i < offset) {
         i += 1;
         tok = p.tokenizer.next(p.code);
     }
     return tok;
+}
+
+fn peekLen(p: *Parser, comptime len: u8) [len]Token {
+    if (p.fuel == 0) @panic("parser is stuck");
+    p.fuel = p.fuel - 1;
+
+    const idx = p.tokenizer.idx;
+    defer p.tokenizer.idx = idx;
+    var i: u8 = 0;
+    var toks: [len]Token = undefined;
+    while (i < len) {
+        toks[i] = p.tokenizer.next(p.code);
+        i += 1;
+    }
+    return toks;
 }
 
 fn consume(p: *Parser, tag: Token.Tag) bool {
@@ -954,10 +1342,11 @@ fn lexemes(comptime tags: []const Token.Tag) []const []const u8 {
 
 fn expect(p: *Parser, comptime tag: Token.Tag) !void {
     if (p.consume(tag)) return;
+    const token = p.peek(0);
     try p.addError(.{
         .unexpected = .{
-            .name = p.peek(0).loc.src(p.code),
-            .sel = p.peek(0).loc.getSelection(p.code),
+            .name = token.tag.lexeme(),
+            .sel = token.loc.getSelection(p.code),
             .expected = lexemes(&.{tag}),
         },
     });
@@ -1031,6 +1420,9 @@ fn buildTree(p: *Parser) !Tree {
             .open => |tag| try stack.append(.{ .tag = tag }),
             .close => {
                 const tree = stack.pop();
+                if (stack.items.len == 0) {
+                    log.debug("tree\n{}\n", .{tree.fmt(p.code)});
+                }
                 try stack.items[stack.items.len - 1].children.append(
                     p.gpa,
                     .{ .tree = tree },
@@ -1138,11 +1530,15 @@ test "top level non-struct values" {
     try expectFmtEql(
         \\[true, false, null, "str", 123, {.a = 1, .b = 2}, {"a": 1, "b": 2}]
     );
+    try expectFmtEql(
+        \\Foo {.x = 1}
+    );
 }
 
 test "misc" {
     try expectFmtEql("[]");
-    try expectFmtEql("");
+    // FIXME completions empty file
+    // try expectFmtEql("");
     try expectFmtEql("{}");
 }
 
@@ -1159,7 +1555,7 @@ test "line string" {
 
 test "invalid" {
     try expectFmtEql(".a = ,\n");
-    try expectFmtEql(".a = 1,\n,\n");
+    try expectFmtEql(".a = 1,\n, ");
     try expectFmtEql(
         \\.a = t ,
         \\.b = 1
@@ -1242,13 +1638,22 @@ test "maps" {
     try expectFmtEql(
         \\.foo = Foo {"asdf": 1}
     );
+
+    try expectFmtEql(
+        \\.custom = {
+        \\    "asdf": {.foo = 1, xxx },
+        \\},
+        \\
+    );
+    try expectFmtEql(
+        \\{"asdfa": }, 
+    );
 }
 
 test "tree.check" {
     // i'm leaving this here for now as a way to debug Tree.check()
     // TODO either remove this or turn it into a test helper
     if (true) return error.SkipZigTest;
-    std.testing.log_level = .debug;
     const code =
         \\//! ziggy-schema:  fm.zs
         \\
