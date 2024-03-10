@@ -1,5 +1,8 @@
 const std = @import("std");
 
+/// The full Ziggy parsing functionality is available at build time.
+pub usingnamespace @import("src/root.zig");
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});

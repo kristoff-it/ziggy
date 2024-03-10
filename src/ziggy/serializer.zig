@@ -16,9 +16,6 @@ pub const StringifyOptions = struct {
     };
 };
 
-/// Define `ziggy` namespace in your type and implement function
-/// `pub fn stringify(value: T, opts: StringifyOptions, indent_level: usize, depth:usize, writer: anytype) !void`
-/// to have custom serialization
 pub fn stringify(value: anytype, opts: StringifyOptions, writer: anytype) !void {
     try stringifyInner(value, opts, 0, 0, writer);
 }
@@ -40,7 +37,13 @@ pub fn indent(kind: StringifyOptions.Whitespace, level: usize, writer: anytype) 
     try writer.writeByteNTimes(char, n_chars);
 }
 
-pub fn stringifyInner(value: anytype, opts: StringifyOptions, indent_level: usize, depth: usize, writer: anytype) !void {
+pub fn stringifyInner(
+    value: anytype,
+    opts: StringifyOptions,
+    indent_level: usize,
+    depth: usize,
+    writer: anytype,
+) @TypeOf(writer).Error!void {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
         .Bool,
@@ -69,7 +72,9 @@ pub fn stringifyInner(value: anytype, opts: StringifyOptions, indent_level: usiz
                         ),
                     }
                 },
-                else => @compileError("Expected a slice. Got a non-slice pointer '" ++ @typeName(T) ++ "'"),
+                .One => try stringifyInner(ptr.child, opts, indent_level, depth, writer),
+
+                else => @compileError("Expected a slice or single pointer. Got a many/C pointer '" ++ @typeName(T) ++ "'"),
             }
         },
         .Array => |arr| switch (arr.child) {

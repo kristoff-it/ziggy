@@ -5,7 +5,8 @@ const assert = std.debug.assert;
 const Diagnostic = @import("Diagnostic.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
-const Value = @import("Value.zig");
+const dynamic = @import("dynamic.zig");
+const Value = dynamic.Value;
 
 gpa: std.mem.Allocator,
 code: [:0]const u8,
@@ -98,7 +99,14 @@ pub fn parseValue(
                 u8 => return self.parseBytes(T, first_tok),
                 else => return self.parseArray(T, first_tok),
             },
-            else => @compileError("TODO"),
+            .One => {
+                const v: T = try self.gpa.create(ptr.child);
+                errdefer self.gpa.destroy(v);
+
+                v.* = try self.parseValue(ptr.child, first_tok);
+                return v;
+            },
+            else => @compileError("Unable to parse pointer to many / C: " ++ @typeName(T)),
         },
         .Bool => return self.parseBool(first_tok),
         .Int => return self.parseInt(T, first_tok),
@@ -276,7 +284,7 @@ fn finalizeStruct(
     inline for (info.fields, 0..) |field, idx| {
         if (fields_seen[idx] == null) {
             if (field.default_value) |ptr| {
-                const dv_ptr: *const field.type = @ptrCast(ptr);
+                const dv_ptr: *const field.type = @alignCast(@ptrCast(ptr));
                 @field(val, field.name) = dv_ptr.*;
             } else {
                 return self.addError(.{
@@ -290,7 +298,7 @@ fn finalizeStruct(
     }
 }
 
-fn parseBool(self: *Parser, true_or_false: Token) !bool {
+pub fn parseBool(self: *Parser, true_or_false: Token) !bool {
     try self.mustAny(true_or_false, &.{ .true, .false });
     return switch (true_or_false.tag) {
         .true => true,
@@ -299,7 +307,7 @@ fn parseBool(self: *Parser, true_or_false: Token) !bool {
     };
 }
 
-fn parseInt(self: *Parser, comptime T: type, num: Token) !T {
+pub fn parseInt(self: *Parser, comptime T: type, num: Token) !T {
     assert(@typeInfo(T) == .Int);
 
     try self.must(num, .integer);
@@ -308,7 +316,7 @@ fn parseInt(self: *Parser, comptime T: type, num: Token) !T {
     };
 }
 
-fn parseFloat(self: *Parser, comptime T: type, num: Token) !T {
+pub fn parseFloat(self: *Parser, comptime T: type, num: Token) !T {
     assert(@typeInfo(T) == .Float);
 
     try self.must(num, .float);
@@ -317,7 +325,7 @@ fn parseFloat(self: *Parser, comptime T: type, num: Token) !T {
     };
 }
 
-fn parseBytes(self: *Parser, comptime T: type, token: Token) !T {
+pub fn parseBytes(self: *Parser, comptime T: type, token: Token) !T {
     try self.mustAny(token, &.{ .string, .at, .line_string });
 
     switch (token.tag) {
@@ -336,12 +344,13 @@ fn parseBytes(self: *Parser, comptime T: type, token: Token) !T {
             errdefer str.deinit();
 
             var current = token;
-            while (token.tag == .line_string) {
+            while (current.tag == .line_string) {
                 try str.appendSlice(current.loc.src(self.code)[2..]);
+
+                if (self.peek().tag != .line_string) break;
+
+                try str.append('\n');
                 current = self.next();
-                if (current.tag == .line_string) {
-                    try str.append('\n');
-                }
             }
             return str.toOwnedSlice();
         },
@@ -380,6 +389,11 @@ fn parseArray(self: *Parser, comptime T: type, lsb: Token) !T {
 
 pub fn next(self: *Parser) Token {
     return self.tokenizer.next(self.code);
+}
+
+pub fn peek(self: *Parser) Token {
+    var t = self.tokenizer;
+    return t.next(self.code);
 }
 
 pub fn nextMust(self: *Parser, comptime tag: Token.Tag) !Token {

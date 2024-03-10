@@ -6,13 +6,81 @@ const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
 const serializer = @import("serializer.zig");
 
-pub const ContainerKind = enum { ziggy_struct, map };
+pub const Value = union(enum) {
+    kv: Map(Value),
+    tag: Tag,
+    bytes: []const u8,
+    integer: i64,
+    float: f64,
+    bool: bool,
+    null,
+
+    pub const Tag = struct { name: []const u8, bytes: []const u8 };
+
+    pub const ziggy_options = struct {
+        pub fn stringify(
+            value: Value,
+            opts: serializer.StringifyOptions,
+            indent_level: usize,
+            depth: usize,
+            writer: anytype,
+        ) !void {
+            switch (value) {
+                .bytes => |b| try writer.print("\"{}\"", .{std.zig.fmtEscapes(b)}),
+                .tag => |tag| try writer.print("@{s}(\"{}\")", .{ tag.name, std.zig.fmtEscapes(tag.bytes) }),
+                .kv => |kv| try Map(Value).ziggy_options.stringify(kv, opts, indent_level, depth, writer),
+                inline .bool, .integer, .float => |b| try writer.print("{}", .{b}),
+                .null => try writer.writeAll("null"),
+            }
+        }
+
+        pub fn parse(p: *Parser, first: Token) Parser.Error!Value {
+            switch (first.tag) {
+                .null => return .null,
+                .true, .false => return .{ .bool = try p.parseBool(first) },
+                .integer => return .{ .integer = try p.parseInt(i64, first) },
+                .float => return .{ .float = try p.parseFloat(f64, first) },
+                .string, .line_string => return .{ .bytes = try p.parseBytes([]const u8, first) },
+                .at => {
+                    const name = try p.nextMust(.identifier);
+                    _ = try p.nextMust(.lp);
+                    const str = try p.nextMust(.string);
+                    _ = try p.nextMust(.rp);
+                    return .{
+                        .tag = .{
+                            .name = name.loc.src(p.code),
+                            .bytes = try str.loc.unescape(p.gpa, p.code),
+                        },
+                    };
+                },
+
+                .identifier, .lb => {
+                    return .{ .kv = try Map(Value).ziggy_options.parse(p, first) };
+                },
+                else => {
+                    return p.addError(.{
+                        .syntax = .{
+                            .name = first.loc.src(p.code),
+                            .sel = first.loc.getSelection(p.code),
+                        },
+                    });
+                },
+            }
+        }
+    };
+};
+
+pub const ContainerKind = union(enum) {
+    /// Contains the struct name, if present
+    ziggy_struct: ?[]const u8,
+    map,
+};
 
 /// Thin wrapper over std.HashMapUnmanaged
 pub fn Map(comptime T: type) type {
     return struct {
         kind: ContainerKind,
-        data: std.StringHashMapUnmanaged(T),
+        fields: std.StringHashMapUnmanaged(T),
 
         const Self = @This();
         pub const ziggy_options = struct {
@@ -27,8 +95,9 @@ pub fn Map(comptime T: type) type {
 
                 var has_identifier = false;
                 var tok = first_tok;
+                var struct_name: ?[]const u8 = null;
                 if (tok.tag == .identifier) {
-                    // TODO: check identifier for conformance
+                    struct_name = tok.loc.src(parser.code);
                     tok = parser.next();
                     has_identifier = true;
                 }
@@ -42,15 +111,15 @@ pub fn Map(comptime T: type) type {
                 switch (tok.tag) {
                     else => unreachable,
                     .dot => {
-                        const data = try parseFields(
+                        const fields = try parseFields(
                             parser,
-                            .ziggy_struct,
+                            .{ .ziggy_struct = struct_name },
                             tok,
                             need_closing_rb,
                         );
                         return .{
-                            .kind = .ziggy_struct,
-                            .data = data,
+                            .kind = .{ .ziggy_struct = struct_name },
+                            .fields = fields,
                         };
                     },
                     .string => {
@@ -64,10 +133,10 @@ pub fn Map(comptime T: type) type {
                             });
                         }
 
-                        const data = try parseFields(parser, .map, tok, true);
+                        const fields = try parseFields(parser, .map, tok, true);
                         return .{
                             .kind = .map,
-                            .data = data,
+                            .fields = fields,
                         };
                     },
                 }
@@ -136,16 +205,21 @@ pub fn Map(comptime T: type) type {
             ) !void {
                 const omit_curly = opts.omit_top_level_curly and depth == 0;
                 const indent = if (omit_curly) indent_level else indent_level + 1;
-                const item_count = value.data.count();
+                const item_count = value.fields.count();
                 if (!omit_curly) {
+                    if (value.kind == .ziggy_struct) {
+                        if (value.kind.ziggy_struct) |name| {
+                            try writer.print("{s} ", .{name});
+                        }
+                    }
                     try writer.writeAll("{");
                     try serializer.indent(opts.whitespace, indent, writer);
                 }
-                var data_it = value.data.iterator();
+                var fields_it = value.fields.iterator();
                 var idx: usize = 1;
                 switch (value.kind) {
                     .ziggy_struct => {
-                        while (data_it.next()) |entry| : (idx += 1) {
+                        while (fields_it.next()) |entry| : (idx += 1) {
                             if (opts.whitespace == .minified) {
                                 try writer.print(".{s}=", .{entry.key_ptr.*});
                             } else {
@@ -163,7 +237,7 @@ pub fn Map(comptime T: type) type {
                         }
                     },
                     .map => {
-                        while (data_it.next()) |entry| : (idx += 1) {
+                        while (fields_it.next()) |entry| : (idx += 1) {
                             if (opts.whitespace == .minified) {
                                 try writer.print("\"{s}\":", .{entry.key_ptr.*});
                             } else {
@@ -200,10 +274,10 @@ test "basics" {
     var diag: Diagnostic = .{ .path = null };
     const opts: Parser.ParseOptions = .{ .diagnostic = &diag };
     var result = try Parser.parseLeaky(Map(usize), std.testing.allocator, case, opts);
-    defer result.data.deinit(std.testing.allocator);
+    defer result.fields.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(1, result.data.get("foo"));
-    try std.testing.expectEqual(2, result.data.get("bar"));
+    try std.testing.expectEqual(1, result.fields.get("foo"));
+    try std.testing.expectEqual(2, result.fields.get("bar"));
 }
 
 test "basics 2" {
@@ -217,10 +291,10 @@ test "basics 2" {
     var diag: Diagnostic = .{ .path = null };
     const opts: Parser.ParseOptions = .{ .diagnostic = &diag };
     var result = try Parser.parseLeaky(Map([]const u8), std.testing.allocator, case, opts);
-    defer result.data.deinit(std.testing.allocator);
+    defer result.fields.deinit(std.testing.allocator);
 
-    try std.testing.expectEqualStrings("bar", result.data.get("foo").?);
-    try std.testing.expectEqualStrings("baz", result.data.get("bar").?);
+    try std.testing.expectEqualStrings("bar", result.fields.get("foo").?);
+    try std.testing.expectEqualStrings("baz", result.fields.get("bar").?);
 }
 
 test "map + union" {
@@ -252,12 +326,12 @@ test "map + union" {
     };
 
     var result = try Parser.parseLeaky(Project, std.testing.allocator, case, .{});
-    defer result.dependencies.data.deinit(std.testing.allocator);
-    const gfm = result.dependencies.data.get("gfm") orelse return error.Missing;
+    defer result.dependencies.fields.deinit(std.testing.allocator);
+    const gfm = result.dependencies.fields.get("gfm") orelse return error.Missing;
     try std.testing.expect(gfm == .Remote);
     try std.testing.expectEqualStrings("https://github.com", gfm.Remote.url);
     try std.testing.expectEqualStrings("123...", gfm.Remote.hash);
-    const super = result.dependencies.data.get("super") orelse return error.Missing;
+    const super = result.dependencies.fields.get("super") orelse return error.Missing;
     try std.testing.expect(super == .Local);
     try std.testing.expectEqualStrings("../super", super.Local.path);
 }
@@ -333,9 +407,9 @@ test "map + union stringify" {
         };
     };
 
-    var deps: Map(Project.Dependency) = .{ .kind = .map, .data = .{} };
-    defer deps.data.deinit(std.testing.allocator);
-    try deps.data.put(
+    var deps: Map(Project.Dependency) = .{ .kind = .map, .fields = .{} };
+    defer deps.fields.deinit(std.testing.allocator);
+    try deps.fields.put(
         std.testing.allocator,
         "gfm",
         .{
@@ -345,7 +419,7 @@ test "map + union stringify" {
             },
         },
     );
-    try deps.data.put(
+    try deps.fields.put(
         std.testing.allocator,
         "super",
         .{

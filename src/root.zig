@@ -1,11 +1,13 @@
 pub const Tokenizer = @import("ziggy/Tokenizer.zig");
 pub const Parser = @import("ziggy/Parser.zig");
-pub const Value = @import("ziggy/Value.zig");
+pub const dynamic = @import("ziggy/dynamic.zig");
 pub const Ast = @import("ziggy/Ast.zig");
 pub const Diagnostic = @import("ziggy/Diagnostic.zig");
 pub const parseLeaky = Parser.parseLeaky;
 pub const serializer = @import("ziggy/serializer.zig");
 pub const stringify = serializer.stringify;
+
+pub const frontmatter = @import("ziggy/frontmatter.zig");
 
 pub const lsp_parser: enum { recover, resilient } = .recover;
 pub const LanguageServerAst = switch (lsp_parser) {
@@ -22,7 +24,7 @@ test {
     _ = Diagnostic;
     _ = Ast;
 
-    _ = Value;
+    _ = dynamic;
     _ = serializer;
     _ = @import("ziggy/RecoverAst.zig");
     _ = @import("ziggy/ResilientParser.zig");

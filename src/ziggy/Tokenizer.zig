@@ -128,34 +128,7 @@ pub const Token = struct {
             code: []const u8,
         ) ![]const u8 {
             const s = code[self.start..self.end];
-            const quoteless = s[1 .. s.len - 1];
-
-            for (quoteless) |c| {
-                if (c == '\\') break;
-            } else {
-                return quoteless;
-            }
-
-            const quote = s[0];
-            var out = std.ArrayList(u8).init(gpa);
-            var last = quote;
-            var skipped = false;
-            for (quoteless) |c| {
-                if (c == '\\' and last == '\\' and !skipped) {
-                    skipped = true;
-                    last = c;
-                    continue;
-                }
-                if (c == quote and last == '\\' and !skipped) {
-                    out.items[out.items.len - 1] = quote;
-                    last = c;
-                    continue;
-                }
-                try out.append(c);
-                skipped = false;
-                last = c;
-            }
-            return try out.toOwnedSlice();
+            return std.zig.string_literal.parseAlloc(gpa, s) catch return error.Syntax;
         }
     };
 };
