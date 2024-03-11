@@ -31,6 +31,7 @@ pub const Error = union(enum) {
     missing_field: struct {
         name: []const u8,
     },
+    empty_enum,
     unknown_field,
 };
 
@@ -66,6 +67,9 @@ pub fn format(
 
     switch (self.err) {
         .none => {},
+        .empty_enum => {
+            try out_stream.print("empty enum", .{});
+        },
         .invalid_token => {
             try out_stream.print("invalid token", .{});
             if (!lsp) {

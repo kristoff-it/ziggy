@@ -71,7 +71,7 @@ pub const Suggestion = struct {
         name: []const u8,
         type: []const u8,
         desc: []const u8,
-        snippet: []const u8,
+        snippet: ?[]const u8,
     };
 };
 
@@ -266,7 +266,7 @@ pub fn init(
                     p.parent();
                     try p.next();
                 },
-                .rb => {
+                .rb, .rsb => {
                     try p.addError(.{
                         .syntax = .{
                             .name = p.token.tag.lexeme(),
@@ -1155,9 +1155,31 @@ pub fn check(
                     if (!std.mem.eql(u8, tag_src, rule_src)) {
                         try self.typeMismatch(gpa, diag, rules, elem);
                     } else {
+                        const literal_rule = rules.literals.get(rule_src).?;
                         try hovers.append(.{
                             .loc = doc_node.loc,
-                            .hover = rules.literals.get(rule_src).?.hover,
+                            .hover = literal_rule.hover,
+                        });
+
+                        var cases = std.ArrayList(Suggestion.Completion).init(gpa);
+                        errdefer cases.deinit();
+
+                        var enum_idx = rules.nodes[literal_rule.expr].first_child_id;
+                        while (enum_idx != 0) {
+                            const enum_case = rules.nodes[enum_idx];
+                            try cases.append(.{
+                                .name = enum_case.loc.src(rules.code),
+                                .type = "bytes",
+                                .desc = "",
+                                .snippet = null,
+                            });
+                            enum_idx = enum_case.next_id;
+                        }
+
+                        const string_node = self.nodes[tag_node.next_id];
+                        try suggestions.append(.{
+                            .loc = string_node.loc,
+                            .completions = cases.items,
                         });
                     }
                 },

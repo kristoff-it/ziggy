@@ -200,7 +200,13 @@ pub fn init(
                             node = try node.addChild(&ast.nodes, .identifier);
                             node.loc = token.loc;
                             node = node.parent(&ast.nodes);
-                            token = try ast.nextMustAny(&.{ .identifier, .rb });
+
+                            token = try ast.next();
+                            if (token.tag == .comma) {
+                                token = try ast.nextMustAny(&.{ .identifier, .rb });
+                            } else {
+                                try ast.mustAny(token, &.{.rb});
+                            }
                         }
                         assert(token.tag == .rb);
                         node.loc.end = token.loc.end;
@@ -543,7 +549,7 @@ pub fn render(nodes: []const Node, code: [:0]const u8, w: anytype) !void {
                     }
                 }
 
-                try w.writeAll("},\n");
+                try w.writeAll(" },\n");
             },
         }
 

@@ -72,7 +72,7 @@ pub const Handler = struct {
                     },
                 },
                 .completionProvider = .{
-                    .triggerCharacters = &[_][]const u8{ ".", ":", "@", "]", "/" },
+                    .triggerCharacters = &[_][]const u8{ ".", ":", "@", "\"" },
                 },
                 .hoverProvider = .{ .bool = true },
                 .definitionProvider = .{ .bool = true },

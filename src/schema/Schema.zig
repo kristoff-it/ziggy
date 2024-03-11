@@ -4,6 +4,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const ziggy = @import("../root.zig");
 const Tokenizer = @import("Tokenizer.zig");
+const Token = Tokenizer.Token;
 const Diagnostic = @import("Diagnostic.zig");
 const Ast = @import("Ast.zig");
 const Node = Ast.Node;
@@ -13,7 +14,7 @@ const log = std.log.scoped(.schema);
 root: Rule,
 code: [:0]const u8,
 nodes: []const Ast.Node,
-literals: std.StringHashMapUnmanaged(LiteralRule) = .{},
+literals: std.StringArrayHashMapUnmanaged(LiteralRule) = .{},
 structs: std.StringArrayHashMapUnmanaged(StructRule) = .{},
 
 pub const LiteralRule = struct {
@@ -199,6 +200,54 @@ pub fn init(
     log.debug("beginning analysis", .{});
     try schema.analyzeRule(gpa, schema.root, diagnostic);
     log.debug("root_rule analized", .{});
+
+    for (schema.literals.values()) |v| {
+        const rule = schema.nodes[v.expr];
+        switch (rule.tag) {
+            else => unreachable,
+            .bytes => continue,
+            .enum_definition => {
+                var seen = std.StringHashMap(Token.Loc).init(gpa);
+                defer seen.deinit();
+
+                var enum_idx = rule.first_child_id;
+                if (enum_idx == 0) {
+                    if (diagnostic) |d| {
+                        d.tok = .{
+                            .tag = .enum_kw,
+                            .loc = rule.loc,
+                        };
+                        d.err = .empty_enum;
+                    }
+                    return error.EmptyEnum;
+                }
+
+                while (enum_idx != 0) {
+                    const enum_case = schema.nodes[enum_idx];
+                    assert(enum_case.tag == .identifier);
+                    const gop = try seen.getOrPut(enum_case.loc.src(code));
+                    if (gop.found_existing) {
+                        if (diagnostic) |d| {
+                            d.tok = .{
+                                .tag = .identifier,
+                                .loc = enum_case.loc,
+                            };
+                            d.err = .{
+                                .duplicate_field = .{
+                                    .first_loc = gop.value_ptr.*,
+                                },
+                            };
+                        }
+                        return error.DuplicateField;
+                    }
+
+                    gop.value_ptr.* = enum_case.loc;
+                    enum_idx = enum_case.next_id;
+                }
+            },
+        }
+    }
+
     for (schema.structs.keys(), schema.structs.values()) |s_name, s| {
         for (s.fields.keys(), s.fields.values()) |f_name, f| {
             log.debug("analyzeRule '{s}.{s}'", .{ s_name, f_name });

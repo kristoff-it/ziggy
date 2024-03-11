@@ -480,6 +480,12 @@ pub const Tree = struct {
         return RecoverAst.findSchemaPathFromLoc(schema_line.loc, bytes);
     }
 
+    pub fn hoverForOffset(ast: Tree, offset: u32) ?[]const u8 {
+        _ = ast;
+        _ = offset;
+        return null;
+    }
+
     pub fn completionsForOffset(
         ast: Tree,
         offset: u32,
