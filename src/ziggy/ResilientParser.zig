@@ -82,7 +82,6 @@ pub const Tree = struct {
         diag: ?*ziggy.Diagnostic,
         ziggy_code: [:0]const u8,
     ) !void {
-
         // TODO: check ziggy file against this ruleset
         var stack = std.ArrayList(CheckItem).init(gpa);
         defer stack.deinit();
@@ -304,12 +303,21 @@ pub const Tree = struct {
                                                 .expected = &.{},
                                             },
                                         });
-                                        continue;
                                     },
                                 },
                             }
+                            // log.debug("field tree {}", .{field.tree.fmt(ziggy_code)});
                             assert(field.tree.tag == .struct_field);
-                            if (field.tree.children.items.len < 2) continue;
+                            if (field.tree.children.items.len < 2) {
+                                try suggestions.append(.{
+                                    .loc = .{
+                                        .start = field.loc().start,
+                                        .end = field.loc().end,
+                                    },
+                                });
+                                continue;
+                            }
+
                             const field_name_node = field.tree.children.items[1];
                             if (field_name_node != .token) continue;
                             const field_name = field_name_node.token.loc.src(ziggy_code);
@@ -389,7 +397,10 @@ pub const Tree = struct {
                                     });
                                 }
                             }
-                            log.debug("completions {} suggestions {}", .{ completions.items.len, suggestions.items[suggestions_start..].len });
+                            log.debug(
+                                "completions {} suggestions {} suggestions_start {}",
+                                .{ completions.items.len, suggestions.items[suggestions_start..].len, suggestions_start },
+                            );
                             for (suggestions.items[suggestions_start..]) |*s| {
                                 s.completions = completions.items;
                             }
