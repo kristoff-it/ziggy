@@ -9,7 +9,7 @@ pub const stringify = serializer.stringify;
 
 pub const frontmatter = @import("ziggy/frontmatter.zig");
 
-pub const lsp_parser: enum { recover, resilient } = .recover;
+pub const lsp_parser: enum { recover, resilient } = .resilient;
 pub const LanguageServerAst = switch (lsp_parser) {
     .recover => @import("ziggy/RecoverAst.zig"),
     .resilient => @import("ziggy/ResilientParser.zig"),
