@@ -83,15 +83,33 @@ const Converter = struct {
         token: std.json.Token,
         rule: ziggy.schema.Schema.Rule,
     ) anyerror!void {
+        var sub_rule = rule;
+        const r = c.schema.nodes[rule.node];
+        if (r.tag == .optional) {
+            if (token == .null) {
+                try c.out.writeAll("null");
+                return;
+            }
+            sub_rule = .{ .node = r.first_child_id };
+        }
         switch (token) {
             else => @panic("TODO"),
             .object_end, .array_end => unreachable,
-            .object_begin => try c.convertJsonObject(rule),
-            .array_begin => try c.convertJsonArray(rule),
-            .string => |s| try c.convertJsonString(s, rule),
-            .number => |n| try c.convertJsonNumber(n, rule),
-            .true, .false => try c.convertJsonBool(token, rule),
-            .null => try c.convertJsonNull(rule),
+            .object_begin => try c.convertJsonObject(sub_rule),
+            .array_begin => try c.convertJsonArray(sub_rule),
+            .string => |s| try c.convertJsonString(s, sub_rule),
+            .number => |n| try c.convertJsonNumber(n, sub_rule),
+            .true, .false => try c.convertJsonBool(token, sub_rule),
+            .null => {
+                const rule_src = c.schema.nodes[r.first_child_id].loc.src(c.schema.code);
+                return c.addError(.{
+                    .type_mismatch = .{
+                        .name = "json_null",
+                        .sel = c.jsonSel(),
+                        .expected = rule_src,
+                    },
+                });
+            },
         }
     }
 
@@ -100,6 +118,7 @@ const Converter = struct {
         const rule_src = r.loc.src(c.schema.code);
         const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
         switch (r.tag) {
+            .optional => unreachable,
             .map, .any, .unknown => {
                 try c.out.writeAll("{");
                 var token = try c.next();
@@ -239,6 +258,7 @@ const Converter = struct {
         const rule_src = r.loc.src(c.schema.code);
         const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
         switch (r.tag) {
+            .optional => unreachable,
             .array, .any => {
                 try c.out.writeAll("[");
                 var token = try c.next();
@@ -268,11 +288,12 @@ const Converter = struct {
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         switch (r.tag) {
+            .optional => unreachable,
             .bytes, .any, .unknown => {
                 try c.out.print("\"{}\"", .{std.zig.fmtEscapes(str)});
             },
             .tag => {
-                try c.out.print("{s}(\"{})\"", .{ rule_src, std.zig.fmtEscapes(str) });
+                try c.out.print("{s}(\"{}\")", .{ rule_src, std.zig.fmtEscapes(str) });
             },
             else => {
                 return c.addError(.{
@@ -294,6 +315,7 @@ const Converter = struct {
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         switch (r.tag) {
+            .optional => unreachable,
             .int, .float, .any, .unknown => {
                 try c.out.print("{s}", .{ns});
             },
@@ -317,6 +339,7 @@ const Converter = struct {
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         switch (r.tag) {
+            .optional => unreachable,
             .int, .float, .any, .unknown => {
                 try c.out.print("{s}", .{num});
             },
@@ -341,6 +364,7 @@ const Converter = struct {
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         switch (r.tag) {
+            .optional => unreachable,
             .bool, .any, .unknown => {
                 try c.out.print("{s}", .{@tagName(token)});
             },
@@ -348,28 +372,6 @@ const Converter = struct {
                 return c.addError(.{
                     .type_mismatch = .{
                         .name = "json_bool",
-                        .sel = c.jsonSel(),
-                        .expected = rule_src,
-                    },
-                });
-            },
-        }
-    }
-
-    fn convertJsonNull(
-        c: *Converter,
-        rule: ziggy.schema.Schema.Rule,
-    ) !void {
-        const r = c.schema.nodes[rule.node];
-        const rule_src = r.loc.src(c.schema.code);
-        switch (r.tag) {
-            .optional, .any, .unknown => {
-                try c.out.writeAll("null");
-            },
-            else => {
-                return c.addError(.{
-                    .type_mismatch = .{
-                        .name = "json_null",
                         .sel = c.jsonSel(),
                         .expected = rule_src,
                     },

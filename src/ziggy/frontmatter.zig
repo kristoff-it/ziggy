@@ -39,8 +39,7 @@ pub fn Parser(comptime Header: type) type {
             };
 
             var diag: ziggy.Diagnostic = .{ .path = path };
-            const header = ziggy.parseLeaky(Header, gpa, code, .{ .diagnostic = &diag }) catch |err| {
-                log.debug("frontmatter parsing error: {s}", .{@errorName(err)});
+            const header = ziggy.parseLeaky(Header, gpa, code, .{ .diagnostic = &diag }) catch {
                 return .{ .ziggy_error = diag };
             };
 

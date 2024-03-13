@@ -72,7 +72,7 @@ pub fn stringifyInner(
                         ),
                     }
                 },
-                .One => try stringifyInner(ptr.child, opts, indent_level, depth, writer),
+                .One => try stringifyInner(value.*, opts, indent_level, depth, writer),
 
                 else => @compileError("Expected a slice or single pointer. Got a many/C pointer '" ++ @typeName(T) ++ "'"),
             }
@@ -117,7 +117,7 @@ pub fn stringifyInner(
             }
         },
 
-        else => @panic("TODO"),
+        else => @panic("TODO: implement support for " ++ @typeName(T)),
     }
 }
 

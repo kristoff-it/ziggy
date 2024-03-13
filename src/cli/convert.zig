@@ -189,7 +189,7 @@ fn convertToZiggy(
         },
         .json => {
             const bytes = json.toZiggy(gpa, schema, &diag, r) catch {
-                std.debug.print("{}\n", .{diag});
+                std.debug.print("{} arstasr\n", .{diag});
                 std.process.exit(1);
             };
 
@@ -525,15 +525,30 @@ fn renderJsonValue(
     schema: ziggy.schema.Schema,
     w: anytype,
 ) anyerror!void {
+    var sub_rule = rule;
+    const r = schema.nodes[rule.node];
+    if (r.tag == .optional) {
+        if (value == null) {
+            try w.writeAll("null");
+            return;
+        }
+        sub_rule = .{ .node = r.first_child_id };
+    }
     switch (value) {
-        .object => |o| try renderJsonObject(o, rule, schema, w),
-        .array => |a| try renderJsonArray(a, rule, schema, w),
-        .string => |s| try renderJsonString(s, rule, schema, w),
-        .number_string => |ns| try renderJsonNumberString(ns, rule, schema, w),
-        .float => |f| try renderJsonFloat(f, rule, schema, w),
-        .integer => |i| try renderJsonInteger(i, rule, schema, w),
-        .bool => |b| try renderJsonBool(b, rule, schema, w),
-        .null => try renderJsonNull(rule, schema, w),
+        .object => |o| try renderJsonObject(o, sub_rule, schema, w),
+        .array => |a| try renderJsonArray(a, sub_rule, schema, w),
+        .string => |s| try renderJsonString(s, sub_rule, schema, w),
+        .number_string => |ns| try renderJsonNumberString(ns, sub_rule, schema, w),
+        .float => |f| try renderJsonFloat(f, sub_rule, schema, w),
+        .integer => |i| try renderJsonInteger(i, sub_rule, schema, w),
+        .bool => |b| try renderJsonBool(b, sub_rule, schema, w),
+        .null => {
+            const rule_src = schema.nodes[r.first_child_id].loc.src(schema.code);
+            std.debug.print("error: type mismatch, expected '{s}', found 'null'\n", .{
+                rule_src,
+            });
+            std.process.exit(1);
+        },
     }
 }
 
@@ -547,6 +562,7 @@ fn renderJsonObject(
     const rule_src = r.loc.src(schema.code);
     const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
     switch (r.tag) {
+        .optional => unreachable,
         .map, .any => {
             try w.writeAll("{");
             for (obj.keys(), obj.values()) |k, v| {
@@ -600,6 +616,7 @@ fn renderJsonArray(
     const rule_src = r.loc.src(schema.code);
     const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
     switch (r.tag) {
+        .optional => unreachable,
         .array, .any => {
             try w.writeAll("[");
             for (array.items) |v| {
@@ -625,6 +642,7 @@ fn renderJsonString(
     const r = schema.nodes[rule.node];
     const rule_src = r.loc.src(schema.code);
     switch (r.tag) {
+        .optional => unreachable,
         .bytes, .any => {
             try w.print("\"{}\"", .{std.zig.fmtEscapes(str)});
         },
@@ -646,6 +664,7 @@ fn renderJsonNumberString(
     const r = schema.nodes[rule.node];
     const rule_src = r.loc.src(schema.code);
     switch (r.tag) {
+        .optional => unreachable,
         .int, .float, .any => {
             try w.print("{s}", .{ns});
         },
@@ -667,6 +686,7 @@ fn renderJsonFloat(
     const r = schema.nodes[rule.node];
     const rule_src = r.loc.src(schema.code);
     switch (r.tag) {
+        .optional => unreachable,
         .float, .any => {
             try w.print("{}", .{num});
         },
@@ -688,6 +708,7 @@ fn renderJsonInteger(
     const r = schema.nodes[rule.node];
     const rule_src = r.loc.src(schema.code);
     switch (r.tag) {
+        .optional => unreachable,
         .int, .float, .any => {
             try w.print("{}", .{num});
         },
@@ -709,31 +730,12 @@ fn renderJsonBool(
     const r = schema.nodes[rule.node];
     const rule_src = r.loc.src(schema.code);
     switch (r.tag) {
+        .optional => unreachable,
         .bool, .any => {
             try w.print("{}", .{b});
         },
         else => {
             std.debug.print("error: type mismatch, expected '{s}', found 'bool'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonNull(
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: anytype,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    switch (r.tag) {
-        .optional, .any => {
-            try w.writeAll("null");
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'null'\n", .{
                 rule_src,
             });
             std.process.exit(1);

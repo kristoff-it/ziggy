@@ -76,11 +76,11 @@ pub const ContainerKind = union(enum) {
     map,
 };
 
-/// Thin wrapper over std.HashMapUnmanaged
+/// Thin wrapper over std.StringArrayHashMapUnmanaged
 pub fn Map(comptime T: type) type {
     return struct {
-        kind: ContainerKind,
-        fields: std.StringHashMapUnmanaged(T),
+        kind: ContainerKind = .map,
+        fields: std.StringArrayHashMapUnmanaged(T) = .{},
 
         const Self = @This();
         pub const ziggy_options = struct {
@@ -106,10 +106,11 @@ pub fn Map(comptime T: type) type {
                     tok = parser.next();
                 }
 
-                try parser.mustAny(tok, &.{ .dot, .string });
+                try parser.mustAny(tok, &.{ .dot, .string, .rb });
 
                 switch (tok.tag) {
                     else => unreachable,
+                    .rb => return .{},
                     .dot => {
                         const fields = try parseFields(
                             parser,
@@ -147,8 +148,8 @@ pub fn Map(comptime T: type) type {
                 kind: ContainerKind,
                 first_tok: Token,
                 need_closing_rb: bool,
-            ) Parser.Error!std.StringHashMapUnmanaged(T) {
-                var result: std.StringHashMapUnmanaged(T) = .{};
+            ) Parser.Error!std.StringArrayHashMapUnmanaged(T) {
+                var result: std.StringArrayHashMapUnmanaged(T) = .{};
                 errdefer result.deinit(parser.gpa);
 
                 var tok = first_tok;

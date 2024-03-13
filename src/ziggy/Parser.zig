@@ -332,7 +332,6 @@ pub fn parseBytes(self: *Parser, comptime T: type, token: Token) !T {
         .string => return token.loc.unescape(self.gpa, self.code),
         .at => {
             _ = try self.nextMust(.identifier);
-            // todo identifier validation
             _ = try self.nextMust(.lp);
             const str = try self.nextMust(.string);
             _ = try self.nextMust(.rp);
