@@ -913,7 +913,7 @@ pub fn check(
             break :blk &.{};
         };
     }
-
+    if (self.nodes.len < 2) return; // skip empty files
     var doc_root_val: u32 = 1;
     if (self.nodes[1].tag == .top_comment) {
         doc_root_val = self.nodes[1].next_id;

@@ -18,11 +18,13 @@ const Rule = ziggy.schema.Schema.Rule;
 const log = std.log.scoped(.resilient_parser);
 const RecoverAst = @import("RecoverAst.zig");
 const Suggestion = RecoverAst.Suggestion;
+const Hover = RecoverAst.Hover;
 
 pub const Tree = struct {
     tag: Tree.Tag,
     children: std.ArrayListUnmanaged(Child) = .{},
     suggestions: []const Suggestion = &.{},
+    hovers: []const Hover = &.{},
 
     pub const Tag = enum {
         err,
@@ -55,8 +57,13 @@ pub const Tree = struct {
     }
 
     pub fn deinit(t: *Tree, gpa: mem.Allocator) void {
+        // this method is only used in tests where allocator is a gpa.  it can
+        // be removed if tests are updated to use an arena.
         for (t.children.items) |*child| child.deinit(gpa);
         t.children.deinit(gpa);
+        for (t.suggestions) |s| gpa.free(s.completions);
+        gpa.free(t.suggestions);
+        gpa.free(t.hovers);
     }
 
     pub fn fmt(t: Tree, code: [:0]const u8) TreeFmt {
@@ -82,15 +89,19 @@ pub const Tree = struct {
         diag: ?*ziggy.Diagnostic,
         ziggy_code: [:0]const u8,
     ) !void {
-
         // TODO: check ziggy file against this ruleset
         var stack = std.ArrayList(CheckItem).init(gpa);
         defer stack.deinit();
 
         var suggestions = std.ArrayList(Suggestion).init(gpa);
+        var hovers = std.ArrayList(Hover).init(gpa);
         defer {
             doc.suggestions = suggestions.toOwnedSlice() catch blk: {
                 suggestions.deinit();
+                break :blk &.{};
+            };
+            doc.hovers = hovers.toOwnedSlice() catch blk: {
+                hovers.deinit();
                 break :blk &.{};
             };
         }
@@ -100,16 +111,16 @@ pub const Tree = struct {
             const items = doc.children.items;
             log.debug("check() items len {}", .{items.len});
             if (items.len == 0) return;
-            log.debug("check() first_child={s}", .{items[0].loc().src(ziggy_code)});
             while (doc_root_val < items.len and
                 items[doc_root_val] == .token and
                 items[doc_root_val].token.tag == .top_comment_line) : (doc_root_val += 1)
             {}
 
-            log.debug("check() doc_root_val {} children {} returning {}", .{ doc_root_val, items.len, doc_root_val >= items.len });
-            if (doc_root_val >= items.len) return;
+            if (doc_root_val >= items.len) {
+                log.debug("check() skipping empty file", .{});
+                return;
+            }
             assert(doc_root_val < items.len);
-            log.debug("check() root tag {} children {any}", .{ items[doc_root_val].tree.tag, items[doc_root_val].tree.children.items });
             try stack.append(.{
                 .rule = rules.root,
                 .child = items[doc_root_val],
@@ -304,12 +315,21 @@ pub const Tree = struct {
                                                 .expected = &.{},
                                             },
                                         });
-                                        continue;
                                     },
                                 },
                             }
+                            // log.debug("field tree {}", .{field.tree.fmt(ziggy_code)});
+                            if (field.tree.children.items.len < 2) {
+                                try suggestions.append(.{
+                                    .loc = .{
+                                        .start = field.loc().start,
+                                        .end = field.loc().end,
+                                    },
+                                });
+                                continue;
+                            }
+
                             assert(field.tree.tag == .struct_field);
-                            if (field.tree.children.items.len < 2) continue;
                             const field_name_node = field.tree.children.items[1];
                             if (field_name_node != .token) continue;
                             const field_name = field_name_node.token.loc.src(ziggy_code);
@@ -335,6 +355,10 @@ pub const Tree = struct {
                             // diagnostic errors produced.  but they appear as
                             // normal struct_field trees here.
                             try seen_fields.put(field_name, {});
+                            try hovers.append(.{
+                                .loc = .{ .start = field.loc().start, .end = field_name_node.token.loc.end },
+                                .hover = field_rule.help.doc,
+                            });
                             // guard against incomplete fields / errors
                             if (field.tree.children.items.len > 3) {
                                 try stack.append(.{
@@ -389,7 +413,10 @@ pub const Tree = struct {
                                     });
                                 }
                             }
-                            log.debug("completions {} suggestions {}", .{ completions.items.len, suggestions.items[suggestions_start..].len });
+                            log.debug(
+                                "completions {} suggestions {} suggestions_start {}",
+                                .{ completions.items.len, suggestions.items[suggestions_start..].len, suggestions_start },
+                            );
                             for (suggestions.items[suggestions_start..]) |*s| {
                                 s.completions = completions.items;
                             }
@@ -400,18 +427,48 @@ pub const Tree = struct {
                 .tag => switch (tree.tag) {
                     .tag_string => {
                         // tag_string tree has children '@', ident, '(', string, ')'
-                        if (tree.children.items.len != 1 or
-                            tree.children.items[0] != .tree or
-                            tree.children.items[0].tree.children.items.len < 2)
-                        {
+                        // log.debug("tag_string {}", .{tree.fmt(ziggy_code)});
+                        if (tree.children.items.len < 2) {
                             try typeMismatch(gpa, rules, diag, elem, ziggy_code);
                             continue;
                         }
-                        const tag_src = tree.children.items[0].tree.children
-                            .items[1].loc().src(ziggy_code);
+                        const tag_src = tree.children.items[1].token.loc.src(ziggy_code);
                         const rule_src = rule.loc.src(rules.code)[1..];
-                        if (!std.mem.eql(u8, tag_src, rule_src))
+                        // log.debug("tag_src {s} rule_src {s}", .{ tag_src, rule_src });
+                        if (!std.mem.eql(u8, tag_src, rule_src)) {
                             try typeMismatch(gpa, rules, diag, elem, ziggy_code);
+                        } else {
+                            const literal_rule = rules.literals.get(rule_src).?;
+                            try hovers.append(.{
+                                .loc = tree.loc(),
+                                .hover = literal_rule.hover,
+                            });
+
+                            var cases = std.ArrayList(Suggestion.Completion).init(gpa);
+                            errdefer cases.deinit();
+
+                            var enum_idx = rules.nodes[literal_rule.expr].first_child_id;
+                            while (enum_idx != 0) {
+                                const enum_case = rules.nodes[enum_idx];
+                                try cases.append(.{
+                                    .name = enum_case.loc.src(rules.code),
+                                    .type = "bytes",
+                                    .desc = "",
+                                    .snippet = null,
+                                });
+                                enum_idx = enum_case.next_id;
+                            }
+
+                            var cloc = tree.children.items[0].loc();
+                            for (tree.children.items[1..]) |child| {
+                                cloc = child.loc();
+                                if (child == .token and child.token.tag == .string) break;
+                            }
+                            try suggestions.append(.{
+                                .loc = cloc,
+                                .completions = cases.items,
+                            });
+                        }
                     },
                     else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
                 },
@@ -481,8 +538,11 @@ pub const Tree = struct {
     }
 
     pub fn hoverForOffset(ast: Tree, offset: u32) ?[]const u8 {
-        _ = ast;
-        _ = offset;
+        for (ast.hovers) |s| {
+            if (s.loc.start <= offset and s.loc.end >= offset) {
+                return s.hover;
+            }
+        }
         return null;
     }
 
@@ -1098,13 +1158,12 @@ fn value(p: *Parser) Diagnostic.Error.ZigError!void {
 
 /// tag_string = '@' identifier '(' string ')'
 fn tagString(p: *Parser) !void {
-    const m = p.open();
+    // mark open/close is handled in value()
     try p.expect(.at);
     try p.expect(.identifier);
     try p.expect(.lp);
     try p.expect(.string);
     try p.expect(.rp);
-    _ = p.close(m, .tag_string);
 }
 
 /// array = '[' (array_elem,  (',' array_elem)*)? ','? comment* ']'

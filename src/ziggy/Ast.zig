@@ -554,6 +554,7 @@ pub fn check(
     defer stack.deinit();
 
     var doc_root_val: u32 = 1;
+    if (doc.nodes.len < 2) return; // skip empty files
     if (doc.nodes[1].tag == .top_comment) {
         doc_root_val = doc.nodes[1].next_id;
     }
@@ -819,6 +820,7 @@ const RenderMode = enum { horizontal, vertical };
 const ContainerLayout = enum { @"struct", map };
 pub fn render(nodes: []const Node, code: [:0]const u8, w: anytype) anyerror!void {
     var value_idx: u32 = 1;
+    if (value_idx >= nodes.len) return; // skip empty files
     const value = nodes[value_idx];
     if (value.tag == .top_comment) {
         value_idx = value.next_id;
