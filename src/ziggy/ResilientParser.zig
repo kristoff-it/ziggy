@@ -137,20 +137,7 @@ pub const Tree = struct {
                 .{ @tagName(rule.tag), rule.loc.src(rules.code), elem.child },
             );
             if (tree.tag == .err) {
-                // TODO when to add error. what are we expecting? is this a
-                //      good place to handle completions for empty file?
-
-                // try addErrorCheck(gpa, diag, .{
-                //     .unexpected = .{
-                //         .name = "error",
-                //         .sel = tree.loc().getSelection(ziggy_code),
-                //         .expected = switch (rule.tag) {
-                //             .struct_field => lexemes(&.{.eof}),
-                //             else => &.{},
-                //         },
-                //     },
-                // });
-                log.debug("TODO handle err tree: {}", .{tree.fmt(ziggy_code)});
+                // assume error has already been reported. nothing to do here.
                 continue;
             }
 
@@ -246,29 +233,29 @@ pub const Tree = struct {
                         }
 
                         const struct_name = struct_name_node.token.loc.src(ziggy_code);
-
                         var ident_id = rule.first_child_id;
                         assert(ident_id != 0);
                         while (ident_id != 0) {
                             const id_rule = rules.nodes[ident_id];
-                            const id_rule_src = id_rule.loc.src(ziggy_code);
+                            defer ident_id = id_rule.next_id;
+                            const id_rule_src = id_rule.loc.src(rules.code);
                             if (std.mem.eql(u8, struct_name, id_rule_src)) {
                                 try stack.append(.{
                                     .rule = .{ .node = ident_id },
                                     .child = elem.child,
                                 });
-                                continue;
+                                break;
                             }
-                            ident_id = id_rule.next_id;
+                        } else {
+                            // no match
+                            try addErrorCheck(gpa, diag, .{
+                                .unknown_struct_name = .{
+                                    .name = struct_name,
+                                    .sel = struct_name_node.token.loc.getSelection(ziggy_code),
+                                    .expected = rule_src,
+                                },
+                            });
                         }
-                        // no match
-                        try addErrorCheck(gpa, diag, .{
-                            .unknown_struct_name = .{
-                                .name = struct_name,
-                                .sel = struct_name_node.token.loc.getSelection(ziggy_code),
-                                .expected = rule_src,
-                            },
-                        });
                     },
                     else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
                 },
@@ -289,36 +276,13 @@ pub const Tree = struct {
 
                         const suggestions_start = suggestions.items.len;
                         log.debug("tree with {} children", .{tree.children.items.len});
+
                         while (child_id < tree.children.items.len) : (child_id += 1) {
                             const field = tree.children.items[child_id];
-                            // log.debug("field {}\nchildren {any}", .{ field, field.tree.children.items });
-                            switch (field) {
-                                .token => |t| {
-                                    // TODO more descriptive reporting
-                                    if (t.tag != .comma)
-                                        try addErrorCheck(gpa, diag, .{
-                                            .unknown_field = .{
-                                                .name = field.token.loc.src(ziggy_code),
-                                                .sel = field.token.loc.getSelection(ziggy_code),
-                                            },
-                                        });
-                                    continue;
-                                },
-                                .tree => |field_tree| switch (field_tree.tag) {
-                                    .struct_field => {},
-                                    else => {
-                                        // TODO more descriptive reporting
-                                        try addErrorCheck(gpa, diag, .{
-                                            .unknown_struct_name = .{
-                                                .name = field_tree.loc().src(ziggy_code),
-                                                .sel = field_tree.loc().getSelection(ziggy_code),
-                                                .expected = &.{},
-                                            },
-                                        });
-                                    },
-                                },
-                            }
-                            // log.debug("field tree {}", .{field.tree.fmt(ziggy_code)});
+                            // valid tokens here are either lb, comma or rb.
+                            // we expect syntax errors are already reported.
+                            if (field == .token) continue;
+
                             if (field.tree.children.items.len < 2) {
                                 try suggestions.append(.{
                                     .loc = .{
@@ -413,10 +377,6 @@ pub const Tree = struct {
                                     });
                                 }
                             }
-                            log.debug(
-                                "completions {} suggestions {} suggestions_start {}",
-                                .{ completions.items.len, suggestions.items[suggestions_start..].len, suggestions_start },
-                            );
                             for (suggestions.items[suggestions_start..]) |*s| {
                                 s.completions = completions.items;
                             }
@@ -427,14 +387,13 @@ pub const Tree = struct {
                 .tag => switch (tree.tag) {
                     .tag_string => {
                         // tag_string tree has children '@', ident, '(', string, ')'
-                        // log.debug("tag_string {}", .{tree.fmt(ziggy_code)});
                         if (tree.children.items.len < 2) {
                             try typeMismatch(gpa, rules, diag, elem, ziggy_code);
                             continue;
                         }
+
                         const tag_src = tree.children.items[1].token.loc.src(ziggy_code);
                         const rule_src = rule.loc.src(rules.code)[1..];
-                        // log.debug("tag_src {s} rule_src {s}", .{ tag_src, rule_src });
                         if (!std.mem.eql(u8, tag_src, rule_src)) {
                             try typeMismatch(gpa, rules, diag, elem, ziggy_code);
                         } else {
@@ -800,30 +759,7 @@ fn document(p: *Parser) !void {
 
     const token = p.peek(0);
     switch (token.tag) {
-        .eof => {
-            // FIXME: remove this hack. this was added trying to get
-            // completions for a file which contains only a top schema line
-            // to appear when a '.' is typed. this is an attempt to appease
-            // check() which can only add completions when there is a
-            // top_level_struct tree with a struct_field child
-
-            // idea 1, abandoned
-            // add a dummy err tree
-            // const m2 = p.open();
-            // _ = p.close(m2, .err);
-
-            // idea 2
-            const m2 = p.open();
-            const m3 = p.open();
-            // these 4 events allow check() to get into completion code path
-            // but the completions still don't appear when a '.' is typed
-            try p.events.append(p.gpa, .advance);
-            try p.events.append(p.gpa, .advance);
-            try p.events.append(p.gpa, .advance);
-            try p.events.append(p.gpa, .advance);
-            _ = p.close(m3, .struct_field);
-            _ = p.close(m2, .top_level_struct);
-        },
+        .eof => {},
         .dot, .comment => try p.topLevelStruct(),
         .identifier,
         .lb,
