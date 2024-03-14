@@ -459,15 +459,28 @@ pub const Tree = struct {
                                 enum_idx = enum_case.next_id;
                             }
 
-                            var cloc = tree.children.items[0].loc();
+                            var string_loc = tree.children.items[0].loc();
                             for (tree.children.items[1..]) |child| {
-                                cloc = child.loc();
+                                string_loc = child.loc();
                                 if (child == .token and child.token.tag == .string) break;
                             }
                             try suggestions.append(.{
-                                .loc = cloc,
+                                .loc = string_loc,
                                 .completions = cases.items,
                             });
+
+                            // validate enum value
+                            var string_src = string_loc.src(ziggy_code);
+                            if (string_src.len <= 2) {
+                                try typeMismatch(gpa, rules, diag, elem, ziggy_code);
+                                continue;
+                            }
+                            string_src = string_src[1 .. string_src.len - 1];
+                            const found = for (cases.items) |completion| {
+                                if (mem.eql(u8, completion.name, string_src))
+                                    break true;
+                            } else false;
+                            if (!found) try typeMismatch(gpa, rules, diag, elem, ziggy_code);
                         }
                     },
                     else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
