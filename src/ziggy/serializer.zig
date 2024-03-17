@@ -256,7 +256,7 @@ fn stringifyUnion(writer: anytype, un: anytype, indent_level: usize, depth: usiz
                         .alignment = @alignOf(field.type),
                     };
                     const St = @Type(.{ .Struct = .{
-                        .layout = .Auto,
+                        .layout = .auto,
                         .fields = &.{value_field},
                         .decls = &.{},
                         .is_tuple = false,
