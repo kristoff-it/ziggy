@@ -1,5 +1,5 @@
 # Ziggy
-A Zig-flavored JSON / YAML / TOML replacement.
+A data serialization language for expressing clear API messages, config files, etc.
 
 ## Status
 Alpha, using Ziggy now means participating in its development.
