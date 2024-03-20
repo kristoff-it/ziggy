@@ -276,13 +276,35 @@ pub const Tree = struct {
 
                         const suggestions_start = suggestions.items.len;
                         log.debug("tree with {} children", .{tree.children.items.len});
-
+                        var struct_end_loc: ?Token.Loc = null;
                         while (child_id < tree.children.items.len) : (child_id += 1) {
                             const field = tree.children.items[child_id];
-                            // valid tokens here are either lb, comma or rb.
-                            // we expect syntax errors are already reported.
-                            if (field == .token) continue;
-
+                            // log.debug("field {}", .{field});
+                            switch (field) {
+                                .token => |t| {
+                                    struct_end_loc = t.loc;
+                                    switch (t.tag) {
+                                        .comma, .lb, .rb => {},
+                                        else => try addErrorCheck(gpa, diag, .{
+                                            .unknown_field = .{
+                                                .name = field.token.loc.src(ziggy_code),
+                                                .sel = field.token.loc.getSelection(ziggy_code),
+                                            },
+                                        }),
+                                    }
+                                    continue;
+                                },
+                                .tree => |field_tree| switch (field_tree.tag) {
+                                    .struct_field => {},
+                                    else => try addErrorCheck(gpa, diag, .{
+                                        .unknown_field = .{
+                                            .name = field_tree.loc().src(ziggy_code),
+                                            .sel = field_tree.loc().getSelection(ziggy_code),
+                                        },
+                                    }),
+                                },
+                            }
+                            // log.debug("field tree {}", .{field.tree.fmt(ziggy_code)});
                             if (field.tree.children.items.len < 2) {
                                 try suggestions.append(.{
                                     .loc = .{
@@ -363,11 +385,11 @@ pub const Tree = struct {
                                             .snippet = v.help.snippet,
                                         });
                                     }
-                                    // FIXME: this loc isn't correct for nested
-                                    // structs, only top level.  figure out how
-                                    // to get parent loc.
-                                    var dloc = doc.loc();
-                                    dloc.start = dloc.end -| 1;
+                                    const dloc = struct_end_loc orelse loc: {
+                                        var l = doc.loc();
+                                        l.start = l.end -| 1;
+                                        break :loc l;
+                                    };
                                     assert(dloc.start <= dloc.end);
                                     try addErrorCheck(gpa, diag, .{
                                         .missing_field = .{
