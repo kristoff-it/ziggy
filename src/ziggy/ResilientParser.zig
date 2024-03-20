@@ -215,6 +215,15 @@ pub const Tree = struct {
                             }
                         }
                     },
+                    // the empty literal '{}' is parsed as a struct
+                    .@"struct" => {
+                        if (tree.children.items.len == 2 and
+                            tree.children.items[0] == .token and
+                            tree.children.items[0].token.tag == .lb and
+                            tree.children.items[1] == .token and
+                            tree.children.items[1].token.tag == .rb)
+                        {} else try typeMismatch(gpa, rules, diag, elem, ziggy_code);
+                    },
                     else => try typeMismatch(gpa, rules, diag, elem, ziggy_code),
                 },
                 .struct_union => switch (tree.tag) {
@@ -1050,14 +1059,11 @@ fn value(p: *Parser) Diagnostic.Error.ZigError!void {
                 _ = p.close(m, .map);
             },
             .rb => {
+                // parse empty literal as a struct even though it could also be
+                // a map
                 p.advance();
-                try p.advanceWithErrorNoOpen(m, .{
-                    .unexpected = .{
-                        .name = t1.tag.lexeme(),
-                        .sel = t1.loc.getSelection(p.code),
-                        .expected = lexemes(&.{ .dot, .string }),
-                    },
-                });
+                p.advance();
+                _ = p.close(m, .@"struct");
             },
             else => {
                 try p.struct_();
