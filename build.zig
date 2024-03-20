@@ -3,7 +3,7 @@ const std = @import("std");
 /// The full Ziggy parsing functionality is available at build time.
 pub usingnamespace @import("src/root.zig");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -65,4 +65,40 @@ pub fn build(b: *std.Build) void {
     ziggy_check.root_module.addImport("lsp", lsp.module("lsp"));
     const check = b.step("check", "Check if Tigerbeetle compiles");
     check.dependOn(&ziggy_check.step);
+
+    const release_step = b.step("release", "Create releases for the Ziggy CLI tool");
+
+    const targets: []const std.Target.Query = &.{
+        .{ .cpu_arch = .aarch64, .os_tag = .macos },
+        .{ .cpu_arch = .aarch64, .os_tag = .linux },
+        .{ .cpu_arch = .x86_64, .os_tag = .macos },
+        .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
+        .{ .cpu_arch = .x86_64, .os_tag = .windows },
+        .{ .cpu_arch = .aarch64, .os_tag = .windows },
+    };
+
+    for (targets) |t| {
+        const release_target = b.resolveTargetQuery(t);
+
+        const release_exe = b.addExecutable(.{
+            .name = "ziggy",
+            .root_source_file = .{ .path = "src/main.zig" },
+            .target = release_target,
+            .optimize = .ReleaseFast,
+        });
+
+        release_exe.root_module.addImport("ziggy", ziggy);
+        release_exe.root_module.addImport("known-folders", folders.module("known-folders"));
+        release_exe.root_module.addImport("lsp", lsp.module("lsp"));
+
+        const target_output = b.addInstallArtifact(release_exe, .{
+            .dest_dir = .{
+                .override = .{
+                    .custom = try t.zigTriple(b.allocator),
+                },
+            },
+        });
+
+        release_step.dependOn(&target_output.step);
+    }
 }
