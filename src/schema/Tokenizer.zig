@@ -250,7 +250,7 @@ pub fn next(self: *Tokenizer, code: [:0]const u8) Token {
                         res.loc.end = self.idx;
                         break;
                     }
-                    self.idx += 2;
+                    self.idx += 1;
                     state = .doc_comment;
                 },
                 else => {
