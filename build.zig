@@ -8,14 +8,14 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     const ziggy = b.addModule("ziggy", .{
-        .root_source_file = .{ .path = "src/root.zig" },
+        .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
         .strip = false,
     });
 
     const unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/root.zig" },
+        .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
         .strip = false,
@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) !void {
 
     const ziggy_exe = b.addExecutable(.{
         .name = "ziggy",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -55,7 +55,7 @@ pub fn build(b: *std.Build) !void {
 
     const ziggy_check = b.addExecutable(.{
         .name = "ziggy_check",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -82,7 +82,7 @@ pub fn build(b: *std.Build) !void {
 
         const release_exe = b.addExecutable(.{
             .name = "ziggy",
-            .root_source_file = .{ .path = "src/main.zig" },
+            .root_source_file = b.path("src/main.zig"),
             .target = release_target,
             .optimize = .ReleaseFast,
         });
