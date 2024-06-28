@@ -3,8 +3,8 @@
     .version = "0.0.0",
     .dependencies = .{
         .@"known-folders" = .{
-            .url = "git+https://github.com/ziglibs/known-folders.git#0ad514dcfb7525e32ae349b9acc0a53976f3a9fa",
-            .hash = "12209cde192558f8b3dc098ac2330fc2a14fdd211c5433afd33085af75caa9183147",
+            .url = "git+https://github.com/ziglibs/known-folders.git#47076c6b11214a218e9244471d8762310820911a",
+            .hash = "12209d2738a2e1dbd3781c2e5f01a2ea877dcfeea53efdfa1913247297d328e6b207",
         },
         .@"zig-lsp-kit" = .{
             // TODO revert to kristoff-it when https://github.com/kristoff-it/zig-lsp-kit/pull/1 is merged
