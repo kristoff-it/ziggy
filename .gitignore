@@ -1,4 +1,4 @@
 node_modules/
-zig-cache/
+.zig-cache/
 zig-out/
 release/
