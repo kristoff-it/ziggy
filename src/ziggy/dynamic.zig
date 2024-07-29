@@ -54,7 +54,7 @@ pub const Value = union(enum) {
                     };
                 },
 
-                .identifier, .lb => {
+                .identifier, .dot, .lb => {
                     return .{ .kv = try Map(Value).ziggy_options.parse(p, first) };
                 },
                 else => {
