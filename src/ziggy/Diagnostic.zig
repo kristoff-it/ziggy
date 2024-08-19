@@ -20,7 +20,7 @@ pub const Error = union(enum) {
         sel: Token.Loc.Selection,
         expected: []const []const u8,
     },
-    // Invalid syntax, eg 123ab123, use `unecpected` to also report an expected
+    // Invalid syntax, eg 123ab123, use `unexpected` to also report an expected
     // token / value / etc.
     syntax: struct {
         name: []const u8,
@@ -152,8 +152,12 @@ pub const Error = union(enum) {
 
                     try out_stream.print("\n", .{});
                 },
-                .syntax => {
-                    try out_stream.print("syntax error\n", .{});
+                .syntax => |syn| {
+                    if (lsp) {
+                        try out_stream.print("syntax error\n", .{});
+                    } else {
+                        try out_stream.print("syntax error: {s} \n", .{syn.name});
+                    }
                 },
                 .duplicate_field => |dup| {
                     if (lsp) {
