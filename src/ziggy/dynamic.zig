@@ -8,6 +8,7 @@ const serializer = @import("serializer.zig");
 
 pub const Value = union(enum) {
     kv: Map(Value),
+    array: []const Value,
     tag: Tag,
     bytes: []const u8,
     integer: i64,
@@ -31,6 +32,16 @@ pub const Value = union(enum) {
                 .kv => |kv| try Map(Value).ziggy_options.stringify(kv, opts, indent_level, depth, writer),
                 inline .bool, .integer, .float => |b| try writer.print("{}", .{b}),
                 .null => try writer.writeAll("null"),
+                .array => |array| {
+                    try writer.writeAll("[");
+                    for (array, 0..) |e, idx| {
+                        try e.ziggy_options.stringify(e, opts, indent_level, depth, writer);
+                        if (idx < array.len - 1) {
+                            try writer.writeAll(", ");
+                        }
+                    }
+                    try writer.writeAll("]");
+                },
             }
         }
 
@@ -56,6 +67,22 @@ pub const Value = union(enum) {
 
                 .identifier, .dot, .lb => {
                     return .{ .kv = try Map(Value).ziggy_options.parse(p, first) };
+                },
+
+                .lsb => {
+                    var array = std.ArrayList(Value).init(p.gpa);
+                    errdefer array.deinit();
+                    var elem_tok = try p.nextNoEof();
+                    while (elem_tok.tag != .rsb) {
+                        const new = try array.addOne();
+                        new.* = try Value.ziggy_options.parse(p, elem_tok);
+
+                        elem_tok = try p.nextMustAny(&.{ .comma, .rsb });
+                        if (elem_tok.tag == .comma) {
+                            elem_tok = p.next();
+                        }
+                    }
+                    return .{ .array = try array.toOwnedSlice() };
                 },
                 else => {
                     return p.addError(.{

@@ -389,6 +389,19 @@ fn parseArray(self: *Parser, comptime T: type, lsb: Token) !T {
 pub fn next(self: *Parser) Token {
     return self.tokenizer.next(self.code);
 }
+pub fn nextNoEof(
+    self: *Parser,
+) !Token {
+    const tok = self.next();
+    if (tok.tag == .eof) return self.addError(.{
+        .unexpected = .{
+            .name = tok.tag.lexeme(),
+            .sel = tok.loc.getSelection(self.code),
+            .expected = &.{},
+        },
+    });
+    return tok;
+}
 
 pub fn peek(self: *Parser) Token {
     var t = self.tokenizer;

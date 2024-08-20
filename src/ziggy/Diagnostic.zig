@@ -156,7 +156,7 @@ pub const Error = union(enum) {
                     if (lsp) {
                         try out_stream.print("syntax error\n", .{});
                     } else {
-                        try out_stream.print("syntax error: {s} \n", .{syn.name});
+                        try out_stream.print("syntax error: '{s}' \n", .{syn.name});
                     }
                 },
                 .duplicate_field => |dup| {
