@@ -46,14 +46,14 @@ pub fn stringifyInner(
 ) @TypeOf(writer).Error!void {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
-        .Bool,
-        .Float,
-        .Int,
-        .ComptimeFloat,
-        .ComptimeInt,
+        .bool,
+        .float,
+        .int,
+        .comptime_float,
+        .comptime_int,
         => try writer.print("{}", .{value}),
 
-        .Pointer => |ptr| {
+        .pointer => |ptr| {
             switch (ptr.size) {
                 .Slice => {
                     switch (ptr.child) {
@@ -77,16 +77,16 @@ pub fn stringifyInner(
                 else => @compileError("Expected a slice or single pointer. Got a many/C pointer '" ++ @typeName(T) ++ "'"),
             }
         },
-        .Array => |arr| switch (arr.child) {
+        .array => |arr| switch (arr.child) {
             u8 => try escapeString(writer, &value, indent_level, opts.whitespace),
             else => try stringifyArray(writer, value, indent_level, depth, opts),
         },
 
-        .Null => try writer.writeAll("null"),
+        .null => try writer.writeAll("null"),
 
-        .EnumLiteral => try writer.print("\"{s}\"", .{@tagName(value)}),
+        .enum_literal => try writer.print("\"{s}\"", .{@tagName(value)}),
 
-        .Enum => {
+        .@"enum" => {
             if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "stringify")) {
                 try T.ziggy_options.stringify(value, opts, indent_level, depth, writer);
             } else {
@@ -94,14 +94,14 @@ pub fn stringifyInner(
             }
         },
 
-        .Struct => {
+        .@"struct" => {
             if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "stringify")) {
                 try T.ziggy_options.stringify(value, opts, indent_level, depth, writer);
             } else {
                 try stringifyStruct(writer, value, indent_level, depth, opts);
             }
         },
-        .Union => {
+        .@"union" => {
             if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "stringify")) {
                 try T.ziggy_options.stringify(value, opts, indent_level, depth, writer);
             } else {
@@ -109,7 +109,7 @@ pub fn stringifyInner(
             }
         },
 
-        .Optional => {
+        .optional => {
             if (value) |v| {
                 try stringifyInner(v, opts, indent_level, depth, writer);
             } else {
@@ -177,13 +177,13 @@ fn stringifyStruct(writer: anytype, strct: anytype, indent_level: usize, depth: 
 }
 
 fn stringifyStructInner(writer: anytype, strct: anytype, indent_level: usize, depth: usize, opts: StringifyOptions) !bool {
-    const T = @typeInfo(@TypeOf(strct)).Struct;
+    const T = @typeInfo(@TypeOf(strct)).@"struct";
     const field_count = blk: {
         var c: usize = 0;
         if (opts.emit_null_fields) break :blk T.fields.len;
         inline for (T.fields) |field| {
             switch (@typeInfo(field.type)) {
-                .Optional => if (@field(strct, field.name) != null) {
+                .optional => if (@field(strct, field.name) != null) {
                     c += 1;
                 },
                 else => c += 1,
@@ -194,7 +194,7 @@ fn stringifyStructInner(writer: anytype, strct: anytype, indent_level: usize, de
     if (T.fields.len > 0) {
         blk: {
             switch (@typeInfo(T.fields[0].type)) {
-                .Optional => if (!opts.emit_null_fields and @field(strct, T.fields[0].name) == null) break :blk,
+                .optional => if (!opts.emit_null_fields and @field(strct, T.fields[0].name) == null) break :blk,
                 else => {},
             }
 
@@ -214,7 +214,7 @@ fn stringifyStructInner(writer: anytype, strct: anytype, indent_level: usize, de
         inline for (T.fields[1..], 2..) |field, idx| {
             const name = field.name;
             const skip = switch (@typeInfo(field.type)) {
-                .Optional => if (@field(strct, field.name) == null) !opts.emit_null_fields else false,
+                .optional => if (@field(strct, field.name) == null) !opts.emit_null_fields else false,
                 else => false,
             };
             if (!skip) {
