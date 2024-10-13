@@ -5,18 +5,19 @@
 /// <reference types="tree-sitter-cli/dsl"/>
 //@ts-check
 
-bin = /[01]/;
-bin_ = seq(optional("_"), bin);
-oct = /[0-7]/;
-oct_ = seq(optional("_"), oct);
-hex = /[0-9a-fA-F]/;
-hex_ = seq(optional("_"), hex);
-dec = /[0-9]/;
-dec_ = seq(optional("_"), dec);
-bin_int = seq(bin, repeat(bin_));
-oct_int = seq(oct, repeat(oct_));
-dec_int = seq(dec, repeat(dec_));
-hex_int = seq(hex, repeat(hex_));
+const
+  bin = /[01]/,
+  bin_ = seq(optional("_"), bin),
+  oct = /[0-7]/,
+  oct_ = seq(optional("_"), oct),
+  hex = /[0-9a-fA-F]/,
+  hex_ = seq(optional("_"), hex),
+  dec = /[0-9]/,
+  dec_ = seq(optional("_"), dec),
+  bin_int = seq(bin, repeat(bin_)),
+  oct_int = seq(oct, repeat(oct_)),
+  dec_int = seq(dec, repeat(dec_)),
+  hex_int = seq(hex, repeat(hex_))
 
 module.exports = grammar({
   name: 'ziggy',
