@@ -756,7 +756,7 @@ pub fn check(
                 else => try doc.typeMismatch(gpa, diag, rules, elem),
             },
             .bytes => switch (doc_node.tag) {
-                .string, .line_string => {},
+                .string, .line_string, .multiline_string => {},
                 else => try doc.typeMismatch(gpa, diag, rules, elem),
             },
             .int => switch (doc_node.tag) {
