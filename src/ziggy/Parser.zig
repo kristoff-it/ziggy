@@ -869,3 +869,23 @@ test "unions" {
     try std.testing.expect(c.dep2 == .Local);
     try std.testing.expectEqualStrings("../super", c.dep2.Local.path);
 }
+
+test "multiline string" {
+    const just_str =
+        \\.outer = Stri {
+        \\  .str =
+        \\    \\fst
+        \\    \\snd
+        \\  ,
+        \\}
+    ;
+
+    const MultiStr = struct {
+        outer: struct {
+            str: []const u8,
+        }
+    };
+
+    const c = try parseLeaky(MultiStr, std.testing.allocator, just_str, .{});
+    try std.testing.expectEqualStrings("fst\nsnd", c.outer.str);
+}

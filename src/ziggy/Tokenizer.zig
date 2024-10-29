@@ -475,3 +475,12 @@ test "want comments + trailing" {
         \\// comment
     , &.{ .comment, .eof }, true);
 }
+
+test "multiline string" {
+    try testCase(
+        \\.str =
+        \\  \\fst
+        \\  \\snd
+        \\,
+    , &.{ .dot, .identifier, .eql, .line_string, .line_string, .comma, .eof }, true);
+}
