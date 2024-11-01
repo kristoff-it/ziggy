@@ -94,7 +94,7 @@ pub fn parseValue(
     const info = @typeInfo(T);
 
     switch (info) {
-        .Pointer => |ptr| switch (ptr.size) {
+        .pointer => |ptr| switch (ptr.size) {
             .Slice => switch (ptr.child) {
                 u8 => return self.parseBytes(T, first_tok),
                 else => return self.parseArray(T, first_tok),
@@ -108,28 +108,28 @@ pub fn parseValue(
             },
             else => @compileError("Unable to parse pointer to many / C: " ++ @typeName(T)),
         },
-        .Bool => return self.parseBool(first_tok),
-        .Int => return self.parseInt(T, first_tok),
-        .Float => return self.parseFloat(T, first_tok),
-        .Struct => {
+        .bool => return self.parseBool(first_tok),
+        .int => return self.parseInt(T, first_tok),
+        .float => return self.parseFloat(T, first_tok),
+        .@"struct" => {
             if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "parse")) {
                 return T.ziggy_options.parse(self, first_tok);
             }
             return self.parseStruct(T, first_tok);
         },
-        .Union => {
+        .@"union" => {
             if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "parse")) {
                 return T.ziggy_options.parse(self, first_tok);
             }
             return self.parseUnion(T, first_tok);
         },
-        .Enum => {
+        .@"enum" => {
             if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "parse")) {
                 return T.ziggy_options.parse(self, first_tok);
             }
             return self.parseEnum(T, first_tok);
         },
-        .Optional => |opt| {
+        .optional => |opt| {
             if (first_tok.tag == .null) {
                 return null;
             } else {
@@ -174,7 +174,7 @@ fn parseUnion(
     // When a top-level struct omits curlies, the first
     // token will be a dot. Is such case we don't want
     // to expect a closing right bracket.
-    const info = @typeInfo(T).Union;
+    const info = @typeInfo(T).@"union";
     comptime {
         if (info.tag_type == null) {
             @compileError("union '" ++ @typeName(T) ++ "' must be tagged");
@@ -182,7 +182,7 @@ fn parseUnion(
 
         for (info.fields) |f| {
             switch (@typeInfo(f.type)) {
-                .Struct => {},
+                .@"struct" => {},
                 else => {
                     @compileError("all the cases of union '" ++ @typeName(T) ++ "' must be of struct type");
                 },
@@ -220,7 +220,7 @@ fn parseStruct(
     // token will be a dot. Is such case we don't want
     // to expect a closing right bracket.
     const need_closing_rb = first_tok.tag != .dot;
-    const info = @typeInfo(T).Struct;
+    const info = @typeInfo(T).@"struct";
 
     var tok = first_tok;
     if (tok.tag == .identifier) {
@@ -332,7 +332,7 @@ pub fn parseBool(self: *Parser, true_or_false: Token) !bool {
 }
 
 pub fn parseInt(self: *Parser, comptime T: type, num: Token) !T {
-    assert(@typeInfo(T) == .Int);
+    assert(@typeInfo(T) == .int);
 
     try self.must(num, .integer);
     return std.fmt.parseInt(T, num.loc.src(self.code), 10) catch {
@@ -341,7 +341,7 @@ pub fn parseInt(self: *Parser, comptime T: type, num: Token) !T {
 }
 
 pub fn parseFloat(self: *Parser, comptime T: type, num: Token) !T {
-    assert(@typeInfo(T) == .Float);
+    assert(@typeInfo(T) == .float);
 
     try self.must(num, .float);
     return std.fmt.parseFloat(T, num.loc.src(self.code)) catch {
@@ -382,7 +382,7 @@ pub fn parseBytes(self: *Parser, comptime T: type, token: Token) !T {
 }
 
 fn parseArray(self: *Parser, comptime T: type, lsb: Token) !T {
-    const info = @typeInfo(T).Pointer;
+    const info = @typeInfo(T).pointer;
     assert(info.size == .Slice);
 
     try self.must(lsb, .lsb);

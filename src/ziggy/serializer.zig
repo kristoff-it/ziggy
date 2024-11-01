@@ -46,14 +46,14 @@ pub fn stringifyInner(
 ) @TypeOf(writer).Error!void {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
-        .Bool,
-        .Float,
-        .Int,
-        .ComptimeFloat,
-        .ComptimeInt,
+        .bool,
+        .float,
+        .int,
+        .comptime_float,
+        .comptime_int,
         => try writer.print("{}", .{value}),
 
-        .Pointer => |ptr| {
+        .pointer => |ptr| {
             switch (ptr.size) {
                 .Slice => {
                     switch (ptr.child) {
@@ -77,16 +77,16 @@ pub fn stringifyInner(
                 else => @compileError("Expected a slice or single pointer. Got a many/C pointer '" ++ @typeName(T) ++ "'"),
             }
         },
-        .Array => |arr| switch (arr.child) {
+        .array => |arr| switch (arr.child) {
             u8 => try escapeString(writer, &value, indent_level, opts.whitespace),
             else => try stringifyArray(writer, value, indent_level, depth, opts),
         },
 
-        .Null => try writer.writeAll("null"),
+        .null => try writer.writeAll("null"),
 
-        .EnumLiteral => try writer.print("\"{s}\"", .{@tagName(value)}),
+        .enum_literal => try writer.print("\"{s}\"", .{@tagName(value)}),
 
-        .Enum => {
+        .@"enum" => {
             if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "stringify")) {
                 try T.ziggy_options.stringify(value, opts, indent_level, depth, writer);
             } else {
@@ -94,14 +94,14 @@ pub fn stringifyInner(
             }
         },
 
-        .Struct => {
+        .@"struct" => {
             if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "stringify")) {
                 try T.ziggy_options.stringify(value, opts, indent_level, depth, writer);
             } else {
                 try stringifyStruct(writer, value, indent_level, depth, opts);
             }
         },
-        .Union => {
+        .@"union" => {
             if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "stringify")) {
                 try T.ziggy_options.stringify(value, opts, indent_level, depth, writer);
             } else {
@@ -109,7 +109,7 @@ pub fn stringifyInner(
             }
         },
 
-        .Optional => {
+        .optional => {
             if (value) |v| {
                 try stringifyInner(v, opts, indent_level, depth, writer);
             } else {
@@ -177,13 +177,13 @@ fn stringifyStruct(writer: anytype, strct: anytype, indent_level: usize, depth: 
 }
 
 fn stringifyStructInner(writer: anytype, strct: anytype, indent_level: usize, depth: usize, opts: StringifyOptions) !bool {
-    const T = @typeInfo(@TypeOf(strct)).Struct;
+    const T = @typeInfo(@TypeOf(strct)).@"struct";
     const field_count = blk: {
         var c: usize = 0;
         if (opts.emit_null_fields) break :blk T.fields.len;
         inline for (T.fields) |field| {
             switch (@typeInfo(field.type)) {
-                .Optional => if (@field(strct, field.name) != null) {
+                .optional => if (@field(strct, field.name) != null) {
                     c += 1;
                 },
                 else => c += 1,
@@ -194,7 +194,7 @@ fn stringifyStructInner(writer: anytype, strct: anytype, indent_level: usize, de
     if (T.fields.len > 0) {
         blk: {
             switch (@typeInfo(T.fields[0].type)) {
-                .Optional => if (!opts.emit_null_fields and @field(strct, T.fields[0].name) == null) break :blk,
+                .optional => if (!opts.emit_null_fields and @field(strct, T.fields[0].name) == null) break :blk,
                 else => {},
             }
 
@@ -214,7 +214,7 @@ fn stringifyStructInner(writer: anytype, strct: anytype, indent_level: usize, de
         inline for (T.fields[1..], 2..) |field, idx| {
             const name = field.name;
             const skip = switch (@typeInfo(field.type)) {
-                .Optional => if (@field(strct, field.name) == null) !opts.emit_null_fields else false,
+                .optional => if (@field(strct, field.name) == null) !opts.emit_null_fields else false,
                 else => false,
             };
             if (!skip) {
@@ -236,7 +236,7 @@ fn stringifyStructInner(writer: anytype, strct: anytype, indent_level: usize, de
 }
 
 fn stringifyUnion(writer: anytype, un: anytype, indent_level: usize, depth: usize, opts: StringifyOptions) !void {
-    const T = @typeInfo(@TypeOf(un)).Union;
+    const T = @typeInfo(@TypeOf(un)).@"union";
     if (T.tag_type == null) @compileError("Union '" ++ @typeName(@TypeOf(un)) ++ "' must be tagged!");
     var opts_ = opts;
     opts_.omit_top_level_curly = false;
@@ -246,7 +246,7 @@ fn stringifyUnion(writer: anytype, un: anytype, indent_level: usize, depth: usiz
     inline for (T.fields) |field| {
         if (std.mem.eql(u8, field.name, @tagName(at))) {
             switch (@typeInfo(field.type)) {
-                .Struct => try stringifyInner(@field(un, field.name), opts_, indent_level, depth, writer),
+                .@"struct" => try stringifyInner(@field(un, field.name), opts_, indent_level, depth, writer),
                 else => {
                     const value_field: std.builtin.Type.StructField = .{
                         .name = "value",
@@ -255,7 +255,7 @@ fn stringifyUnion(writer: anytype, un: anytype, indent_level: usize, depth: usiz
                         .is_comptime = false,
                         .alignment = @alignOf(field.type),
                     };
-                    const St = @Type(.{ .Struct = .{
+                    const St = @Type(.{ .@"struct" = .{
                         .layout = .auto,
                         .fields = &.{value_field},
                         .decls = &.{},
