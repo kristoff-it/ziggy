@@ -127,8 +127,7 @@ pub fn parseValue(
             if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "parse")) {
                 return T.ziggy_options.parse(self, first_tok);
             }
-            // return self.parseEnum(T, first_tok);
-            @panic("TODO: parseEnum");
+            return self.parseEnum(T, first_tok);
         },
         .optional => |opt| {
             if (first_tok.tag == .null) {
@@ -140,6 +139,31 @@ pub fn parseValue(
         },
         else => @compileError("TODO"),
     }
+}
+
+fn parseEnum(
+    self: *Parser,
+    comptime T: type,
+    first_tok: Token,
+) Error!T {
+    // Skip over "@<enumtype>("
+    _ = try self.nextMust(.identifier);
+    _ = try self.nextMust(.lp);
+
+    const token = try self.nextMust(.string);
+    const enum_str = std.mem.trim(u8, token.loc.src(self.code), "\"");
+
+    // Skip over ")"
+    _ = try self.nextMust(.rp);
+
+    return std.meta.stringToEnum(T, enum_str) orelse {
+        return self.addError(.{
+            .unknown_field = .{
+                .name = first_tok.loc.src(self.code),
+                .sel = first_tok.loc.getSelection(self.code),
+            },
+        });
+    };
 }
 
 fn parseUnion(
