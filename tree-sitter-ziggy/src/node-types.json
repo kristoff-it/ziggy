@@ -414,7 +414,7 @@
       "required": true,
       "types": [
         {
-          "type": "string",
+          "type": "quoted_string",
           "named": true
         }
       ]
