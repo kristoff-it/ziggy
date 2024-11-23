@@ -87,7 +87,7 @@ module.exports = grammar({
       $._value,
     ),
 
-    tag_string: $ => seq('@', field('name', $.tag), '(', $.string, ')'),
+    tag_string: $ => seq('@', field('name', $.tag), '(', $.quoted_string, ')'),
 
     tag: _ => seq(/[a-z]/, repeat(/[a-z_0-9]/)),
 
