@@ -38,7 +38,7 @@ See the official website: https://ziggy-lang.io
 
 ## Development
 
-In order to build with nix using the correct dependencies pease keep
+In order to build with nix using the correct dependencies please keep
 updated the [deps.nix](./deps.nix) file every time the [build.zig.zon](build.zig.zon)
 is changed. In order to do so use
 
