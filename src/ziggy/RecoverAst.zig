@@ -1427,6 +1427,9 @@ fn renderValue(
                 .horizontal => try w.writeAll("["),
             }
             try renderArray(indent + 1, mode, node.first_child_id, nodes, code, w);
+            if (mode == .vertical) {
+                try printIndent(indent, w);
+            }
             try w.writeAll("]");
         },
 
@@ -1673,6 +1676,9 @@ test "complex" {
         \\        "abc": "foo",
         \\        "baz": ["foo", "bar"],
         \\    },
+        \\    [
+        \\        123456789,
+        \\    ],
         \\],
         \\
     );
