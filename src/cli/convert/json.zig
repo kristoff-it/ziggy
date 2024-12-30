@@ -10,15 +10,8 @@ pub fn toZiggy(
     gpa: std.mem.Allocator,
     schema: ziggy.schema.Schema,
     diag: ?*ziggy.Diagnostic,
-    r: anytype,
-) ![]const u8 {
-    var buf = std.ArrayList(u8).init(gpa);
-    defer buf.deinit();
-
-    try r.readAllArrayList(&buf, ziggy.max_size);
-
-    const bytes = try buf.toOwnedSliceSentinel(0);
-
+    bytes: [:0]const u8,
+) !Ast {
     var js_diag: std.json.Diagnostics = .{};
     var scanner = std.json.Scanner.initCompleteInput(gpa, bytes);
     scanner.enableDiagnostics(&js_diag);
@@ -38,7 +31,10 @@ pub fn toZiggy(
 
     try c.convertJsonValue(try c.next(), schema.root);
 
-    return try out.toOwnedSlice();
+    // TODO: Rewrite to directly construct AST rather than writing bytes to an
+    //       ArrayList(u8).
+    const ziggy_bytes = try out.toOwnedSlice();
+    return try Ast.init(gpa, ziggy_bytes, true, true, &diag);
 }
 
 const Converter = struct {
