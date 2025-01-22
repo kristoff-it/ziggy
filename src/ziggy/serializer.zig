@@ -55,7 +55,7 @@ pub fn stringifyInner(
 
         .pointer => |ptr| {
             switch (ptr.size) {
-                .Slice => {
+                .slice => {
                     switch (ptr.child) {
                         u8 => try escapeString(
                             writer,
@@ -72,7 +72,7 @@ pub fn stringifyInner(
                         ),
                     }
                 },
-                .One => try stringifyInner(value.*, opts, indent_level, depth, writer),
+                .one => try stringifyInner(value.*, opts, indent_level, depth, writer),
 
                 else => @compileError("Expected a slice or single pointer. Got a many/C pointer '" ++ @typeName(T) ++ "'"),
             }
