@@ -39,8 +39,8 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    const folders = b.dependency("known-folders", .{});
-    const lsp = b.dependency("zig-lsp-kit", .{});
+    const folders = b.dependency("known_folders", .{});
+    const lsp = b.dependency("lsp_kit", .{});
 
     ziggy_exe.root_module.addImport("ziggy", ziggy);
     ziggy_exe.root_module.addImport("known-folders", folders.module("known-folders"));

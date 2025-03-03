@@ -127,7 +127,7 @@ pub const Tree = struct {
             });
         }
 
-        while (stack.popOrNull()) |elem| {
+        while (stack.pop()) |elem| {
             const rule = rules.nodes[elem.rule.node];
             assert(elem.child == .tree);
             const tree = elem.child.tree;
@@ -599,7 +599,7 @@ pub const TreeFmt = struct {
                 // tag_string '@' and identifier
                 if (i == 0 or
                     (tfmt.tree.children.items[i - 1] == .token and
-                    tfmt.tree.children.items[i - 1].token.tag != .at))
+                        tfmt.tree.children.items[i - 1].token.tag != .at))
                     try writer.writeByte(' ');
             },
             .comment, .top_comment_line => {
@@ -626,7 +626,7 @@ pub const TreeFmt = struct {
                         i + 1 < tfmt.tree.children.items.len and
                         tfmt.tree.children.items[i + 1] == .token and
                         (tfmt.tree.children.items[i + 1].token.tag == .rsb or
-                        tfmt.tree.children.items[i + 1].token.tag == .rb);
+                            tfmt.tree.children.items[i + 1].token.tag == .rb);
                     const new_indent = (indent -| @intFromBool(unindent)) * 4;
                     try writer.writeByteNTimes(' ', new_indent);
                 } else if (tfmt.tree.tag == .top_level_struct) {
@@ -672,9 +672,9 @@ pub const TreeFmt = struct {
 
                     const _has_trailing_comma = is_container and
                         if (mlast_child) |last_child|
-                        last_child == .token and last_child.token.tag == .comma
-                    else
-                        false;
+                            last_child == .token and last_child.token.tag == .comma
+                        else
+                            false;
 
                     const additional_indent = @intFromBool(_has_trailing_comma);
                     const sub_tfmt = TreeFmt{ .tree = tree, .code = tfmt.code };
@@ -1452,7 +1452,7 @@ fn close(p: *Parser, m: MarkOpened, tag: Tree.Tag) MarkClosed {
 }
 
 fn buildTree(p: *Parser) !Tree {
-    assert(p.events.pop() == .close);
+    assert(p.events.pop().? == .close);
     p.tokenizer.idx = 0;
     var stack = std.ArrayList(Tree).init(p.gpa);
     defer stack.deinit();
@@ -1461,7 +1461,7 @@ fn buildTree(p: *Parser) !Tree {
         switch (event) {
             .open => |tag| try stack.append(.{ .tag = tag }),
             .close => {
-                const tree = stack.pop();
+                const tree = stack.pop().?;
                 if (stack.items.len == 0) {
                     log.debug("tree\n{}\n", .{tree.fmt(p.code)});
                 }
@@ -1479,7 +1479,7 @@ fn buildTree(p: *Parser) !Tree {
         }
     }
 
-    const tree = stack.pop();
+    const tree = stack.pop().?;
     assert(p.tokenizer.next(p.code).tag == .eof);
     if (stack.items.len != 0) {
         log.debug("unhandled stack item tree {}", .{tree.fmt(p.code)});
