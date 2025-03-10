@@ -183,13 +183,21 @@ fn stringifyStructInner(
     depth: usize,
     opts: StringifyOptions,
 ) !bool {
-    const T = @typeInfo(@TypeOf(strct)).@"struct";
+    const StructType = @TypeOf(strct);
+    const T = @typeInfo(StructType).@"struct";
+    const FE = std.meta.FieldEnum(StructType);
+    const has_skip_fields: bool = @hasDecl(StructType, "ziggy_options") and @hasDecl(StructType.ziggy_options, "skip_fields");
     const field_count = blk: {
         var c: usize = 0;
-        if (opts.emit_null_fields) break :blk T.fields.len;
-        inline for (T.fields) |field| {
+        outer: inline for (T.fields, 0..) |field, idx| {
+            if (has_skip_fields) {
+                const e: FE = @enumFromInt(idx);
+                inline for (StructType.ziggy_options.skip_fields) |sf| {
+                    if (sf == e) continue :outer;
+                }
+            }
             switch (@typeInfo(field.type)) {
-                .optional => if (@field(strct, field.name) != null) {
+                .optional => if (opts.emit_null_fields or @field(strct, field.name) != null) {
                     c += 1;
                 },
                 else => c += 1,
@@ -198,7 +206,14 @@ fn stringifyStructInner(
         break :blk c;
     };
     if (T.fields.len > 0) {
+        var print_idx: usize = 1;
         blk: {
+            if (has_skip_fields) {
+                const z: FE = @enumFromInt(0);
+                inline for (StructType.ziggy_options.skip_fields) |sf| {
+                    if (sf == z) break :blk;
+                }
+            }
             switch (@typeInfo(T.fields[0].type)) {
                 .optional => if (!opts.emit_null_fields and @field(strct, T.fields[0].name) == null) break :blk,
                 else => {},
@@ -216,21 +231,20 @@ fn stringifyStructInner(
             if (opts.whitespace != .minified or 1 != field_count) {
                 try writer.writeAll(",");
             }
+            print_idx += 1;
         }
 
         outer: inline for (T.fields[1..], 2..) |field, idx| {
             // Skip fields mentioned under 'ziggy_options.skip_fields'
-            if (@hasDecl(@TypeOf(strct), "ziggy_options")) {
-                if (@hasDecl(@TypeOf(strct).ziggy_options, "skip_fields")) {
-                    const skip_fields = @TypeOf(strct).ziggy_options.skip_fields;
-                    if (@TypeOf(skip_fields) != []const std.meta.FieldEnum(@TypeOf(strct))) {
-                        @compileError("ziggy_options.skip_fields must be a []const std.meta.FieldEnum(T)");
-                    }
+            if (has_skip_fields) {
+                const skip_fields = StructType.ziggy_options.skip_fields;
+                if (@TypeOf(skip_fields) != []const FE) {
+                    @compileError("ziggy_options.skip_fields must be a []const std.meta.FieldEnum(T)");
+                }
 
-                    const sf_idx: std.meta.FieldEnum(@TypeOf(strct)) = @enumFromInt(idx - 1);
-                    inline for (skip_fields) |sf| { // did you pub *var* skip_fields? (should be pub const)
-                        if (sf == sf_idx) continue :outer;
-                    }
+                const sf_idx: FE = @enumFromInt(idx - 1);
+                inline for (skip_fields) |sf| { // did you pub *var* skip_fields? (should be pub const)
+                    if (sf == sf_idx) continue :outer;
                 }
             }
 
@@ -249,9 +263,10 @@ fn stringifyStructInner(
                     try writer.writeAll(" = ");
                 }
                 try stringifyInner(@field(strct, name), opts, indent_level, depth + 1, writer);
-                if (opts.whitespace != .minified or idx != field_count) {
+                if (opts.whitespace != .minified or print_idx != field_count) {
                     try writer.writeAll(",");
                 }
+                print_idx += 1;
             }
         }
     }
