@@ -4,7 +4,6 @@ gpa: std.mem.Allocator,
 code: [:0]const u8,
 tokenizer: Tokenizer,
 diagnostic: ?*Diagnostic,
-frontmatter: bool,
 fuel: u32,
 events: std.ArrayListUnmanaged(Event) = .{},
 
@@ -767,7 +766,10 @@ pub fn init(
     code: [:0]const u8,
     want_comments: bool,
     /// Set to true when parsing a Ziggy frontmatter embedded in another
-    /// document (e.g. SuperMD).
+    /// document (e.g. SuperMD). This setting implies that you have correctly
+    /// found both framing delimiters (---) and that you have sliced the original
+    /// text to *include* the opening delimiter, and to *exclude* the closing
+    /// delimiter (and anything past that).
     frontmatter: bool,
     diagnostic: ?*Diagnostic,
 ) !Tree {
@@ -776,7 +778,6 @@ pub fn init(
         .code = code,
         .diagnostic = diagnostic,
         .fuel = 256,
-        .frontmatter = frontmatter,
         .tokenizer = .{ .want_comments = want_comments },
     };
     defer p.deinit();
@@ -792,8 +793,6 @@ pub fn deinit(p: *Parser) void {
 }
 
 fn openFrontmatter(p: *Parser) !void {
-    assert(p.frontmatter);
-
     if (!p.at(.frontmatter)) {
         const token = p.peek(0);
         try p.addError(.{
@@ -814,17 +813,6 @@ fn document(p: *Parser) !void {
 
     const token = p.peek(0);
     switch (token.tag) {
-        .frontmatter => {
-            if (!p.frontmatter) {
-                try p.addError(.{
-                    .unexpected = .{
-                        .name = token.tag.lexeme(),
-                        .sel = token.loc.getSelection(p.code),
-                        .expected = &.{"top level struct or value"},
-                    },
-                });
-            }
-        },
         .eof => {},
         .dot, .comment => try p.topLevelStruct(),
         .identifier,
@@ -850,19 +838,7 @@ fn document(p: *Parser) !void {
         },
     }
 
-    if (p.frontmatter and !p.at(.frontmatter)) {
-        const tok = p.peek(0);
-        try p.addError(.{
-            .unexpected = .{
-                .name = tok.tag.lexeme(),
-                .sel = tok.loc.getSelection(p.code),
-                .expected = lexemes(&.{.frontmatter}),
-            },
-        });
-    }
-
     if (!p.eof()) {
-        log.debug("currently at = {}", .{p.peek(0)});
         const m2 = p.open();
         var tok = p.peek(0);
         tok.loc.end = @intCast(p.code.len);
@@ -897,8 +873,6 @@ fn structBody(p: *Parser, mode: enum { top_level, nested }) !void {
     var seen_fields = std.StringHashMap(Token.Loc).init(p.gpa);
     defer seen_fields.deinit();
 
-    var dashes = false;
-
     while (true) {
         p.comments();
         const t, const t1, const t2, const t3 = p.peekLen(4);
@@ -929,16 +903,6 @@ fn structBody(p: *Parser, mode: enum { top_level, nested }) !void {
                         .sel = t.loc.getSelection(p.code),
                         .expected = lexemes(&.{ .dot, .rb }),
                     } });
-                break;
-            },
-            .frontmatter => {
-                if (mode == .nested or !p.frontmatter)
-                    try p.addError(.{ .unexpected = .{
-                        .name = t.tag.lexeme(),
-                        .sel = t.loc.getSelection(p.code),
-                        .expected = lexemes(&.{ .dot, .rb }),
-                    } });
-                dashes = true;
                 break;
             },
             else => {
@@ -989,15 +953,6 @@ fn structBody(p: *Parser, mode: enum { top_level, nested }) !void {
                     } });
                     continue;
                 },
-                .frontmatter => {
-                    try p.addError(.{ .unexpected = .{
-                        .name = t.tag.lexeme(),
-                        .sel = t.loc.getSelection(p.code),
-                        .expected = lexemes(&.{ .dot, .rb }),
-                    } });
-                    dashes = true;
-                    break;
-                },
                 else => {
                     try p.advanceWithError(.{ .unexpected = .{
                         .name = t1.tag.lexeme(),
@@ -1011,15 +966,6 @@ fn structBody(p: *Parser, mode: enum { top_level, nested }) !void {
 
             switch (t2.tag) {
                 .eql => {},
-                .frontmatter => {
-                    try p.addError(.{ .unexpected = .{
-                        .name = t.tag.lexeme(),
-                        .sel = t.loc.getSelection(p.code),
-                        .expected = lexemes(&.{ .dot, .rb }),
-                    } });
-                    dashes = true;
-                    break;
-                },
                 .rb, .eof => {
                     try p.addError(.{ .unexpected = .{
                         .name = t2.tag.lexeme(),
@@ -1060,15 +1006,6 @@ fn structBody(p: *Parser, mode: enum { top_level, nested }) !void {
                 .false,
                 .null,
                 => try p.value(),
-                .frontmatter => {
-                    try p.addError(.{ .unexpected = .{
-                        .name = t.tag.lexeme(),
-                        .sel = t.loc.getSelection(p.code),
-                        .expected = lexemes(&.{ .dot, .rb }),
-                    } });
-                    dashes = true;
-                    break;
-                },
                 .rb, .eof => {
                     try p.addError(.{ .unexpected = .{
                         .name = t3.tag.lexeme(),
@@ -1108,17 +1045,11 @@ fn structBody(p: *Parser, mode: enum { top_level, nested }) !void {
                 .sel = t4.loc.getSelection(p.code),
                 .expected = lexemes(&.{.comma}),
             } }),
-            .frontmatter => {
-                dashes = true;
-                break;
-            },
             else => break,
         }
     }
 
-    if (!dashes) {
-        p.comments();
-    }
+    p.comments();
 }
 
 /// value =
@@ -1522,8 +1453,7 @@ fn advance(p: *Parser) void {
 }
 
 fn eof(p: *Parser) bool {
-    const tag = p.peek(0).tag;
-    return tag == .eof or (p.frontmatter and tag == .frontmatter);
+    return p.peek(0).tag == .eof;
 }
 
 fn open(p: *Parser) MarkOpened {
@@ -1573,10 +1503,10 @@ fn buildTree(p: *Parser) !Tree {
     }
 
     const tree = stack.pop().?;
-    //// Commented out because our new early exit because of the frontmatter
-    //// token breaks the assumpion that "everything" was consumed.
-    // const exit_tag: Token.Tag = if (p.frontmatter) .frontmatter else .eof;
-    // assert(p.tokenizer.next(p.code).tag == exit_tag);
+    log.debug("next tokens = {} {}", .{ p.peek(0), p.peek(1) });
+    // This assertion seems useful but trips when a braceless top level struct
+    // has a trailing comma at the end.
+    // assert(p.tokenizer.next(p.code).tag == .eof);
     if (stack.items.len != 0) {
         log.debug("unhandled stack item tree {}", .{tree.fmt(p.code)});
         for (stack.items) |x| log.debug("unhandled stack item tag {s}", .{@tagName(x.tag)});

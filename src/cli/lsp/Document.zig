@@ -21,10 +21,31 @@ pub fn deinit(doc: *Document) void {
 
 pub fn init(
     gpa: std.mem.Allocator,
-    bytes: [:0]const u8,
+    src: [:0]const u8,
     frontmatter: bool,
     schema: ?Schema,
 ) error{OutOfMemory}!Document {
+    const bytes = if (!frontmatter) src else blk: {
+        var it = std.mem.tokenizeScalar(u8, src, '\n');
+
+        if (it.next()) |first_line| {
+            const eql = std.mem.eql;
+            const trim = std.mem.trim;
+            if (eql(u8, trim(u8, first_line, &std.ascii.whitespace), "---")) {
+                while (it.next()) |close_line| {
+                    if (eql(u8, trim(u8, close_line, &std.ascii.whitespace), "---")) {
+                        break :blk try gpa.dupeZ(u8, src[0 .. it.index - close_line.len]);
+                    }
+                }
+
+                // error.OpenFrontmatter;
+            }
+        }
+        break :blk "";
+    };
+
+    log.debug("TRIMMED SRC = \n\n{s}\n\n", .{src});
+
     var doc: Document = .{
         .arena = std.heap.ArenaAllocator.init(gpa),
         .bytes = bytes,
