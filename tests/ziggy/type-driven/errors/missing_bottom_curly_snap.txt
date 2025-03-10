@@ -1,0 +1,4 @@
+line: 4 col: 1:
+    
+    
+unexpected 'EOF', expected: '.' or '}'

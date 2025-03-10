@@ -1405,7 +1405,7 @@ fn atAny(p: *Parser, tags: []const Token.Tag) bool {
 }
 
 fn addError(p: Parser, err: Diagnostic.Error) !void {
-    log.debug("addError {}", .{err.fmt(null)});
+    log.debug("addError {}", .{err.fmt(p.code, null)});
     if (p.diagnostic) |d| {
         try d.errors.append(p.gpa, err);
     }

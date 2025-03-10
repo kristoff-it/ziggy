@@ -73,7 +73,11 @@ pub const Error = union(enum) {
         expected: []const u8,
     },
 
-    pub const ZigError = error{ Overflow, OutOfMemory, Syntax };
+    pub const ZigError = error{
+        Overflow,
+        OutOfMemory,
+        Syntax,
+    };
     pub fn zigError(e: Error) ZigError {
         return switch (e) {
             .overflow => error.Overflow,
@@ -92,15 +96,17 @@ pub const Error = union(enum) {
         };
     }
 
-    pub fn fmt(e: Error, path: ?[]const u8) ErrorFmt {
+    pub fn fmt(e: Error, src: []const u8, path: ?[]const u8) ErrorFmt {
         return .{
             .err = e,
+            .src = src,
             .path = path,
         };
     }
     pub const ErrorFmt = struct {
-        path: ?[]const u8,
         err: Error,
+        src: []const u8,
+        path: ?[]const u8,
 
         pub fn format(
             err_fmt: ErrorFmt,
@@ -113,19 +119,48 @@ pub const Error = union(enum) {
             const lsp = std.mem.eql(u8, fmt_string, "lsp");
 
             if (!lsp) {
-                const start = err_fmt.err.getErrorSelection().start;
+                const sel = err_fmt.err.getErrorSelection();
+                const start = sel.start;
                 if (err_fmt.path) |p| {
-                    try out_stream.print("{s}:{}:{}\n", .{
+                    try out_stream.print("{s}:{}:{}:\n", .{
                         p,
                         start.line,
                         start.col,
                     });
                 } else {
-                    try out_stream.print("line: {} col: {}\n", .{
+                    try out_stream.print("line: {} col: {}:\n", .{
                         start.line,
                         start.col,
                     });
                 }
+
+                var it = std.mem.splitScalar(u8, err_fmt.src, '\n');
+                for (1..sel.start.line) |_| _ = it.next().?;
+
+                const line = it.next().?;
+                const line_trim_left = std.mem.trimLeft(u8, line, &std.ascii.whitespace);
+                // const start_trim_left = line_off.start + line_off.line.len - line_trim_left.len;
+
+                const caret_len = if (sel.start.line == sel.end.line) sel.end.col - sel.start.col else line_trim_left.len;
+
+                const caret_spaces_len = sel.start.col - 1;
+
+                const line_trim = std.mem.trimRight(u8, line_trim_left, &std.ascii.whitespace);
+
+                var hl_buf: [1024]u8 = undefined;
+
+                const highlight = if (caret_len + caret_spaces_len < 1024) blk: {
+                    const h = hl_buf[0 .. caret_len + caret_spaces_len];
+                    @memset(h[0..caret_spaces_len], ' ');
+                    @memset(h[caret_spaces_len..][0..caret_len], '^');
+                    break :blk h;
+                } else "";
+
+                try out_stream.print(
+                    \\    {s}
+                    \\    {s}
+                    \\
+                , .{ line_trim, highlight });
             }
 
             switch (err_fmt.err) {
@@ -232,13 +267,22 @@ pub fn debug(self: Diagnostic) void {
     std.debug.print("{}", .{self});
 }
 
-pub fn format(
-    self: Diagnostic,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
-    out_stream: anytype,
-) !void {
-    for (self.errors.items) |e| {
-        try e.fmt(self.path).format(fmt, options, out_stream);
-    }
+pub fn fmt(d: Diagnostic, src: []const u8) Formatter {
+    return .{ .diag = d, .src = src };
 }
+
+pub const Formatter = struct {
+    diag: Diagnostic,
+    src: []const u8,
+
+    pub fn format(
+        self: Formatter,
+        comptime fmt_string: []const u8,
+        options: std.fmt.FormatOptions,
+        out_stream: anytype,
+    ) !void {
+        for (self.diag.errors.items) |e| {
+            try e.fmt(self.src, self.diag.path).format(fmt_string, options, out_stream);
+        }
+    }
+};

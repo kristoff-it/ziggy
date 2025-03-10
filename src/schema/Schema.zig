@@ -310,8 +310,16 @@ fn docString(schema: Schema, gpa: std.mem.Allocator, node_id: u32) ![]const u8 {
 }
 
 pub fn deinit(self: *Schema, gpa: std.mem.Allocator) void {
+    for (self.literals.values()) |l| gpa.free(l.hover);
+
     self.literals.deinit(gpa);
-    for (self.structs.values()) |*v| v.fields.deinit(gpa);
+    for (self.structs.values()) |*s| {
+        for (s.fields.values()) |f| {
+            gpa.free(f.help.snippet);
+            gpa.free(f.help.doc);
+        }
+        s.fields.deinit(gpa);
+    }
     self.structs.deinit(gpa);
 }
 

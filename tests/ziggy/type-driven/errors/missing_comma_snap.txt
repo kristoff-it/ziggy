@@ -1,0 +1,4 @@
+line: 2 col: 1:
+    .bar = false,
+    ^
+unexpected '.', expected: ',' or '}' or 'EOF'

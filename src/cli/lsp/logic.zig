@@ -114,7 +114,7 @@ pub fn loadFile(
 
             const diags = try arena.alloc(lsp.types.Diagnostic, doc.diagnostic.errors.items.len);
             for (doc.diagnostic.errors.items, 0..) |e, idx| {
-                const msg = try std.fmt.allocPrint(arena, "{lsp}", .{e.fmt(null)});
+                const msg = try std.fmt.allocPrint(arena, "{lsp}", .{e.fmt(doc.bytes, null)});
                 const sel = e.getErrorSelection();
                 diags[idx] = .{
                     .range = .{

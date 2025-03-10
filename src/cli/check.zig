@@ -100,6 +100,7 @@ fn checkFile(
         doc_file,
         true,
         true,
+        false,
         &diag,
     ) catch fatalDiag(diag);
 

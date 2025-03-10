@@ -1,0 +1,4 @@
+line: 3 col: 2:
+    .foo = "bar",
+     ^^^
+duplicate field 'foo', first definition here: line: 1 col: 2

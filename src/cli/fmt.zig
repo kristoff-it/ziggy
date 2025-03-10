@@ -182,16 +182,16 @@ pub fn fmtZiggy(
     schema: ziggy.schema.Schema,
 ) ![]const u8 {
     var diag: Diagnostic = .{ .path = path };
-    const doc = Ast.init(gpa, code, true, false, &diag) catch {
+    const doc = Ast.init(gpa, code, true, false, false, &diag) catch {
         if (diag.errors.items.len != 0) {
-            std.debug.print("{}\n", .{diag});
+            std.debug.print("{}\n", .{diag.fmt(code)});
         }
         std.process.exit(1);
     };
 
     doc.check(gpa, schema, &diag) catch {
         if (diag.errors.items.len != 0) {
-            std.debug.print("{}\n", .{diag});
+            std.debug.print("{}\n", .{diag.fmt(code)});
         }
         std.process.exit(1);
     };

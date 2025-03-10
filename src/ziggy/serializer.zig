@@ -176,7 +176,13 @@ fn stringifyStruct(writer: anytype, strct: anytype, indent_level: usize, depth: 
     }
 }
 
-fn stringifyStructInner(writer: anytype, strct: anytype, indent_level: usize, depth: usize, opts: StringifyOptions) !bool {
+fn stringifyStructInner(
+    writer: anytype,
+    strct: anytype,
+    indent_level: usize,
+    depth: usize,
+    opts: StringifyOptions,
+) !bool {
     const T = @typeInfo(@TypeOf(strct)).@"struct";
     const field_count = blk: {
         var c: usize = 0;
@@ -211,12 +217,29 @@ fn stringifyStructInner(writer: anytype, strct: anytype, indent_level: usize, de
                 try writer.writeAll(",");
             }
         }
-        inline for (T.fields[1..], 2..) |field, idx| {
+
+        outer: inline for (T.fields[1..], 2..) |field, idx| {
+            // Skip fields mentioned under 'ziggy_options.skip_fields'
+            if (@hasDecl(@TypeOf(strct), "ziggy_options")) {
+                if (@hasDecl(@TypeOf(strct).ziggy_options, "skip_fields")) {
+                    const skip_fields = @TypeOf(strct).ziggy_options.skip_fields;
+                    if (@TypeOf(skip_fields) != []const std.meta.FieldEnum(@TypeOf(strct))) {
+                        @compileError("ziggy_options.skip_fields must be a []const std.meta.FieldEnum(T)");
+                    }
+
+                    const sf_idx: std.meta.FieldEnum(@TypeOf(strct)) = @enumFromInt(idx - 1);
+                    inline for (skip_fields) |sf| { // did you pub *var* skip_fields? (should be pub const)
+                        if (sf == sf_idx) continue :outer;
+                    }
+                }
+            }
+
             const name = field.name;
             const skip = switch (@typeInfo(field.type)) {
                 .optional => if (@field(strct, field.name) == null) !opts.emit_null_fields else false,
                 else => false,
             };
+
             if (!skip) {
                 try indent(opts.whitespace, indent_level, writer);
                 try writer.print(".{s}", .{name});
@@ -251,7 +274,7 @@ fn stringifyUnion(writer: anytype, un: anytype, indent_level: usize, depth: usiz
                     const value_field: std.builtin.Type.StructField = .{
                         .name = "value",
                         .type = field.type,
-                        .default_value = null,
+                        .default_value_ptr = null,
                         .is_comptime = false,
                         .alignment = @alignOf(field.type),
                     };
@@ -518,5 +541,32 @@ test "non struct union" {
         \\    .value = 123,
         \\  },
         \\]
+    );
+}
+
+test "simple struct + skip fields" {
+    const S = struct {
+        a: u32,
+        b: bool,
+        c: ?i16,
+
+        const S = @This();
+        pub const ziggy_options = struct {
+            pub const skip_fields: []const std.meta.FieldEnum(S) = &.{.b};
+        };
+    };
+
+    const v: S = .{ .a = 10, .b = false, .c = null };
+    try testStringify(v, .{}, ".a=10,.c=null");
+    try testStringify(v, .{ .emit_null_fields = false }, ".a=10");
+    try testStringify(v, .{ .whitespace = .space_1 },
+        \\.a = 10,
+        \\.c = null,
+    );
+    try testStringify(v, .{ .whitespace = .space_1, .omit_top_level_curly = false },
+        \\{
+        \\ .a = 10,
+        \\ .c = null,
+        \\}
     );
 }

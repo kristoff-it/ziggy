@@ -1,0 +1,4 @@
+line: 3 col: 2:
+    .baz = "oops",
+     ^^^
+unknown field 'baz'

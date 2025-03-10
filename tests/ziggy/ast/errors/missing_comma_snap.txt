@@ -1,0 +1,5 @@
+missing_comma.ziggy:2:1:
+    .bar = false,
+    ^
+unexpected '.', expected: '}' or 'EOF'
+

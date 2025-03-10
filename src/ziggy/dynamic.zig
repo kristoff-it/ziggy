@@ -301,8 +301,12 @@ test "basics" {
 
     var diag: Diagnostic = .{ .path = null };
     const opts: Parser.ParseOptions = .{ .diagnostic = &diag };
-    var result = try Parser.parseLeaky(Map(usize), std.testing.allocator, case, opts);
-    defer result.fields.deinit(std.testing.allocator);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var result = try Parser.parseLeaky(Map(usize), arena, case, opts);
 
     try std.testing.expectEqual(1, result.fields.get("foo"));
     try std.testing.expectEqual(2, result.fields.get("bar"));
@@ -318,9 +322,12 @@ test "basics 2" {
 
     var diag: Diagnostic = .{ .path = null };
     const opts: Parser.ParseOptions = .{ .diagnostic = &diag };
-    var result = try Parser.parseLeaky(Map([]const u8), std.testing.allocator, case, opts);
-    defer result.fields.deinit(std.testing.allocator);
 
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var result = try Parser.parseLeaky(Map([]const u8), arena, case, opts);
     try std.testing.expectEqualStrings("bar", result.fields.get("foo").?);
     try std.testing.expectEqualStrings("baz", result.fields.get("bar").?);
 }
@@ -353,8 +360,12 @@ test "map + union" {
         };
     };
 
-    var result = try Parser.parseLeaky(Project, std.testing.allocator, case, .{});
-    defer result.dependencies.fields.deinit(std.testing.allocator);
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var result = try Parser.parseLeaky(Project, arena, case, .{});
+
     const gfm = result.dependencies.fields.get("gfm") orelse return error.Missing;
     try std.testing.expect(gfm == .Remote);
     try std.testing.expectEqualStrings("https://github.com", gfm.Remote.url);

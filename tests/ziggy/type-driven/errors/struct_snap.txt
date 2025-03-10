@@ -1,0 +1,4 @@
+line: 2 col: 8:
+    .bar = .false,
+           ^
+unexpected '.', expected: 'true' or 'false'
