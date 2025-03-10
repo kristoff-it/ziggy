@@ -158,6 +158,11 @@ pub const Handler = struct {
 
         // TODO: this is a hack while we wait for actual incremental reloads
         const file = self.files.get(notification.textDocument.uri) orelse return;
+
+        log.debug("LOAD FILE URI: {s}, file tag = {s}", .{
+            notification.textDocument.uri,
+            @tagName(file),
+        });
         try self.loadFile(
             arena,
             new_text,
@@ -204,7 +209,7 @@ pub const Handler = struct {
         log.debug("completion at offset {}", .{offset});
 
         switch (file) {
-            .ziggy => |z| {
+            .supermd, .ziggy => |z| {
                 const ast = z.ast orelse return .{
                     .CompletionList = types.CompletionList{
                         .isIncomplete = false,
@@ -284,7 +289,7 @@ pub const Handler = struct {
         const file = self.files.get(request.textDocument.uri) orelse return null;
 
         const doc = switch (file) {
-            .ziggy => |doc| doc,
+            .supermd, .ziggy => |doc| doc,
             .ziggy_schema => return null,
         };
 

@@ -11,6 +11,7 @@ const log = std.log.scoped(.lsp_document);
 arena: std.heap.ArenaAllocator,
 bytes: [:0]const u8,
 diagnostic: ziggy.Diagnostic,
+frontmatter: bool,
 ast: ?if (ziggy.lsp_parser == .recover) ziggy.LanguageServerAst else ziggy.LanguageServerAst.Tree = null,
 schema: ?Schema,
 
@@ -21,11 +22,13 @@ pub fn deinit(doc: *Document) void {
 pub fn init(
     gpa: std.mem.Allocator,
     bytes: [:0]const u8,
+    frontmatter: bool,
     schema: ?Schema,
 ) error{OutOfMemory}!Document {
     var doc: Document = .{
         .arena = std.heap.ArenaAllocator.init(gpa),
         .bytes = bytes,
+        .frontmatter = frontmatter,
         .diagnostic = .{ .path = null },
         .schema = schema,
     };
@@ -49,6 +52,7 @@ pub fn init(
         arena,
         bytes,
         true,
+        frontmatter,
         &doc.diagnostic,
     ) catch return doc;
 
