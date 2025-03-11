@@ -100,7 +100,7 @@ pub fn parseLeaky(
     const extra = parser.next();
 
     if (opts.frontmatter_meta) |fm| {
-        const tok = parser.closed_frontmatter orelse parser.next();
+        const tok = parser.closed_frontmatter orelse extra;
         if (tok.tag != .frontmatter) {
             return error.OpenFrontmatter;
         }
@@ -947,6 +947,37 @@ test "braceless struct no trailing comma extra newline - frontmatter" {
         \\---
         \\.foo = "bar",
         \\.bar = false
+        \\---
+        \\
+    ;
+
+    const Case = struct {
+        foo: []const u8,
+        bar: bool,
+    };
+
+    var diag: Diagnostic = .{ .path = null };
+
+    var fm: ParseOptions.FrontmatterMeta = undefined;
+    const opts: ParseOptions = .{ .diagnostic = &diag, .frontmatter_meta = &fm };
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    _ = try parseLeaky(Case, arena, case, opts);
+    const lines: u32 = @intCast(std.mem.count(u8, case, "\n"));
+    try std.testing.expectEqual(lines, fm.lines);
+    try std.testing.expectEqual(case.len, fm.offset);
+}
+
+test "struct - frontmatter" {
+    const case =
+        \\---
+        \\{
+        \\    .foo = "Zig's New Relationship with LLVM",
+        \\    .bar = false,
+        \\}
         \\---
         \\
     ;
