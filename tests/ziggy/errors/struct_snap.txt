@@ -1,5 +1,0 @@
-struct.ziggy:2:8:
-    .bar = .false,
-           ^
-unexpected '.', expected: '(value)'
-
