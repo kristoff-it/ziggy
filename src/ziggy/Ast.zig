@@ -875,7 +875,7 @@ pub fn render(nodes: []const Node, code: [:0]const u8, w: anytype) anyerror!void
     try renderValue(0, nodes[value_idx], nodes, code, true, w);
 
     if (nodes[1].tag == .frontmatter) {
-        try w.writeAll("---\n");
+        try w.writeAll("\n---");
     }
 }
 
@@ -924,11 +924,12 @@ fn renderValue(
             try renderFields(indent + 1, mode, .@"struct", idx, nodes, code, w);
             switch (mode) {
                 .vertical => {
+                    try w.writeAll("\n");
                     try printIndent(indent, w);
+                    try w.writeAll("}");
                 },
-                .horizontal => try w.writeAll(" "),
+                .horizontal => try w.writeAll(" }"),
             }
-            try w.writeAll("}");
         },
 
         .map => {
@@ -961,11 +962,12 @@ fn renderValue(
 
             switch (mode) {
                 .vertical => {
+                    try w.writeAll("\n");
                     try printIndent(indent, w);
+                    try w.writeAll("}");
                 },
-                .horizontal => try w.writeAll(" "),
+                .horizontal => try w.writeAll(" }"),
             }
-            try w.writeAll("}");
         },
 
         .array => {
@@ -989,10 +991,14 @@ fn renderValue(
                 .horizontal => try w.writeAll("["),
             }
             try renderArray(indent + 1, mode, node.first_child_id, nodes, code, w);
-            if (mode == .vertical) {
-                try printIndent(indent, w);
+            switch (mode) {
+                .vertical => {
+                    try w.writeAll("\n");
+                    try printIndent(indent, w);
+                    try w.writeAll("]");
+                },
+                .horizontal => try w.writeAll("]"),
             }
-            try w.writeAll("]");
         },
 
         .tag => {
@@ -1108,7 +1114,12 @@ fn renderArray(
         }
 
         switch (mode) {
-            .vertical => try w.writeAll(",\n"),
+            .vertical => {
+                try w.writeAll(",");
+                if (maybe_value != null) {
+                    try w.writeAll("\n");
+                }
+            },
             .horizontal => {
                 if (maybe_value != null) {
                     try w.writeAll(", ");
@@ -1166,7 +1177,12 @@ fn renderFields(
         }
 
         switch (mode) {
-            .vertical => try w.writeAll(",\n"),
+            .vertical => {
+                try w.writeAll(",");
+                if (maybe_field != null) {
+                    try w.writeAll("\n");
+                }
+            },
             .horizontal => {
                 if (maybe_field != null) {
                     try w.writeAll(", ");
@@ -1176,11 +1192,9 @@ fn renderFields(
     }
 }
 
-test "basics" {
+test "struct - empty" {
     const case =
-        \\.foo = "bar",
-        \\.bar = [1, 2, 3],
-        \\
+        \\{}
     ;
 
     var diag: Diagnostic = .{ .path = null };
@@ -1190,15 +1204,76 @@ test "basics" {
     try std.testing.expectFmt(case, "{}", .{ast});
 }
 
-test "vertical" {
+test "array - empty" {
     const case =
-        \\.foo = "bar",
+        \\[]
+    ;
+
+    var diag: Diagnostic = .{ .path = null };
+    errdefer std.debug.print("diag: {}", .{diag});
+    const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{}", .{ast});
+}
+
+test "struct - basic" {
+    const case =
+        \\{
+        \\    .foo = 1,
+        \\    .bar = 2,
+        \\    .baz = 3,
+        \\}
+    ;
+
+    var diag: Diagnostic = .{ .path = null };
+    errdefer std.debug.print("diag: {}", .{diag});
+    const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{}", .{ast});
+}
+
+test "array - basic" {
+    const case =
+        \\[
+        \\    1,
+        \\    2,
+        \\    3,
+        \\]
+    ;
+
+    var diag: Diagnostic = .{ .path = null };
+    errdefer std.debug.print("diag: {}", .{diag});
+    const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{}", .{ast});
+}
+
+test "braceless struct - basic" {
+    const case =
+        \\.foo = "hello",
+        \\.bar = [1, 2, 3],
+    ;
+
+    var diag: Diagnostic = .{ .path = null };
+    errdefer std.debug.print("diag: {}", .{diag});
+    const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{}", .{ast});
+}
+
+test "braceless struct - vertical" {
+    const case =
+        \\.foo = "hello",
         \\.bar = [
         \\    1,
         \\    2,
         \\    3,
         \\],
-        \\
+        \\.baz = {
+        \\    "a": 1,
+        \\    "b": 2,
+        \\    "c": 3,
+        \\},
     ;
 
     var diag: Diagnostic = .{ .path = null };
@@ -1208,7 +1283,7 @@ test "vertical" {
     try std.testing.expectFmt(case, "{}", .{ast});
 }
 
-test "complex" {
+test "braceless struct - complex" {
     const case =
         \\.foo = "bar",
         \\.bar = [
@@ -1222,7 +1297,6 @@ test "complex" {
         \\        123456789,
         \\    ],
         \\],
-        \\
     ;
 
     var diag: Diagnostic = .{ .path = null };
@@ -1232,7 +1306,7 @@ test "complex" {
     try std.testing.expectFmt(case, "{}", .{ast});
 }
 
-test "complex - frontmatter" {
+test "frontmatter - complex" {
     const case =
         \\---
         \\.foo = "bar",
@@ -1248,7 +1322,6 @@ test "complex - frontmatter" {
         \\    ],
         \\],
         \\---
-        \\
     ;
 
     var diag: Diagnostic = .{ .path = null };

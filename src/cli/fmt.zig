@@ -196,7 +196,7 @@ pub fn fmtZiggy(
         std.process.exit(1);
     };
 
-    return std.fmt.allocPrint(gpa, "{}", .{doc});
+    return std.fmt.allocPrint(gpa, "{}\n", .{doc});
 }
 
 fn fmtSchema(
