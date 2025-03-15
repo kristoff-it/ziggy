@@ -32,7 +32,7 @@ pub fn toZiggy(
     try c.convertJsonValue(try c.next(), schema.root);
 
     // TODO: Rewrite to directly construct AST rather than writing bytes to an
-    //       ArrayList(u8).
+    //       ArrayList(u8), https://github.com/kristoff-it/ziggy/issues/52.
     const ziggy_bytes = try out.toOwnedSliceSentinel(0);
     return try Ast.init(gpa, ziggy_bytes, true, true, false, diag);
 }
