@@ -192,7 +192,7 @@ fn convertFromZiggy(
     bytes: [:0]const u8,
 ) ![]const u8 {
     var diag: ziggy.Diagnostic = .{ .path = file_path };
-    const doc = Ast.init(gpa, bytes, true, false, &diag) catch {
+    const doc = Ast.init(gpa, bytes, true, false, false, &diag) catch {
         if (diag.errors.items.len != 0) {
             std.debug.print("{}\n", .{diag});
         }
@@ -202,7 +202,7 @@ fn convertFromZiggy(
 
     return switch (format) {
         else => @panic("TODO: support more file formats https://github.com/kristoff-it/ziggy/issues/17"),
-        .json => "",
+        .json => @panic("TODO: support converting from ziggy"),
     };
 }
 
@@ -222,7 +222,7 @@ fn convertToZiggy(
             std.process.exit(1);
         },
     };
-    return std.fmt.allocPrint(gpa, "{}", .{doc});
+    return std.fmt.allocPrint(gpa, "{}\n", .{doc});
 }
 
 fn fatalDiag(diag: anytype) noreturn {

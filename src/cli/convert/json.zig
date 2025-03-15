@@ -12,9 +12,9 @@ pub fn toZiggy(
     diag: ?*ziggy.Diagnostic,
     bytes: [:0]const u8,
 ) !Ast {
-    var js_diag: std.json.Diagnostics = .{};
+    var json_diag: std.json.Diagnostics = .{};
     var scanner = std.json.Scanner.initCompleteInput(gpa, bytes);
-    scanner.enableDiagnostics(&js_diag);
+    scanner.enableDiagnostics(&json_diag);
 
     var out = std.ArrayList(u8).init(gpa);
     errdefer out.deinit();
@@ -23,7 +23,7 @@ pub fn toZiggy(
         .gpa = gpa,
         .code = bytes,
         .tokenizer = &scanner,
-        .json_diag = &js_diag,
+        .json_diag = &json_diag,
         .diagnostic = diag,
         .schema = schema,
         .out = out.writer(),
@@ -33,8 +33,8 @@ pub fn toZiggy(
 
     // TODO: Rewrite to directly construct AST rather than writing bytes to an
     //       ArrayList(u8).
-    const ziggy_bytes = try out.toOwnedSlice();
-    return try Ast.init(gpa, ziggy_bytes, true, true, &diag);
+    const ziggy_bytes = try out.toOwnedSliceSentinel(0);
+    return try Ast.init(gpa, ziggy_bytes, true, true, false, diag);
 }
 
 const Converter = struct {
