@@ -301,41 +301,40 @@ fn parseStruct(
         _ = try self.nextMust(.eql);
         const field_name = ident.loc.src(self.code);
 
-        if (@hasDecl(T, "ziggy_options")) blk: {
-            if (@hasDecl(T.ziggy_options, "skip_fields")) {
+        if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "skip_fields")) blk: {
+            const skip_fields = T.ziggy_options.skip_fields;
+            if (@TypeOf(skip_fields) != []const std.meta.FieldEnum(T)) {
+                @compileError("ziggy_options.skip_fields must be a []const std.meta.FieldEnum(T)");
+            }
+
+            if (std.meta.stringToEnum(
+                std.meta.FieldEnum(T),
+                field_name,
+            )) |field_enum| {
+                if (std.mem.indexOfScalar(std.meta.FieldEnum(T), skip_fields, field_enum) == null) {
+                    break :blk;
+                }
+            }
+
+            return self.addError(.{
+                .unknown_field = .{
+                    .name = ident.loc.src(self.code),
+                    .sel = ident.loc.getSelection(self.code),
+                },
+            });
+        }
+
+        outer: inline for (info.fields, 0..) |f, idx| {
+            if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "skip_fields")) {
                 const skip_fields = T.ziggy_options.skip_fields;
                 if (@TypeOf(skip_fields) != []const std.meta.FieldEnum(T)) {
                     @compileError("ziggy_options.skip_fields must be a []const std.meta.FieldEnum(T)");
                 }
 
-                if (std.meta.stringToEnum(
-                    std.meta.FieldEnum(T),
-                    field_name,
-                )) |field_enum| {
-                    if (std.mem.indexOfScalar(std.meta.FieldEnum(T), skip_fields, field_enum) == null) {
-                        break :blk;
-                    }
-                }
-
-                return self.addError(.{
-                    .unknown_field = .{
-                        .name = ident.loc.src(self.code),
-                        .sel = ident.loc.getSelection(self.code),
-                    },
-                });
-            }
-        }
-
-        outer: inline for (info.fields, 0..) |f, idx| {
-            if (@hasDecl(T, "ziggy_options")) {
-                if (@hasDecl(T.ziggy_options, "skip_fields")) {
-                    const skip_fields = T.ziggy_options.skip_fields;
-                    if (@TypeOf(skip_fields) != []const std.meta.FieldEnum(T)) {
-                        @compileError("ziggy_options.skip_fields must be a []const std.meta.FieldEnum(T)");
-                    }
-
-                    const sf_idx: std.meta.FieldEnum(T) = @enumFromInt(idx);
-                    inline for (skip_fields) |sf| if (sf == sf_idx) continue :outer;
+                const sf_idx: std.meta.FieldEnum(T) = @enumFromInt(idx);
+                inline for (skip_fields) |sf| {
+                    @setEvalBranchQuota(1000000);
+                    if (sf == sf_idx) continue :outer;
                 }
             }
 

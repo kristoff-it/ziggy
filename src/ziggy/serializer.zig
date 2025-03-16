@@ -191,6 +191,7 @@ fn stringifyStructInner(
         var c: usize = 0;
         outer: inline for (T.fields, 0..) |field, idx| {
             if (has_skip_fields) {
+                @setEvalBranchQuota(1000);
                 const e: FE = @enumFromInt(idx);
                 inline for (StructType.ziggy_options.skip_fields) |sf| {
                     if (sf == e) continue :outer;
@@ -209,6 +210,7 @@ fn stringifyStructInner(
         var print_idx: usize = 1;
         blk: {
             if (has_skip_fields) {
+                @setEvalBranchQuota(1000);
                 const z: FE = @enumFromInt(0);
                 inline for (StructType.ziggy_options.skip_fields) |sf| {
                     if (sf == z) break :blk;
