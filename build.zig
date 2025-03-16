@@ -134,6 +134,12 @@ pub fn setupTests(
     git_add.setName("git add tests/");
     diff.step.dependOn(&git_add.step);
 
+    b.build_root.handle.access("tests", .{}) catch {
+        const fail = b.addFail("snapshot test folder is missing, can't run tests (note: snapshot tests are not included in the ziggy manifest)");
+        git_add.step.dependOn(&fail.step);
+        return;
+    };
+
     // errors - ast
     {
         const base_path = b.pathJoin(&.{ "tests", "ziggy", "ast", "errors" });
