@@ -6,8 +6,8 @@ on:
       - 'v*'
 
 jobs:
-  build-and-release:
-    name: Build and Release
+  release:
+    name: Release ziggy
     runs-on: ubuntu-latest
     
     steps:
@@ -18,9 +18,6 @@ jobs:
         uses: mlugg/setup-zig@v1
         with:
           version: master
-
-      - name: Install zip
-        run: sudo apt-get update && sudo apt-get install -y zip
 
       - name: Build release artifacts
         run: zig build release
