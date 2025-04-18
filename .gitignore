@@ -3,3 +3,5 @@ node_modules/
 zig-out/
 release/
 result
+Cargo.lock
+target/

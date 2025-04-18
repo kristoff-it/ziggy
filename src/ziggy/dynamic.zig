@@ -110,6 +110,7 @@ pub fn Map(comptime T: type) type {
         fields: std.StringArrayHashMapUnmanaged(T) = .{},
 
         const Self = @This();
+        const Child = T;
         pub const ziggy_options = struct {
             pub fn parse(
                 parser: *Parser,
