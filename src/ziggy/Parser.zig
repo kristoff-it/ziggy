@@ -183,15 +183,31 @@ fn parseEnum(
     comptime T: type,
     first_tok: Token,
 ) Error!T {
-    // Skip over "@<enumtype>("
-    _ = try self.nextMust(.identifier);
-    _ = try self.nextMust(.lp);
+    const token = switch (first_tok.tag) {
+        .at => blk: {
+            // Skip over "@<enumtype>("
+            _ = try self.nextMust(.identifier);
+            _ = try self.nextMust(.lp);
+            break :blk try self.nextMust(.string);
+        },
 
-    const token = try self.nextMust(.string);
+        .string => first_tok,
+        else => {
+            return self.addError(.{
+                .syntax = .{
+                    .name = first_tok.loc.src(self.code),
+                    .sel = first_tok.loc.getSelection(self.code),
+                },
+            });
+        },
+    };
+
     const enum_str = std.mem.trim(u8, token.loc.src(self.code), "\"");
 
-    // Skip over ")"
-    _ = try self.nextMust(.rp);
+    if (first_tok.tag == .at) {
+        // Skip over ")"
+        _ = try self.nextMust(.rp);
+    }
 
     return std.meta.stringToEnum(T, enum_str) orelse {
         return self.addError(.{
