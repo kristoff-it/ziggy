@@ -61,6 +61,11 @@ pub fn setupReleaseStep(
 ) !void {
     const release_step = b.step("release", "Create releases for the Ziggy CLI tool");
 
+    // Create a specific output directory for our archives within zig-out
+    const archive_dir = b.pathJoin(&.{ b.install_path, "archives" });
+    const mkdir_cmd = b.addSystemCommand(&.{ "mkdir", "-p", archive_dir });
+    release_step.dependOn(&mkdir_cmd.step);
+
     const targets: []const std.Target.Query = &.{
         .{ .cpu_arch = .aarch64, .os_tag = .macos },
         .{ .cpu_arch = .aarch64, .os_tag = .linux },
@@ -72,6 +77,7 @@ pub fn setupReleaseStep(
 
     for (targets) |t| {
         const release_target = b.resolveTargetQuery(t);
+        const target_triple = try t.zigTriple(b.allocator);
 
         const release_exe = b.addExecutable(.{
             .name = "ziggy",
@@ -87,12 +93,40 @@ pub fn setupReleaseStep(
         const target_output = b.addInstallArtifact(release_exe, .{
             .dest_dir = .{
                 .override = .{
-                    .custom = try t.zigTriple(b.allocator),
+                    .custom = target_triple,
                 },
             },
         });
 
         release_step.dependOn(&target_output.step);
+
+        if (t.os_tag == .windows) {
+            const archive_name = b.pathJoin(&.{ archive_dir, b.fmt("ziggy-{s}.zip", .{target_triple}) });
+            const archive_cmd = b.addSystemCommand(&.{
+                "zip",
+                "-r",
+                archive_name,
+                b.pathJoin(&.{ b.install_prefix, target_triple }),
+            });
+
+            archive_cmd.step.dependOn(&target_output.step);
+            archive_cmd.step.dependOn(&mkdir_cmd.step);
+            release_step.dependOn(&archive_cmd.step);
+        } else {
+            const archive_name = b.pathJoin(&.{ archive_dir, b.fmt("ziggy-{s}.tar.gz", .{target_triple}) });
+            const archive_cmd = b.addSystemCommand(&.{
+                "tar",
+                "-czf",
+                archive_name,
+                "-C",
+                b.install_prefix,
+                target_triple,
+            });
+
+            archive_cmd.step.dependOn(&target_output.step);
+            archive_cmd.step.dependOn(&mkdir_cmd.step);
+            release_step.dependOn(&archive_cmd.step);
+        }
     }
 }
 
