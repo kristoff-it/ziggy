@@ -348,7 +348,7 @@ pub const Command = struct {
             \\--check            List non-conforming files and exit with an
             \\                   error if the list is not empty.
             \\
-            \\--help, -h         Prints this help and extits.
+            \\--help, -h         Prints this help and exits.
             \\
             \\
         , .{});
