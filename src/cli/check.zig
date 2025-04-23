@@ -157,6 +157,8 @@ pub const Command = struct {
             \\Options:
             \\
             \\--help, -h       Print this help and exit.
+            \\
+            \\
         , .{});
 
         std.process.exit(1);
