@@ -349,6 +349,8 @@ pub const Command = struct {
             \\                   error if the list is not empty.
             \\
             \\--help, -h         Prints this help and extits.
+            \\
+            \\
         , .{});
 
         std.process.exit(1);
