@@ -10,9 +10,16 @@
   "struct"
   "root"
   "enum"
-  "map"
+  "null"
 ] @keyword
 
+(string) @string
+(number) @number
+
+[
+  "true"
+  "false"
+] @bool
 
 (identifier) @type
 
@@ -32,7 +39,7 @@
 
 "," @punctuation.delimiter
 
-"|" @punctuation
+["|" ":"] @punctuation
 
 
 [

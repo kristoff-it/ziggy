@@ -263,6 +263,60 @@
         }
       ]
     },
+    "default": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "null"
+        },
+        {
+          "type": "STRING",
+          "value": "true"
+        },
+        {
+          "type": "STRING",
+          "value": "false"
+        },
+        {
+          "type": "STRING",
+          "value": "[]"
+        },
+        {
+          "type": "STRING",
+          "value": "{}"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "string"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "number"
+        }
+      ]
+    },
+    "string": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "\""
+        },
+        {
+          "type": "PATTERN",
+          "value": "[^\"\\n]*"
+        },
+        {
+          "type": "STRING",
+          "value": "\""
+        }
+      ]
+    },
+    "number": {
+      "type": "PATTERN",
+      "value": "\\d+"
+    },
     "struct_union": {
       "type": "SEQ",
       "members": [
@@ -321,19 +375,19 @@
       "members": [
         {
           "type": "STRING",
-          "value": "map"
-        },
-        {
-          "type": "STRING",
           "value": "["
         },
         {
-          "type": "SYMBOL",
-          "name": "expr"
+          "type": "STRING",
+          "value": ":"
         },
         {
           "type": "STRING",
           "value": "]"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "expr"
         }
       ]
     },
@@ -345,12 +399,12 @@
           "value": "["
         },
         {
-          "type": "SYMBOL",
-          "name": "expr"
-        },
-        {
           "type": "STRING",
           "value": "]"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "expr"
         }
       ]
     },
@@ -448,6 +502,13 @@
           ]
         },
         {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "struct"
+          }
+        },
+        {
           "type": "STRING",
           "value": "}"
         }
@@ -491,6 +552,31 @@
             "type": "SYMBOL",
             "name": "expr"
           }
+        },
+        {
+          "type": "FIELD",
+          "name": "default",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SEQ",
+                "members": [
+                  {
+                    "type": "STRING",
+                    "value": "="
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "default"
+                  }
+                ]
+              },
+              {
+                "type": "BLANK"
+              }
+            ]
+          }
         }
       ]
     },
@@ -526,4 +612,3 @@
   "inline": [],
   "supertypes": []
 }
-

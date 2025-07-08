@@ -15,6 +15,25 @@
     }
   },
   {
+    "type": "default",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "number",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "doc_comment",
     "named": true,
     "fields": {}
@@ -140,6 +159,11 @@
     }
   },
   {
+    "type": "string",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "struct",
     "named": true,
     "fields": {
@@ -169,6 +193,10 @@
       "required": false,
       "types": [
         {
+          "type": "struct",
+          "named": true
+        },
+        {
           "type": "struct_field",
           "named": true
         }
@@ -179,6 +207,20 @@
     "type": "struct_field",
     "named": true,
     "fields": {
+      "default": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "=",
+            "named": false
+          },
+          {
+            "type": "default",
+            "named": true
+          }
+        ]
+      },
       "docs": {
         "multiple": false,
         "required": false,
@@ -272,6 +314,10 @@
     "fields": {}
   },
   {
+    "type": "\"",
+    "named": false
+  },
+  {
     "type": ",",
     "named": false
   },
@@ -293,6 +339,10 @@
   },
   {
     "type": "[",
+    "named": false
+  },
+  {
+    "type": "[]",
     "named": false
   },
   {
@@ -320,6 +370,10 @@
     "named": false
   },
   {
+    "type": "false",
+    "named": false
+  },
+  {
     "type": "float",
     "named": false
   },
@@ -332,8 +386,12 @@
     "named": false
   },
   {
-    "type": "map",
+    "type": "null",
     "named": false
+  },
+  {
+    "type": "number",
+    "named": true
   },
   {
     "type": "root",
@@ -344,11 +402,19 @@
     "named": false
   },
   {
+    "type": "true",
+    "named": false
+  },
+  {
     "type": "unknown",
     "named": false
   },
   {
     "type": "{",
+    "named": false
+  },
+  {
+    "type": "{}",
     "named": false
   },
   {

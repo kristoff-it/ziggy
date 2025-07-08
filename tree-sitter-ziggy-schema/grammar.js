@@ -19,16 +19,16 @@ module.exports = grammar({
       field("structs", repeat($.struct))
     ),
 
-    
+
     tag_name: $ => seq('@', alias($.identifier, "_tag_name")),
     enum_definition: $ => seq("enum", "{", commaSep1($.identifier), "}"),
     tag: $ => seq(
-      field("docs", optional($.doc_comment)), 
+      field("docs", optional($.doc_comment)),
       field("name", $.tag_name),
       "=",
       field("expr", choice("bytes", $.enum_definition)),
     ),
-    
+
     expr: $ => choice(
       $.struct_union,
       $.identifier,
@@ -44,33 +44,48 @@ module.exports = grammar({
       "unknown",
     ),
 
+    default: $ => choice(
+      "null",
+      "true",
+      "false",
+      "[]",
+      "{}",
+      $.string,
+      $.number,
+    ),
+
+    string: $ => seq('"', /[^"\n]*/, '"'),
+    number: $ => /\d+/,
+
     struct_union: $ => seq($.identifier, repeat1(seq('|', $.identifier))),
 
 
-    
+
     identifier: (_) => {
       const identifier_start = /[a-zA-Z_]/;
       const identifier_part = choice(identifier_start, /[0-9]/);
       return token(seq(identifier_start, repeat(identifier_part)));
     },
 
-    map: $ => seq("map", '[', $.expr, ']'), 
-    array: $ => seq('[', $.expr, ']'), 
+    map: $ => seq('[', ':', ']', $.expr),
+    array: $ => seq('[', ']', $.expr),
     optional: $ => seq('?', $.expr),
 
     struct: $ => seq(
       field("docs", optional($.doc_comment)),
       'struct', field("name", $.identifier), '{',
-        commaSep($.struct_field),
+      commaSep($.struct_field),
+      repeat($.struct),
       '}',
     ),
 
     struct_field: $ => seq(
       field("docs", optional($.doc_comment)),
-      field("key", $.identifier), ':', field("value", $.expr)
+      field("key", $.identifier), ':', field("value", $.expr),
+      field("default", optional(seq('=', $.default)))
     ),
-    
-    doc_comment: _ => repeat1(token(seq('///', /.*/))),    
+
+    doc_comment: _ => repeat1(token(seq('///', /.*/))),
   }
 });
 
