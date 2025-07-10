@@ -10,18 +10,11 @@ pub fn toZiggy(
     gpa: std.mem.Allocator,
     schema: ziggy.schema.Schema,
     diag: ?*ziggy.Diagnostic,
-    r: anytype,
-) ![]const u8 {
-    var buf = std.ArrayList(u8).init(gpa);
-    defer buf.deinit();
-
-    try r.readAllArrayList(&buf, ziggy.max_size);
-
-    const bytes = try buf.toOwnedSliceSentinel(0);
-
-    var js_diag: std.json.Diagnostics = .{};
+    bytes: [:0]const u8,
+) !Ast {
+    var json_diag: std.json.Diagnostics = .{};
     var scanner = std.json.Scanner.initCompleteInput(gpa, bytes);
-    scanner.enableDiagnostics(&js_diag);
+    scanner.enableDiagnostics(&json_diag);
 
     var out = std.ArrayList(u8).init(gpa);
     errdefer out.deinit();
@@ -30,7 +23,7 @@ pub fn toZiggy(
         .gpa = gpa,
         .code = bytes,
         .tokenizer = &scanner,
-        .json_diag = &js_diag,
+        .json_diag = &json_diag,
         .diagnostic = diag,
         .schema = schema,
         .out = out.writer(),
@@ -38,7 +31,10 @@ pub fn toZiggy(
 
     try c.convertJsonValue(try c.next(), schema.root);
 
-    return try out.toOwnedSlice();
+    // TODO: Rewrite to directly construct AST rather than writing bytes to an
+    //       ArrayList(u8), https://github.com/kristoff-it/ziggy/issues/52.
+    const ziggy_bytes = try out.toOwnedSliceSentinel(0);
+    return try Ast.init(gpa, ziggy_bytes, true, true, false, diag);
 }
 
 const Converter = struct {

@@ -14,13 +14,8 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
         .stdin => |lang| {
             const r = std.io.getStdIn().reader();
             const w = std.io.getStdOut().writer();
-            switch (lang) {
-                .json => {
-                    const bytes = try convertToZiggy(gpa, .json, null, schema, r);
-                    try w.writeAll(bytes);
-                },
-                else => @panic("TODO https://github.com/kristoff-it/ziggy/issues/17"),
-            }
+            const bytes = try convertReader(gpa, lang, cmd.to, null, schema, r);
+            try w.writeAll(bytes);
         },
         .paths => |paths| {
             // checkFile will reset the arena at the end of each call
@@ -115,8 +110,8 @@ fn convertDir(
 
 fn convertFile(
     arena_impl: *std.heap.ArenaAllocator,
-    format: Command.Lang,
-    to: Command.Lang,
+    from_format: Command.Lang,
+    to_format: Command.Lang,
     force: bool,
     base_dir: std.fs.Dir,
     sub_path: []const u8,
@@ -133,16 +128,14 @@ fn convertFile(
     if (stat.kind == .directory)
         return error.IsDir;
 
-    const bytes = switch (to) {
-        .ziggy => try convertToZiggy(
-            arena,
-            format,
-            full_path,
-            schema,
-            in.reader(),
-        ),
-        else => @panic("TODO"),
-    };
+    const bytes = try convertReader(
+        arena,
+        from_format,
+        to_format,
+        full_path,
+        schema,
+        in.reader(),
+    );
 
     // if the file has an expected file extension, we remove it before appending
     // the new extension
@@ -160,7 +153,7 @@ fn convertFile(
 
     const out_path = try std.fmt.allocPrint(arena, "{s}.{s}", .{
         extensionless,
-        @tagName(to),
+        @tagName(to_format),
     });
 
     const out = base_dir.createFile(out_path, .{ .exclusive = !force }) catch |err| {
@@ -174,28 +167,62 @@ fn convertFile(
     try out.writeAll(bytes);
 }
 
+fn convertReader(
+    gpa: std.mem.Allocator,
+    from_format: Command.Lang,
+    to_format: Command.Lang,
+    file_path: ?[]const u8,
+    schema: ziggy.schema.Schema,
+    reader: std.fs.File.Reader,
+) ![]const u8 {
+    var buf = std.ArrayList(u8).init(gpa);
+    defer buf.deinit();
+    try reader.readAllArrayList(&buf, ziggy.max_size);
+    const bytes = try buf.toOwnedSliceSentinel(0);
+    return switch (from_format) {
+        .ziggy => try convertFromZiggy(gpa, to_format, file_path, bytes),
+        else => try convertToZiggy(gpa, from_format, file_path, schema, bytes),
+    };
+}
+
+fn convertFromZiggy(
+    gpa: std.mem.Allocator,
+    format: Command.Lang,
+    file_path: ?[]const u8,
+    bytes: [:0]const u8,
+) ![]const u8 {
+    var diag: ziggy.Diagnostic = .{ .path = file_path };
+    const doc = Ast.init(gpa, bytes, true, false, false, &diag) catch {
+        if (diag.errors.items.len != 0) {
+            std.debug.print("{}\n", .{diag});
+        }
+        std.process.exit(1);
+    };
+    _ = doc;
+
+    return switch (format) {
+        else => @panic("TODO: support more file formats https://github.com/kristoff-it/ziggy/issues/17"),
+        .json => @panic("TODO: support converting from ziggy"),
+    };
+}
+
 fn convertToZiggy(
     gpa: std.mem.Allocator,
     format: Command.Lang,
     file_path: ?[]const u8,
     schema: ziggy.schema.Schema,
-    r: std.fs.File.Reader,
+    bytes: [:0]const u8,
 ) ![]const u8 {
     var diag: ziggy.Diagnostic = .{ .path = file_path };
 
-    switch (format) {
-        else => {
-            @panic("TODO: support more file formats");
+    const doc = switch (format) {
+        else => @panic("TODO: support more file formats https://github.com/kristoff-it/ziggy/issues/17"),
+        .json => json.toZiggy(gpa, schema, &diag, bytes) catch {
+            std.debug.print("{} arstasr\n", .{diag});
+            std.process.exit(1);
         },
-        .json => {
-            const bytes = json.toZiggy(gpa, schema, &diag, r) catch {
-                std.debug.print("{} arstasr\n", .{diag});
-                std.process.exit(1);
-            };
-
-            return bytes;
-        },
-    }
+    };
+    return std.fmt.allocPrint(gpa, "{}\n", .{doc});
 }
 
 fn fatalDiag(diag: anytype) noreturn {
