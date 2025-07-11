@@ -58,11 +58,10 @@
   "main": "./out/extension",
 
   "devDependencies": {
-    "@types/node": "^18.0.0",
-    "@types/vscode": "^1.68.0",
-    "@types/which": "^2.0.1",
-    "@vscode/vsce": "^2.24.0",
-    "esbuild": "^0.12.1"
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",
