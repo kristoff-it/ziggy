@@ -53,7 +53,24 @@
         "scopeName": "text.ziggy_schema",
         "path": "./syntaxes/schema.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Ziggy",
+      "properties": {
+        "ziggy.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "description": "Traces the communication between VS Code and the language server.",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off"
+        }
+      }
+    }
   },
   "main": "./out/extension",
 
