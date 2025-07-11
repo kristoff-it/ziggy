@@ -1,6 +1,9 @@
-.vscode/**
-.vscode-test/**
-*.vsix
-src/** 
-node_modules/** 
-.gitignore
+**
+!out/**
+!syntaxes/**
+!CHANGELOG.md
+!LICENSE
+!package.json
+!README.md
+!language-configuration.json
+!schema.language-configuration.json
