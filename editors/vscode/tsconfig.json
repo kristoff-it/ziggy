@@ -1,12 +1,10 @@
 {
-    "compilerOptions": {
-      "module": "commonjs",
-      "target": "ESNext",
-      "outDir": "out",
-      "esModuleInterop": true,
-      "lib": ["esnext"],
-      "sourceMap": true,
-      "rootDir": "src"
-    },
-    "exclude": ["node_modules", ".vscode-test"]
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "target": "esnext",
+    "lib": [
+      "ESNext"
+    ],
+    "noEmit": true,
+  }
 }
