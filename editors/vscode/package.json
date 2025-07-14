@@ -53,36 +53,41 @@
         "scopeName": "text.ziggy_schema",
         "path": "./syntaxes/schema.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Ziggy",
+      "properties": {
+        "ziggy.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "description": "Traces the communication between VS Code and the language server.",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off"
+        }
+      }
+    }
   },
   "main": "./out/extension",
 
   "devDependencies": {
-    "@types/mocha": "^2.2.48",
-    "@types/node": "^18.0.0",
-    "@types/vscode": "^1.68.0",
-    "@types/which": "^2.0.1",
-    "@typescript-eslint/eslint-plugin": "^6.7.0",
-    "@typescript-eslint/parser": "^6.7.0",
-    "eslint": "^8.49.0",
-    "vscode-test": "^1.4.0"
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0"
   },
-
   "dependencies": {
-    "@vscode/vsce": "^2.24.0",
-    "camelcase": "^7.0.1",
-    "esbuild": "^0.12.1",
-    "lodash-es": "^4.17.21",
-    "lodash.debounce": "^4.0.8",
-    "mkdirp": "^2.1.3",
     "vscode-languageclient": "^9.0.1",
     "which": "^3.0.0"
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "esbuild --bundle --sourcemap=external --minify --external:vscode src/extension.ts --outdir=out --platform=node --format=cjs",
-    "watch": "esbuild --watch --bundle --sourcemap=external --external:vscode src/extension.ts --outdir=out --platform=node --format=cjs",
-    "test": "npm run compile && node ./node_modules/vscode/bin/test",
-    "lint": "eslint . --ext .ts"
+    "vscode:prepublish": "npm run build-base -- --minify",
+    "build-base": "esbuild --bundle --external:vscode src/extension.ts --outdir=out --platform=node --format=cjs",
+    "build": "npm run build-base -- --sourcemap",
+    "watch": "npm run build-base -- --sourcemap --watch"
   }
 }
