@@ -2,63 +2,63 @@ const std = @import("std");
 const Build = std.Build;
 
 /// The full Ziggy parsing functionality is available at build time.
-pub usingnamespace @import("src/root.zig");
+pub const ziggy = @import("src/root.zig");
 
 pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const ziggy = b.addModule("ziggy", .{
+    const ziggy_module = b.addModule("ziggy", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
         .strip = false,
     });
 
-    const cli = b.addExecutable(.{
-        .name = "ziggy",
+    const folders = b.dependency("known_folders", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("known-folders");
+    const lsp = b.dependency("lsp_kit", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("lsp");
+
+    const cli_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "ziggy", .module = ziggy_module },
+            .{ .name = "known-folders", .module = folders },
+            .{ .name = "lsp", .module = lsp },
+        },
     });
 
-    const folders = b.dependency("known_folders", .{}).module("known-folders");
-    const lsp = b.dependency("lsp_kit", .{}).module("lsp");
+    const cli_exe = b.addExecutable(.{
+        .name = "ziggy",
+        .root_module = cli_module,
+    });
+    b.installArtifact(cli_exe);
 
-    cli.root_module.addImport("ziggy", ziggy);
-    cli.root_module.addImport("known-folders", folders);
-    cli.root_module.addImport("lsp", lsp);
-
-    const run_exe = b.addRunArtifact(cli);
+    const run_exe = b.addRunArtifact(cli_exe);
     if (b.args) |args| run_exe.addArgs(args);
     const run_exe_step = b.step("run", "Run the Ziggy tool");
     run_exe_step.dependOn(&run_exe.step);
 
-    b.installArtifact(cli);
-
     const ziggy_check = b.addExecutable(.{
         .name = "ziggy_check",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = cli_module,
     });
 
-    ziggy_check.root_module.addImport("ziggy", ziggy);
-    ziggy_check.root_module.addImport("known-folders", folders);
-    ziggy_check.root_module.addImport("lsp", lsp);
     const check = b.step("check", "Check if the project compiles");
     check.dependOn(&ziggy_check.step);
 
-    try setupTests(b, target, optimize, ziggy, cli);
-    try setupReleaseStep(b, ziggy, folders, lsp);
+    try setupTests(b, target, optimize, ziggy_module, cli_exe);
+    try setupReleaseStep(b, ziggy_module);
 }
 
-pub fn setupReleaseStep(
-    b: *Build,
-    ziggy: *Build.Module,
-    folders: *Build.Module,
-    lsp: *Build.Module,
-) !void {
+pub fn setupReleaseStep(b: *Build, ziggy_module: *Build.Module) !void {
     const release_step = b.step("release", "Create releases for the Ziggy CLI tool");
 
     const targets: []const std.Target.Query = &.{
@@ -71,18 +71,31 @@ pub fn setupReleaseStep(
     };
 
     for (targets) |t| {
-        const release_target = b.resolveTargetQuery(t);
+        const target = b.resolveTargetQuery(t);
+        const optimize: std.builtin.OptimizeMode = .ReleaseFast;
+
+        const folders = b.dependency("known_folders", .{
+            .target = target,
+            .optimize = optimize,
+        }).module("known-folders");
+        const lsp = b.dependency("lsp_kit", .{
+            .target = target,
+            .optimize = optimize,
+        }).module("lsp");
 
         const release_exe = b.addExecutable(.{
             .name = "ziggy",
-            .root_source_file = b.path("src/main.zig"),
-            .target = release_target,
-            .optimize = .ReleaseFast,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/main.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "ziggy", .module = ziggy_module },
+                    .{ .name = "known-folders", .module = folders },
+                    .{ .name = "lsp", .module = lsp },
+                },
+            }),
         });
-
-        release_exe.root_module.addImport("ziggy", ziggy);
-        release_exe.root_module.addImport("known-folders", folders);
-        release_exe.root_module.addImport("lsp", lsp);
 
         const target_output = b.addInstallArtifact(release_exe, .{
             .dest_dir = .{
@@ -100,15 +113,13 @@ pub fn setupTests(
     b: *Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    ziggy: *Build.Module,
-    cli: *Build.Step.Compile,
+    ziggy_module: *Build.Module,
+    cli_exe: *Build.Step.Compile,
 ) !void {
     const test_step = b.step("test", "Run unit & snapshot tests");
 
     const unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = ziggy_module,
         .filters = b.option([]const []const u8, "test-filter", "test filter") orelse &.{},
     });
 
@@ -143,9 +154,10 @@ pub fn setupTests(
     // errors - ast
     {
         const base_path = b.pathJoin(&.{ "tests", "ziggy", "ast", "errors" });
-        const tests_dir = try b.build_root.handle.openDir(base_path, .{
+        var tests_dir = try b.build_root.handle.openDir(base_path, .{
             .iterate = true,
         });
+        defer tests_dir.close();
 
         var it = tests_dir.iterateAssumeFirstIteration();
         while (try it.next()) |entry| {
@@ -154,12 +166,12 @@ pub fn setupTests(
             const ext = std.fs.path.extension(entry.name);
             if (!std.mem.eql(u8, ext, ".ziggy")) continue;
 
-            const run_cli = b.addRunArtifact(cli);
+            const run_cli = b.addRunArtifact(cli_exe);
             run_cli.addArg("fmt");
             run_cli.addArg(entry.name);
             run_cli.setCwd(b.path(base_path));
+            run_cli.addFileInput(b.path(base_path).path(b, entry.name));
             run_cli.expectExitCode(1);
-            run_cli.has_side_effects = true;
 
             const out = run_cli.captureStdErr();
             const snap_name = b.fmt("{s}_snap.txt", .{
@@ -194,9 +206,11 @@ pub fn setupTests(
 
             const test_program = b.addExecutable(.{
                 .name = b.fmt("{s}_test", .{basename}),
-                .root_source_file = b.path("tests/type_driven.zig"),
-                .target = target,
-                .optimize = optimize,
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("tests/type_driven.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                }),
             });
 
             const type_module_name = b.fmt("{s}.zig", .{basename});
@@ -207,7 +221,7 @@ pub fn setupTests(
                 })),
             });
             test_program.root_module.addImport("test_type", type_module);
-            test_program.root_module.addImport("ziggy", ziggy);
+            test_program.root_module.addImport("ziggy", ziggy_module);
 
             const run_cli = b.addRunArtifact(test_program);
             run_cli.addFileArg(b.path(b.pathJoin(&.{ base_path, entry.name })));

@@ -2,19 +2,15 @@
     .name = .ziggy,
     .version = "0.1.0",
     .fingerprint = 0x7d935ea7bf3c3891,
-    .minimum_zig_version = "0.14.0-dev.3451+d8d2aa9af",
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{
         .known_folders = .{
             .url = "git+https://github.com/ziglibs/known-folders#aa24df42183ad415d10bc0a33e6238c437fc0f59",
             .hash = "known_folders-0.0.0-Fy-PJtLDAADGDOwYwMkVydMSTp_aN-nfjCZw6qPQ2ECL",
         },
         .lsp_kit = .{
-            .url = "git+https://github.com/kristoff-it/zig-lsp-kit#46e2b958c02dc4ed2d4784f8841ba7d2076da783",
-            .hash = "lsp_kit-0.1.0-hAAxO8G9AACr9SwC5FsYac37Bn7yi968x2UMq4wxKlgr",
-        },
-        .yaml = .{
-            .url = "git+https://github.com/kubkon/zig-yaml#27f63d3d2d13ed228d8fc077635205e6c2a405c7",
-            .hash = "zig_yaml-0.1.0-C1161hVrAgDsyB2EZnq-Vp-QuZ9xJm2y0dECRXGG3UaP",
+            .url = "git+https://github.com/zigtools/lsp-kit.git#2cdb2f697bbc8f54c0edc329c83cdfc36c0c602c",
+            .hash = "lsp_kit-0.1.0-bi_PL8pACgARxlPI3USHMeiyGRuJJR7e8V0zOqjgkc4u",
         },
     },
     .paths = .{

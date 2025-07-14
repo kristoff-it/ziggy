@@ -142,12 +142,13 @@ pub fn loadFile(
         },
     }
     log.debug("sending diags!", .{});
-    const msg = try self.server.sendToClientNotification(
+    try self.transport.writeNotification(
+        self.gpa,
         "textDocument/publishDiagnostics",
+        lsp.types.PublishDiagnosticsParams,
         res,
+        .{ .emit_null_optional_fields = false },
     );
-
-    defer self.gpa.free(msg);
 }
 
 pub fn schemaForZiggy(self: *Handler, arena: std.mem.Allocator, uri: []const u8) !?Schema {
