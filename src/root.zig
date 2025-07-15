@@ -10,11 +10,7 @@ pub const FrontmatterError = Parser.FrontmatterError;
 pub const serializer = @import("ziggy/serializer.zig");
 pub const stringify = serializer.stringify;
 
-pub const lsp_parser: enum { recover, resilient } = .resilient;
-pub const LanguageServerAst = switch (lsp_parser) {
-    .recover => @import("ziggy/RecoverAst.zig"),
-    .resilient => @import("ziggy/ResilientParser.zig"),
-};
+pub const LanguageServerAst = @import("ziggy/ResilientParser.zig");
 
 pub const schema = struct {
     pub const Diagnostic = @import("schema/Diagnostic.zig");
@@ -35,7 +31,6 @@ test {
 
     _ = dynamic;
     _ = serializer;
-    _ = @import("ziggy/RecoverAst.zig");
     _ = @import("ziggy/ResilientParser.zig");
 }
 test {

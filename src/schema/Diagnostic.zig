@@ -12,6 +12,9 @@ code: [:0]const u8 = "",
 /// This field should be set as needed by users.
 path: ?[]const u8,
 
+/// Enable for LSP-style formatted printing of errors
+lsp: bool,
+
 tok: Token = .{
     .tag = .eof,
     .loc = .{ .start = 0, .end = 0 },
@@ -40,18 +43,12 @@ pub fn debug(self: Diagnostic) void {
 }
 
 pub fn format(
-    self: Diagnostic,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
+    d: Diagnostic,
     out_stream: anytype,
 ) !void {
-    _ = options;
-
-    const lsp = std.mem.eql(u8, fmt, "lsp");
-
-    if (!lsp) {
-        const start = self.tok.loc.getSelection(self.code).start;
-        if (self.path) |p| {
+    if (!d.lsp) {
+        const start = d.tok.loc.getSelection(d.code).start;
+        if (d.path) |p| {
             try out_stream.print("{s}:{}:{}\n", .{
                 p,
                 start.line,
@@ -65,29 +62,29 @@ pub fn format(
         }
     }
 
-    switch (self.err) {
+    switch (d.err) {
         .none => {},
         .empty_enum => {
             try out_stream.print("empty enum", .{});
         },
         .invalid_token => {
             try out_stream.print("invalid token", .{});
-            if (!lsp) {
+            if (!d.lsp) {
                 try out_stream.print(": '{s}'", .{
-                    self.tok.loc.src(self.code),
+                    d.tok.loc.src(d.code),
                 });
             }
         },
         .unexpected_token => |u| {
-            if (self.tok.tag == .eof) {
-                if (!lsp) {
+            if (d.tok.tag == .eof) {
+                if (!d.lsp) {
                     try out_stream.print("unexpected EOF, ", .{});
                 }
                 try out_stream.print("expected: ", .{});
             } else {
-                if (!lsp) {
+                if (!d.lsp) {
                     try out_stream.print("unexpected token: '{s}', ", .{
-                        self.tok.loc.src(self.code),
+                        d.tok.loc.src(d.code),
                     });
                 }
                 try out_stream.print("expected: ", .{});
@@ -103,14 +100,14 @@ pub fn format(
             try out_stream.print("\n", .{});
         },
         .duplicate_field => |dup| {
-            if (lsp) {
+            if (d.lsp) {
                 try out_stream.print("duplicate field", .{});
             } else {
-                const first_sel = dup.first_loc.getSelection(self.code);
+                const first_sel = dup.first_loc.getSelection(d.code);
                 try out_stream.print("found duplicate field '{s}', first definition here:", .{
-                    self.tok.loc.src(self.code),
+                    d.tok.loc.src(d.code),
                 });
-                if (self.path) |p| {
+                if (d.path) |p| {
                     try out_stream.print("\n{s}:{}:{}\n", .{
                         p,
                         first_sel.start.line,
@@ -125,18 +122,18 @@ pub fn format(
             }
         },
         .missing_field => |miss| {
-            if (lsp) {
+            if (d.lsp) {
                 try out_stream.print(
                     "missing field '{s}'",
                     .{miss.name},
                 );
             } else {
-                const struct_end = self.tok.loc.getSelection(self.code);
+                const struct_end = d.tok.loc.getSelection(d.code);
                 try out_stream.print(
                     "missing field '{s}', struct ends here:",
                     .{miss.name},
                 );
-                if (self.path) |p| {
+                if (d.path) |p| {
                     try out_stream.print("\n{s}:{}:{}\n", .{
                         p,
                         struct_end.start.line,
@@ -151,19 +148,19 @@ pub fn format(
             }
         },
         .unknown_field => {
-            const name = self.tok.loc.src(self.code);
-            if (lsp) {
+            const name = d.tok.loc.src(d.code);
+            if (d.lsp) {
                 try out_stream.print(
                     "unknown field '{s}'",
                     .{name},
                 );
             } else {
-                const selection = self.tok.loc.getSelection(self.code);
+                const selection = d.tok.loc.getSelection(d.code);
                 try out_stream.print(
                     "unknown field '{s}' found here:",
                     .{name},
                 );
-                if (self.path) |p| {
+                if (d.path) |p| {
                     try out_stream.print("\n{s}:{}:{}\n", .{
                         p,
                         selection.start.line,

@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const ziggy = @import("ziggy");
+const Writer = std.Io.Writer;
 const Diagnostic = ziggy.Diagnostic;
 const Ast = ziggy.Ast;
 const Node = Ast.Node;
@@ -10,30 +11,30 @@ pub fn toZiggy(
     gpa: std.mem.Allocator,
     schema: ziggy.schema.Schema,
     diag: ?*ziggy.Diagnostic,
-    r: anytype,
+    file: std.fs.File,
 ) ![]const u8 {
-    var buf = std.ArrayList(u8).init(gpa);
-    defer buf.deinit();
+    var fr = file.reader(&.{});
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
 
-    try r.readAllArrayList(&buf, ziggy.max_size);
-
-    const bytes = try buf.toOwnedSliceSentinel(0);
+    _ = try fr.interface.streamRemaining(&aw.writer);
+    const in_bytes = try aw.toOwnedSliceSentinel(0);
 
     var js_diag: std.json.Diagnostics = .{};
-    var scanner = std.json.Scanner.initCompleteInput(gpa, bytes);
+    var scanner = std.json.Scanner.initCompleteInput(gpa, in_bytes);
     scanner.enableDiagnostics(&js_diag);
 
-    var out = std.ArrayList(u8).init(gpa);
+    var out: std.Io.Writer.Allocating = .init(gpa);
     errdefer out.deinit();
 
     var c: Converter = .{
         .gpa = gpa,
-        .code = bytes,
+        .code = in_bytes,
         .tokenizer = &scanner,
         .json_diag = &js_diag,
         .diagnostic = diag,
         .schema = schema,
-        .out = out.writer(),
+        .out = &out.writer,
     };
 
     try c.convertJsonValue(try c.next(), schema.root);
@@ -48,7 +49,7 @@ const Converter = struct {
     json_diag: *std.json.Diagnostics,
     diagnostic: ?*Diagnostic,
     schema: ziggy.schema.Schema,
-    out: std.ArrayList(u8).Writer,
+    out: *Writer,
 
     fn jsonSel(p: Converter) Token.Loc.Selection {
         const start: Token.Loc.Selection.Position = .{
@@ -123,10 +124,9 @@ const Converter = struct {
                 try c.out.writeAll("{");
                 var token = try c.next();
                 while (token != .object_end) : (token = try c.next()) {
-                    try c.out.print(
-                        "\"{}\":",
-                        .{std.zig.fmtEscapes(token.string)},
-                    );
+                    try c.out.print("\"{f}\":", .{
+                        std.zig.fmtString(token.string),
+                    });
                     try c.convertJsonValue(
                         try c.next(),
                         .{ .node = child_rule_id },
@@ -164,7 +164,7 @@ const Converter = struct {
 
                     try seen_fields.putNoClobber(k, {});
 
-                    try c.out.print(".{}=", .{std.zig.fmtId(k)});
+                    try c.out.print(".{f}=", .{std.zig.fmtId(k)});
                     try c.convertJsonValue(try c.next(), field.rule);
                     try c.out.writeAll(",");
                 }
@@ -290,10 +290,13 @@ const Converter = struct {
         switch (r.tag) {
             .optional => unreachable,
             .bytes, .any, .unknown => {
-                try c.out.print("\"{}\"", .{std.zig.fmtEscapes(str)});
+                try c.out.print("\"{f}\"", .{std.zig.fmtString(str)});
             },
             .tag => {
-                try c.out.print("{s}(\"{}\")", .{ rule_src, std.zig.fmtEscapes(str) });
+                try c.out.print("{s}(\"{f}\")", .{
+                    rule_src,
+                    std.zig.fmtString(str),
+                });
             },
             else => {
                 return c.addError(.{
@@ -366,7 +369,7 @@ const Converter = struct {
         switch (r.tag) {
             .optional => unreachable,
             .bool, .any, .unknown => {
-                try c.out.print("{s}", .{@tagName(token)});
+                try c.out.print("{t}", .{token});
             },
             else => {
                 return c.addError(.{

@@ -7,6 +7,7 @@ const Diagnostic = @import("Diagnostic.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
 const Rule = ziggy.schema.Schema.Rule;
+const Writer = std.Io.Writer;
 
 const log = std.log.scoped(.ziggy_ast);
 
@@ -1286,21 +1287,13 @@ pub fn findSchemaPathFromLoc(schema_loc: Token.Loc, bytes: [:0]const u8) ?[]cons
     return null;
 }
 
-pub fn format(
-    self: RecoverAst,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
-    out_stream: anytype,
-) !void {
-    _ = fmt;
-    _ = options;
-
-    try render(self.nodes, self.code, out_stream);
+pub fn format(self: RecoverAst, w: *Writer) !void {
+    try render(self.nodes, self.code, w);
 }
 
 const RenderMode = enum { horizontal, vertical };
 const ContainerLayout = enum { @"struct", map };
-pub fn render(nodes: []const Node, code: [:0]const u8, w: anytype) anyerror!void {
+pub fn render(nodes: []const Node, code: [:0]const u8, w: *Writer) Writer.Error!void {
     var value_idx: u32 = 1;
     const value = nodes[value_idx];
     if (value.tag == .top_comment) {
@@ -1323,8 +1316,8 @@ fn renderValue(
     nodes: []const Node,
     code: [:0]const u8,
     is_top_value: bool,
-    w: anytype,
-) anyerror!void {
+    w: *Writer,
+) Writer.Error!void {
     switch (node.tag) {
         .root => return,
         .braceless_struct => {
@@ -1472,7 +1465,7 @@ fn renderValue(
     }
 }
 
-fn printIndent(indent: usize, w: anytype) !void {
+fn printIndent(indent: usize, w: *Writer) !void {
     for (0..indent) |_| try w.writeAll("    ");
 }
 
@@ -1495,7 +1488,7 @@ fn printComments(
     node: Node,
     nodes: []const Node,
     code: [:0]const u8,
-    w: anytype,
+    w: *Writer,
 ) !?Node {
     std.debug.assert(node.tag == .comment);
 
@@ -1520,7 +1513,7 @@ fn renderArray(
     idx: u32,
     nodes: []const Node,
     code: [:0]const u8,
-    w: anytype,
+    w: *Writer,
 ) !void {
     var seen_values = false;
     var maybe_value: ?Node = nodes[idx];
@@ -1563,7 +1556,7 @@ fn renderFields(
     idx: u32,
     nodes: []const Node,
     code: [:0]const u8,
-    w: anytype,
+    w: *Writer,
 ) !void {
     assert(idx != 0);
     var seen_fields = false;
@@ -1640,10 +1633,10 @@ pub fn completionsForOffset(
 
 fn expectFmt(case: [:0]const u8) !void {
     var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
+    errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
     const ast = try RecoverAst.init(std.testing.allocator, case, true, &diag);
     defer ast.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{}", .{ast});
+    try std.testing.expectFmt(case, "{f}", .{ast});
 }
 
 test "basics" {

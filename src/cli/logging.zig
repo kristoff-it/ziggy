@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const folders = @import("known-folders");
 
 pub var log_file: ?std.fs.File = switch (builtin.target.os.tag) {
-    .linux, .macos => std.io.getStdErr(),
+    .linux, .macos => std.fs.File.stderr(),
     else => null,
 };
 
@@ -21,8 +21,9 @@ pub fn logFn(
     std.debug.lockStdErr();
     defer std.debug.unlockStdErr();
 
-    const writer = l.writer();
-    writer.print(prefix ++ format ++ "\n", args) catch return;
+    var writer = l.writer(&.{});
+    const w = &writer.interface;
+    w.print(prefix ++ format ++ "\n", args) catch return;
 }
 
 pub fn setup(gpa: std.mem.Allocator) void {

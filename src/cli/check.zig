@@ -11,7 +11,7 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
         cmd.schema_path,
         ziggy.max_size,
         null,
-        1,
+        .of(u8),
         0,
     ) catch |err| {
         std.debug.print("Error reading '{s}': {s}\n", .{
@@ -21,7 +21,7 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
         std.process.exit(1);
     };
 
-    var schema_diag: ziggy.schema.Diagnostic = .{ .path = cmd.schema_path };
+    var schema_diag: ziggy.schema.Diagnostic = .{ .lsp = false, .path = cmd.schema_path };
     const schema_ast = ziggy.schema.Ast.init(
         gpa,
         schema_file,
@@ -91,7 +91,7 @@ fn checkFile(
         sub_path,
         ziggy.max_size,
         null,
-        1,
+        .of(u8),
         0,
     );
     var diag: ziggy.Diagnostic = .{ .path = sub_path };
@@ -102,14 +102,14 @@ fn checkFile(
         true,
         false,
         &diag,
-    ) catch fatalDiag(diag);
+    ) catch fatalDiag(diag.fmt(doc_file));
 
-    doc_ast.check(arena, schema, &diag) catch fatalDiag(diag);
-    std.debug.print("{}\n", .{diag});
+    doc_ast.check(arena, schema, &diag) catch fatalDiag(diag.fmt(doc_file));
+    std.debug.print("{f}\n", .{diag.fmt(doc_file)});
 }
 
 fn fatalDiag(diag: anytype) noreturn {
-    std.debug.print("{}\n", .{diag});
+    std.debug.print("{f}\n", .{diag});
     std.process.exit(1);
 }
 

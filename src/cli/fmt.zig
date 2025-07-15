@@ -12,20 +12,24 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
     var any_error = false;
     switch (cmd.mode) {
         .stdin => {
-            var buf = std.ArrayList(u8).init(gpa);
-            try std.io.getStdIn().reader().readAllArrayList(&buf, ziggy.max_size);
-            const in_bytes = try buf.toOwnedSliceSentinel(0);
+            var fr = std.fs.File.stdin().reader(&.{});
+            var aw: std.Io.Writer.Allocating = .init(gpa);
+            _ = try fr.interface.streamRemaining(&aw.writer);
+            const in_bytes = try aw.toOwnedSliceSentinel(0);
 
             const out_bytes = try fmtZiggy(gpa, null, in_bytes, schema);
-            try std.io.getStdOut().writeAll(out_bytes);
+
+            try std.fs.File.stdout().writeAll(out_bytes);
         },
         .stdin_schema => {
-            var buf = std.ArrayList(u8).init(gpa);
-            try std.io.getStdIn().reader().readAllArrayList(&buf, ziggy.max_size);
-            const in_bytes = try buf.toOwnedSliceSentinel(0);
+            var fr = std.fs.File.stdin().reader(&.{});
+            var aw: std.Io.Writer.Allocating = .init(gpa);
+            _ = try fr.interface.streamRemaining(&aw.writer);
+            const in_bytes = try aw.toOwnedSliceSentinel(0);
 
             const out_bytes = try fmtSchema(gpa, null, in_bytes);
-            try std.io.getStdOut().writeAll(out_bytes);
+
+            try std.fs.File.stdout().writeAll(out_bytes);
         },
         .paths => |paths| {
             // checkFile will reset the arena at the end of each call
@@ -49,16 +53,16 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
                             schema,
                             &any_error,
                         ) catch |dir_err| {
-                            std.debug.print("Error walking dir '{s}': {s}\n", .{
+                            std.debug.print("Error walking dir '{s}': {t}\n", .{
                                 path,
-                                @errorName(dir_err),
+                                dir_err,
                             });
                             std.process.exit(1);
                         };
                     },
                     else => {
-                        std.debug.print("Error while accessing '{s}': {s}\n", .{
-                            path, @errorName(err),
+                        std.debug.print("Error while accessing '{s}': {t}\n", .{
+                            path, err,
                         });
                         std.process.exit(1);
                     },
@@ -114,12 +118,14 @@ fn formatFile(
     defer _ = arena_impl.reset(.retain_capacity);
     const arena = arena_impl.allocator();
 
-    const file = try base_dir.openFile(sub_path, .{});
-    defer file.close();
-
-    const stat = try file.stat();
-    if (stat.kind == .directory)
-        return error.IsDir;
+    const in_bytes = try base_dir.readFileAllocOptions(
+        arena,
+        sub_path,
+        ziggy.max_size,
+        null,
+        .of(u8),
+        0,
+    );
 
     const file_type: FileType = blk: {
         const ext = std.fs.path.extension(sub_path);
@@ -140,10 +146,6 @@ fn formatFile(
     var buf = std.ArrayList(u8).init(arena);
     defer buf.deinit();
 
-    try file.reader().readAllArrayList(&buf, ziggy.max_size);
-
-    const in_bytes = try buf.toOwnedSliceSentinel(0);
-
     const out_bytes = switch (file_type) {
         .ziggy => try fmtZiggy(
             arena,
@@ -160,14 +162,16 @@ fn formatFile(
 
     if (std.mem.eql(u8, out_bytes, in_bytes)) return;
 
-    const stdout = std.io.getStdOut().writer();
+    var stdout_writer = std.fs.File.stdout().writer(&.{});
+    const stdout = &stdout_writer.interface;
+
     if (check) {
         any_error.* = true;
         try stdout.print("{s}\n", .{full_path});
         return;
     }
 
-    var af = try base_dir.atomicFile(sub_path, .{ .mode = stat.mode });
+    var af = try base_dir.atomicFile(sub_path, .{});
     defer af.deinit();
 
     try af.file.writeAll(out_bytes);
@@ -184,19 +188,19 @@ pub fn fmtZiggy(
     var diag: Diagnostic = .{ .path = path };
     const doc = Ast.init(gpa, code, true, false, false, &diag) catch {
         if (diag.errors.items.len != 0) {
-            std.debug.print("{}\n", .{diag.fmt(code)});
+            std.debug.print("{f}\n", .{diag.fmt(code)});
         }
         std.process.exit(1);
     };
 
     doc.check(gpa, schema, &diag) catch {
         if (diag.errors.items.len != 0) {
-            std.debug.print("{}\n", .{diag.fmt(code)});
+            std.debug.print("{f}\n", .{diag.fmt(code)});
         }
         std.process.exit(1);
     };
 
-    return std.fmt.allocPrint(gpa, "{}\n", .{doc});
+    return std.fmt.allocPrint(gpa, "{f}\n", .{doc});
 }
 
 fn fmtSchema(
@@ -204,13 +208,13 @@ fn fmtSchema(
     path: ?[]const u8,
     code: [:0]const u8,
 ) ![]const u8 {
-    var diag: ziggy.schema.Diagnostic = .{ .path = path };
+    var diag: ziggy.schema.Diagnostic = .{ .lsp = false, .path = path };
     const ast = ziggy.schema.Ast.init(gpa, code, &diag) catch {
-        std.debug.print("{}\n", .{diag});
+        std.debug.print("{f}\n", .{diag});
         std.process.exit(1);
     };
 
-    return std.fmt.allocPrint(gpa, "{}", .{ast});
+    return std.fmt.allocPrint(gpa, "{f}", .{ast});
 }
 
 fn oom() noreturn {

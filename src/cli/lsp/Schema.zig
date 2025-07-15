@@ -20,7 +20,7 @@ pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) Schema {
     var schema: Schema = .{
         .arena = std.heap.ArenaAllocator.init(gpa),
         .bytes = bytes,
-        .diagnostic = .{ .path = null },
+        .diagnostic = .{ .lsp = true, .path = null },
     };
 
     const arena = schema.arena.allocator();

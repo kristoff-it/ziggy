@@ -4,14 +4,14 @@ const ziggy = @import("ziggy");
 pub fn loadSchema(gpa: std.mem.Allocator, path: ?[]const u8) ziggy.schema.Schema {
     const p = path orelse return defaultSchema();
 
-    var diag: ziggy.schema.Diagnostic = .{ .path = p };
+    var diag: ziggy.schema.Diagnostic = .{ .lsp = false, .path = p };
 
     const schema_file = std.fs.cwd().readFileAllocOptions(
         gpa,
         p,
         ziggy.max_size,
         null,
-        1,
+        .of(u8),
         0,
     ) catch |err| {
         std.debug.print("error while reading the --schema file: {s}\n\n", .{
@@ -28,7 +28,7 @@ pub fn loadSchema(gpa: std.mem.Allocator, path: ?[]const u8) ziggy.schema.Schema
         std.debug.print("error while parsing the --schema file: {s}\n\n", .{
             @errorName(err),
         });
-        std.debug.print("{}\n", .{diag});
+        std.debug.print("{f}\n", .{diag});
         std.process.exit(1);
     };
 
@@ -41,7 +41,7 @@ pub fn loadSchema(gpa: std.mem.Allocator, path: ?[]const u8) ziggy.schema.Schema
         std.debug.print("error while parsing the --schema file: {s}\n\n", .{
             @errorName(err),
         });
-        std.debug.print("{}\n", .{diag});
+        std.debug.print("{f}\n", .{diag});
         std.process.exit(1);
     };
 

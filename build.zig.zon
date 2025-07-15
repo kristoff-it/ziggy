@@ -2,15 +2,15 @@
     .name = .ziggy,
     .version = "0.1.0",
     .fingerprint = 0x7d935ea7bf3c3891,
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.15.0-dev.1034+bd97b6618",
     .dependencies = .{
         .known_folders = .{
             .url = "git+https://github.com/ziglibs/known-folders#aa24df42183ad415d10bc0a33e6238c437fc0f59",
             .hash = "known_folders-0.0.0-Fy-PJtLDAADGDOwYwMkVydMSTp_aN-nfjCZw6qPQ2ECL",
         },
         .lsp_kit = .{
-            .url = "git+https://github.com/zigtools/lsp-kit.git#2cdb2f697bbc8f54c0edc329c83cdfc36c0c602c",
-            .hash = "lsp_kit-0.1.0-bi_PL8pACgARxlPI3USHMeiyGRuJJR7e8V0zOqjgkc4u",
+            .url = "git+https://github.com/zigtools/lsp-kit#e58d398b4058eea09d984d5d039eddd243e535ad",
+            .hash = "lsp_kit-0.1.0-bi_PL5IyCgCh6ZNq1VaDklFqV0u23xNSXONjfDpYceJr",
         },
     },
     .paths = .{

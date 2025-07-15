@@ -5,6 +5,7 @@ const assert = std.debug.assert;
 const Diagnostic = @import("Diagnostic.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
+const Writer = std.Io.Writer;
 
 pub const Node = struct {
     tag: Tag,
@@ -497,15 +498,7 @@ pub fn mustAny(
     }
 }
 
-pub fn format(
-    self: Ast,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
-    out_stream: anytype,
-) !void {
-    _ = fmt;
-    _ = options;
-
+pub fn format(self: Ast, out_stream: *Writer) !void {
     try render(self.nodes.items, self.code, out_stream);
 }
 
@@ -679,10 +672,10 @@ test "basics" {
         \\
     ;
 
-    var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
+    var diag: Diagnostic = .{ .lsp = false, .path = null };
+    errdefer std.debug.print("diag: {f}", .{diag});
     const ast = try Ast.init(std.testing.allocator, case, &diag);
     defer ast.deinit();
 
-    try std.testing.expectFmt(case, "{}", .{ast});
+    try std.testing.expectFmt(case, "{f}", .{ast});
 }

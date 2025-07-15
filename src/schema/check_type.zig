@@ -12,15 +12,15 @@ pub fn checkType(T: type, src: [:0]const u8) !void {
     defer arena_state.deinit();
 
     const arena = arena_state.allocator();
-    var diag: Diagnostic = .{ .path = null };
+    var diag: Diagnostic = .{ .lsp = false, .path = null };
 
     const ast = Ast.init(arena, src, &diag) catch |err| {
-        std.debug.print("Error while parsing Ziggy Schema:\n{}\n", .{diag});
+        std.debug.print("Error while parsing Ziggy Schema:\n{f}\n", .{diag});
         return err;
     };
 
     const schema = Schema.init(arena, ast.nodes.items, src, &diag) catch |err| {
-        std.debug.print("Error while analyzing Ziggy Schema:\n{}\n", .{diag});
+        std.debug.print("Error while analyzing Ziggy Schema:\n{f}\n", .{diag});
         return err;
     };
 

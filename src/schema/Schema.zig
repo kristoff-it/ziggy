@@ -434,8 +434,8 @@ test "basics" {
         \\
     ;
 
-    var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
+    var diag: Diagnostic = .{ .lsp = false, .path = null };
+    errdefer std.debug.print("diag: {f}", .{diag});
     const ast = try Ast.init(std.testing.allocator, case, &diag);
     defer ast.deinit();
 

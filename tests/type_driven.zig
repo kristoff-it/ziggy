@@ -15,7 +15,7 @@ pub fn main() !void {
         args[1],
         ziggy.max_size,
         null,
-        1,
+        .of(u8),
         0,
     );
 
@@ -24,7 +24,7 @@ pub fn main() !void {
         .diagnostic = &diag,
     }) catch |err| {
         if (err != error.Syntax) @panic("wrong error!");
-        std.debug.print("{s}", .{diag.fmt(case)});
+        std.debug.print("{f}", .{diag.fmt(case)});
         std.process.exit(1);
     };
 

@@ -12,7 +12,7 @@ arena: std.heap.ArenaAllocator,
 bytes: [:0]const u8,
 diagnostic: ziggy.Diagnostic,
 frontmatter: bool,
-ast: ?if (ziggy.lsp_parser == .recover) ziggy.LanguageServerAst else ziggy.LanguageServerAst.Tree = null,
+ast: ?ziggy.LanguageServerAst.Tree = null,
 schema: ?Schema,
 
 pub fn deinit(doc: *Document) void {

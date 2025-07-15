@@ -66,8 +66,8 @@ pub const Tree = struct {
         gpa.free(t.hovers);
     }
 
-    pub fn fmt(t: Tree, code: [:0]const u8) TreeFmt {
-        return .{ .code = code, .tree = t };
+    pub fn fmt(t: Tree, pretty: bool, code: [:0]const u8) TreeFmt {
+        return .{ .pretty = pretty, .code = code, .tree = t };
     }
 
     const CheckItem = struct {
@@ -133,8 +133,8 @@ pub const Tree = struct {
             const tree = elem.child.tree;
 
             log.debug(
-                "rule {s} {s}, child {}",
-                .{ @tagName(rule.tag), rule.loc.src(rules.code), elem.child },
+                "rule {t} {s}, child {f}",
+                .{ rule.tag, rule.loc.src(rules.code), elem.child },
             );
             if (tree.tag == .err) {
                 // assume error has already been reported. nothing to do here.
@@ -203,7 +203,7 @@ pub const Tree = struct {
                         var child_id: usize = 0;
                         while (child_id < tree.children.items.len) : (child_id += 1) {
                             const map_child = tree.children.items[child_id];
-                            log.debug("map_child {}", .{map_child});
+                            log.debug("map_child {f}", .{map_child});
                             if (map_child == .tree and
                                 map_child.tree.tag == .map_field and
                                 map_child.tree.children.items.len >= 3)
@@ -565,17 +565,15 @@ pub const Tree = struct {
 };
 
 pub const TreeFmt = struct {
+    pretty: bool,
     code: [:0]const u8,
     tree: Tree,
 
     pub fn format(
         tfmt: TreeFmt,
-        comptime fmt_str: []const u8,
-        options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        _ = options;
-        if (mem.eql(u8, fmt_str, "pretty"))
+        if (tfmt.pretty)
             try tfmt.prettyPrint(writer, 0, false)
         else
             try tfmt.dump(writer, 0);
@@ -608,12 +606,12 @@ pub const TreeFmt = struct {
             },
             .line_string => {
                 try writer.writeByte('\n');
-                try writer.writeByteNTimes(' ', (indent + 1) * 4);
+                try writer.splatByteAll(' ', (indent + 1) * 4);
                 try writer.writeAll(token.loc.src(tfmt.code));
                 // if this is the last line string, indent for a trailing comma
                 if (i + 1 == tfmt.tree.children.items.len) {
                     try writer.writeByte('\n');
-                    try writer.writeByteNTimes(' ', (indent + 1) * 4);
+                    try writer.splatByteAll(' ', (indent + 1) * 4);
                 }
             },
             else => {
@@ -628,7 +626,7 @@ pub const TreeFmt = struct {
                         (tfmt.tree.children.items[i + 1].token.tag == .rsb or
                             tfmt.tree.children.items[i + 1].token.tag == .rb);
                     const new_indent = (indent -| @intFromBool(unindent)) * 4;
-                    try writer.writeByteNTimes(' ', new_indent);
+                    try writer.splatByteAll(' ', new_indent);
                 } else if (tfmt.tree.tag == .top_level_struct) {
                     try writer.writeByte('\n');
                 } else {
@@ -677,7 +675,11 @@ pub const TreeFmt = struct {
                             false;
 
                     const additional_indent = @intFromBool(_has_trailing_comma);
-                    const sub_tfmt = TreeFmt{ .tree = tree, .code = tfmt.code };
+                    const sub_tfmt = TreeFmt{
+                        .pretty = true,
+                        .tree = tree,
+                        .code = tfmt.code,
+                    };
                     try sub_tfmt.prettyPrint(
                         writer,
                         indent + additional_indent,
@@ -689,20 +691,24 @@ pub const TreeFmt = struct {
     }
 
     fn dump(tfmt: TreeFmt, writer: anytype, indent: usize) !void {
-        try writer.writeByteNTimes(' ', indent * 2);
+        try writer.splatByteAll(' ', indent * 2);
         _ = try writer.write(@tagName(tfmt.tree.tag));
         try writer.writeByte('\n');
         for (tfmt.tree.children.items) |child| {
             switch (child) {
                 .token => |token| {
-                    try writer.writeByteNTimes(' ', indent * 2);
+                    try writer.splatByteAll(' ', indent * 2);
                     try writer.print(
                         "  '{s}' {}:{}\n",
                         .{ token.loc.src(tfmt.code), token.loc.start, token.loc.end },
                     );
                 },
                 .tree => |tree| {
-                    const sub_tfmt = TreeFmt{ .tree = tree, .code = tfmt.code };
+                    const sub_tfmt = TreeFmt{
+                        .pretty = false,
+                        .tree = tree,
+                        .code = tfmt.code,
+                    };
                     try sub_tfmt.dump(writer, indent + 1);
                 },
             }
@@ -725,12 +731,10 @@ pub const Child = union(enum) {
         if (c.* == .tree) c.tree.deinit(gpa);
     }
 
-    pub fn format(c: Child, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(c: Child, writer: anytype) !void {
         switch (c) {
-            .token => try writer.print("token={s}", .{@tagName(c.token.tag)}),
-            .tree => try writer.print("tree={s}", .{@tagName(c.tree.tag)}),
+            .token => try writer.print("token={t}", .{c.token.tag}),
+            .tree => try writer.print("tree={t}", .{c.tree.tag}),
         }
     }
 };
@@ -1428,7 +1432,7 @@ fn atAny(p: *Parser, tags: []const Token.Tag) bool {
 }
 
 fn addError(p: Parser, err: Diagnostic.Error) !void {
-    log.debug("addError {}", .{err.fmt(p.code, null)});
+    log.debug("addError {f}", .{err.fmt(.cli, p.code, null)});
     if (p.diagnostic) |d| {
         try d.errors.append(p.gpa, err);
     }
@@ -1486,7 +1490,7 @@ fn buildTree(p: *Parser) !Tree {
             .close => {
                 const tree = stack.pop().?;
                 if (stack.items.len == 0) {
-                    log.debug("tree\n{}\n", .{tree.fmt(p.code)});
+                    log.debug("tree\n{f}\n", .{tree.fmt(false, p.code)});
                 }
                 try stack.items[stack.items.len - 1].children.append(
                     p.gpa,
@@ -1508,8 +1512,8 @@ fn buildTree(p: *Parser) !Tree {
     // has a trailing comma at the end.
     // assert(p.tokenizer.next(p.code).tag == .eof);
     if (stack.items.len != 0) {
-        log.debug("unhandled stack item tree {}", .{tree.fmt(p.code)});
-        for (stack.items) |x| log.debug("unhandled stack item tag {s}", .{@tagName(x.tag)});
+        log.debug("unhandled stack item tree {f}", .{tree.fmt(false, p.code)});
+        for (stack.items) |x| log.debug("unhandled stack item tag {t}", .{x.tag});
         assert(false);
     }
     // log.debug("tree\n{}\n", .{tree.fmt(p.code)});
@@ -1523,11 +1527,11 @@ pub fn expectFmtEql(case: [:0]const u8) !void {
 pub fn expectFmt(case: [:0]const u8, expected: []const u8) !void {
     var diag = Diagnostic{ .path = null };
     defer diag.errors.deinit(std.testing.allocator);
-    errdefer std.debug.print("{}\n", .{diag});
+    errdefer std.debug.print("{f}\n", .{diag.fmt(case)});
     var tree = try init(std.testing.allocator, case, true, false, &diag);
     // std.debug.print("{}\n", .{tree.fmt(case)});
     defer tree.deinit(std.testing.allocator);
-    try std.testing.expectFmt(expected, "{pretty}", .{tree.fmt(case)});
+    try std.testing.expectFmt(expected, "{f}", .{tree.fmt(true, case)});
 }
 
 test "basics" {

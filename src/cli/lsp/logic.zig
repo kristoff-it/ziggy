@@ -67,7 +67,9 @@ pub fn loadFile(
             switch (sk.diagnostic.err) {
                 .none => {},
                 else => {
-                    const msg = try std.fmt.allocPrint(arena, "{lsp}", .{sk.diagnostic});
+                    const msg = try std.fmt.allocPrint(arena, "{f}", .{
+                        sk.diagnostic,
+                    });
                     const sel = sk.diagnostic.tok.loc.getSelection(sk.bytes);
                     res.diagnostics = &.{
                         .{
@@ -120,7 +122,10 @@ pub fn loadFile(
 
             const diags = try arena.alloc(lsp.types.Diagnostic, doc.diagnostic.errors.items.len);
             for (doc.diagnostic.errors.items, 0..) |e, idx| {
-                const msg = try std.fmt.allocPrint(arena, "{lsp}", .{e.fmt(doc.bytes, null)});
+                const msg = try std.fmt.allocPrint(arena, "{f}", .{
+                    e.fmt(.lsp, doc.bytes, null),
+                });
+
                 const sel = e.getErrorSelection();
                 diags[idx] = .{
                     .range = .{
@@ -160,7 +165,7 @@ pub fn schemaForZiggy(self: *Handler, arena: std.mem.Allocator, uri: []const u8)
             path,
             ziggy.max_size,
             null,
-            1,
+            .of(u8),
             0,
         ) catch return null;
         log.debug("schema loaded", .{});

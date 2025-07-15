@@ -7,6 +7,7 @@ const Diagnostic = @import("Diagnostic.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
 const Rule = ziggy.schema.Schema.Rule;
+const Writer = std.Io.Writer;
 
 const log = std.log.scoped(.ziggy_ast);
 
@@ -836,21 +837,13 @@ fn typeMismatch(
     });
 }
 
-pub fn format(
-    self: Ast,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
-    out_stream: anytype,
-) !void {
-    _ = fmt;
-    _ = options;
-
+pub fn format(self: Ast, out_stream: *Writer) !void {
     try render(self.nodes, self.code, out_stream);
 }
 
 const RenderMode = enum { horizontal, vertical };
 const ContainerLayout = enum { @"struct", map };
-pub fn render(nodes: []const Node, code: [:0]const u8, w: anytype) anyerror!void {
+pub fn render(nodes: []const Node, code: [:0]const u8, w: *Writer) Writer.Error!void {
     var value_idx: u32 = 1;
     if (value_idx >= nodes.len) return; // skip empty files
     var value = nodes[value_idx];
@@ -885,8 +878,8 @@ fn renderValue(
     nodes: []const Node,
     code: [:0]const u8,
     is_top_value: bool,
-    w: anytype,
-) anyerror!void {
+    w: *Writer,
+) Writer.Error!void {
     switch (node.tag) {
         .root => return,
         .braceless_struct => {
@@ -1040,7 +1033,7 @@ fn renderValue(
     }
 }
 
-fn printIndent(indent: usize, w: anytype) !void {
+fn printIndent(indent: usize, w: *Writer) !void {
     for (0..indent) |_| try w.writeAll("    ");
 }
 
@@ -1063,7 +1056,7 @@ fn printComments(
     node: Node,
     nodes: []const Node,
     code: [:0]const u8,
-    w: anytype,
+    w: *Writer,
 ) !?Node {
     std.debug.assert(node.tag == .comment);
 
@@ -1088,7 +1081,7 @@ fn renderArray(
     idx: u32,
     nodes: []const Node,
     code: [:0]const u8,
-    w: anytype,
+    w: *Writer,
 ) !void {
     var seen_values = false;
     var maybe_value: ?Node = nodes[idx];
@@ -1136,7 +1129,7 @@ fn renderFields(
     idx: u32,
     nodes: []const Node,
     code: [:0]const u8,
-    w: anytype,
+    w: *Writer,
 ) !void {
     assert(idx != 0);
     var seen_fields = false;
@@ -1198,10 +1191,10 @@ test "struct - empty" {
     ;
 
     var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
+    errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
     defer ast.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{}", .{ast});
+    try std.testing.expectFmt(case, "{f}", .{ast});
 }
 
 test "array - empty" {
@@ -1210,10 +1203,10 @@ test "array - empty" {
     ;
 
     var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
+    errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
     defer ast.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{}", .{ast});
+    try std.testing.expectFmt(case, "{f}", .{ast});
 }
 
 test "struct - basic" {
@@ -1226,10 +1219,10 @@ test "struct - basic" {
     ;
 
     var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
+    errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
     defer ast.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{}", .{ast});
+    try std.testing.expectFmt(case, "{f}", .{ast});
 }
 
 test "array - basic" {
@@ -1242,10 +1235,10 @@ test "array - basic" {
     ;
 
     var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
+    errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
     defer ast.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{}", .{ast});
+    try std.testing.expectFmt(case, "{f}", .{ast});
 }
 
 test "braceless struct - basic" {
@@ -1255,10 +1248,10 @@ test "braceless struct - basic" {
     ;
 
     var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
+    errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
     defer ast.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{}", .{ast});
+    try std.testing.expectFmt(case, "{f}", .{ast});
 }
 
 test "braceless struct - vertical" {
@@ -1277,10 +1270,10 @@ test "braceless struct - vertical" {
     ;
 
     var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
+    errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
     defer ast.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{}", .{ast});
+    try std.testing.expectFmt(case, "{f}", .{ast});
 }
 
 test "braceless struct - complex" {
@@ -1300,10 +1293,10 @@ test "braceless struct - complex" {
     ;
 
     var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
+    errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
     defer ast.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{}", .{ast});
+    try std.testing.expectFmt(case, "{f}", .{ast});
 }
 
 test "frontmatter - complex" {
@@ -1325,8 +1318,8 @@ test "frontmatter - complex" {
     ;
 
     var diag: Diagnostic = .{ .path = null };
-    errdefer std.debug.print("diag: {}", .{diag});
+    errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
     const ast = try Ast.init(std.testing.allocator, case, true, true, true, &diag);
     defer ast.deinit(std.testing.allocator);
-    try std.testing.expectFmt(case, "{}", .{ast});
+    try std.testing.expectFmt(case, "{f}", .{ast});
 }
