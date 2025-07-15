@@ -19,6 +19,7 @@ const log = std.log.scoped(.resilient_parser);
 const RecoverAst = @import("RecoverAst.zig");
 const Suggestion = RecoverAst.Suggestion;
 const Hover = RecoverAst.Hover;
+const Writer = std.Io.Writer;
 
 pub const Tree = struct {
     tag: Tree.Tag,
@@ -571,7 +572,7 @@ pub const TreeFmt = struct {
 
     pub fn format(
         tfmt: TreeFmt,
-        writer: anytype,
+        writer: *Writer,
     ) !void {
         if (tfmt.pretty)
             try tfmt.prettyPrint(writer, 0, false)
@@ -585,7 +586,7 @@ pub const TreeFmt = struct {
         indent: u8,
         i: usize,
         has_trailing_comma: bool,
-        writer: anytype,
+        writer: *Writer,
     ) !void {
         switch (token.tag) {
             .string, .integer, .float => {
@@ -642,7 +643,7 @@ pub const TreeFmt = struct {
 
     fn prettyPrint(
         tfmt: TreeFmt,
-        writer: anytype,
+        writer: *Writer,
         indent: u8,
         has_trailing_comma: bool,
     ) !void {
@@ -690,7 +691,7 @@ pub const TreeFmt = struct {
         }
     }
 
-    fn dump(tfmt: TreeFmt, writer: anytype, indent: usize) !void {
+    fn dump(tfmt: TreeFmt, writer: *Writer, indent: usize) !void {
         try writer.splatByteAll(' ', indent * 2);
         _ = try writer.write(@tagName(tfmt.tree.tag));
         try writer.writeByte('\n');
@@ -731,7 +732,7 @@ pub const Child = union(enum) {
         if (c.* == .tree) c.tree.deinit(gpa);
     }
 
-    pub fn format(c: Child, writer: anytype) !void {
+    pub fn format(c: Child, writer: *Writer) !void {
         switch (c) {
             .token => try writer.print("token={t}", .{c.token.tag}),
             .tree => try writer.print("tree={t}", .{c.tree.tag}),

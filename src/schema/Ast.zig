@@ -503,7 +503,7 @@ pub fn format(self: Ast, out_stream: *Writer) !void {
 }
 
 const RenderMode = enum { horizontal, vertical };
-pub fn render(nodes: []const Node, code: [:0]const u8, w: anytype) !void {
+pub fn render(nodes: []const Node, code: [:0]const u8, w: *Writer) !void {
     // root expression
     const root_expr = nodes[1];
     try w.writeAll("root = ");
@@ -590,7 +590,7 @@ fn renderDocComment(
     indent: bool,
     nodes: []const Node,
     code: [:0]const u8,
-    w: anytype,
+    w: *Writer,
 ) !void {
     assert(idx != 0);
 
@@ -607,7 +607,7 @@ fn renderDocComment(
     }
 }
 
-fn renderExpr(idx: u32, nodes: []const Node, code: [:0]const u8, w: anytype) !void {
+fn renderExpr(idx: u32, nodes: []const Node, code: [:0]const u8, w: *Writer) !void {
     const expr = nodes[idx];
 
     switch (expr.tag) {

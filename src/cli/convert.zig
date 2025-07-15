@@ -6,6 +6,7 @@ const json = @import("convert/json.zig");
 const loadSchema = @import("load_schema.zig").loadSchema;
 const Diagnostic = ziggy.Diagnostic;
 const Ast = ziggy.Ast;
+const Writer = std.Io.Writer;
 
 pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
     const cmd = try Command.parse(gpa, args);
@@ -531,7 +532,7 @@ fn renderJsonValue(
     value: json.Value,
     rule: ziggy.schema.Schema.Rule,
     schema: ziggy.schema.Schema,
-    w: anytype,
+    w: *Writer,
 ) anyerror!void {
     var sub_rule = rule;
     const r = schema.nodes[rule.node];
@@ -564,7 +565,7 @@ fn renderJsonObject(
     obj: json.ObjectMap,
     rule: ziggy.schema.Schema.Rule,
     schema: ziggy.schema.Schema,
-    w: anytype,
+    w: *Writer,
 ) !void {
     const r = schema.nodes[rule.node];
     const rule_src = r.loc.src(schema.code);
@@ -618,7 +619,7 @@ fn renderJsonArray(
     array: json.Array,
     rule: ziggy.schema.Schema.Rule,
     schema: ziggy.schema.Schema,
-    w: anytype,
+    w: *Writer,
 ) !void {
     const r = schema.nodes[rule.node];
     const rule_src = r.loc.src(schema.code);
@@ -645,7 +646,7 @@ fn renderJsonString(
     str: []const u8,
     rule: ziggy.schema.Schema.Rule,
     schema: ziggy.schema.Schema,
-    w: anytype,
+    w: *Writer,
 ) !void {
     const r = schema.nodes[rule.node];
     const rule_src = r.loc.src(schema.code);
@@ -667,7 +668,7 @@ fn renderJsonNumberString(
     ns: []const u8,
     rule: ziggy.schema.Schema.Rule,
     schema: ziggy.schema.Schema,
-    w: anytype,
+    w: *Writer,
 ) !void {
     const r = schema.nodes[rule.node];
     const rule_src = r.loc.src(schema.code);
@@ -689,7 +690,7 @@ fn renderJsonFloat(
     num: f64,
     rule: ziggy.schema.Schema.Rule,
     schema: ziggy.schema.Schema,
-    w: anytype,
+    w: *Writer,
 ) !void {
     const r = schema.nodes[rule.node];
     const rule_src = r.loc.src(schema.code);
@@ -711,7 +712,7 @@ fn renderJsonInteger(
     num: i64,
     rule: ziggy.schema.Schema.Rule,
     schema: ziggy.schema.Schema,
-    w: anytype,
+    w: *Writer,
 ) !void {
     const r = schema.nodes[rule.node];
     const rule_src = r.loc.src(schema.code);
@@ -733,7 +734,7 @@ fn renderJsonBool(
     b: bool,
     rule: ziggy.schema.Schema.Rule,
     schema: ziggy.schema.Schema,
-    w: anytype,
+    w: *Writer,
 ) !void {
     const r = schema.nodes[rule.node];
     const rule_src = r.loc.src(schema.code);

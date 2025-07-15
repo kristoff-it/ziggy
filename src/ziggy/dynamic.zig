@@ -5,6 +5,7 @@ const Parser = @import("Parser.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
 const serializer = @import("serializer.zig");
+const Writer = std.Io.Writer;
 
 pub const Value = union(enum) {
     kv: Map(Value),
@@ -24,7 +25,7 @@ pub const Value = union(enum) {
             opts: serializer.StringifyOptions,
             indent_level: usize,
             depth: usize,
-            writer: anytype,
+            writer: *Writer,
         ) !void {
             switch (value) {
                 .bytes => |b| try writer.print("\"{}\"", .{std.zig.fmtEscapes(b)}),
@@ -230,7 +231,7 @@ pub fn Map(comptime T: type) type {
                 opts: serializer.StringifyOptions,
                 indent_level: usize,
                 depth: usize,
-                writer: anytype,
+                writer: *Writer,
             ) !void {
                 const omit_curly = opts.omit_top_level_curly and depth == 0;
                 const indent = if (omit_curly) indent_level else indent_level + 1;
@@ -405,7 +406,7 @@ test "map + union stringify" {
                         opts: serializer.StringifyOptions,
                         indent_level: usize,
                         depth: usize,
-                        writer: anytype,
+                        writer: *Writer,
                     ) !void {
                         const omit_curly = opts.omit_top_level_curly and depth == 0;
                         const indent = if (omit_curly) indent_level else indent_level + 1;

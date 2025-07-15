@@ -3,6 +3,7 @@ const Diagnostic = @This();
 const std = @import("std");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
+const Writer = std.Io.Writer;
 
 /// The data being parsed, this field should not be set manually by users.
 code: [:0]const u8 = "",
@@ -44,7 +45,7 @@ pub fn debug(self: Diagnostic) void {
 
 pub fn format(
     d: Diagnostic,
-    out_stream: anytype,
+    out_stream: *Writer,
 ) !void {
     if (!d.lsp) {
         const start = d.tok.loc.getSelection(d.code).start;
