@@ -27,6 +27,7 @@ pub const Error = union(enum) {
         name: []const u8,
         sel: Token.Loc.Selection,
     },
+
     duplicate_field: struct {
         name: []const u8,
         sel: Token.Loc.Selection,

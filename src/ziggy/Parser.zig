@@ -449,14 +449,14 @@ pub fn parseBytes(self: *Parser, comptime T: type, token: Token) !T {
     try self.mustAny(token, &.{ .string, .at, .line_string });
 
     switch (token.tag) {
-        .string => return token.loc.unescape(self.gpa, self.code),
+        .string => return self.mustUnescape(token),
         .at => {
             _ = try self.nextMust(.identifier);
             _ = try self.nextMust(.lp);
             const str = try self.nextMust(.string);
             _ = try self.nextMust(.rp);
 
-            return str.loc.unescape(self.gpa, self.code);
+            return self.mustUnescape(str);
         },
         .line_string => {
             var str = std.ArrayList(u8).init(self.gpa);
@@ -528,6 +528,18 @@ pub fn peek(self: *Parser) Token {
     return t.next(self.code);
 }
 
+pub fn mustUnescape(self: *Parser, tok: Token) ![]const u8 {
+    return tok.loc.unescape(self.gpa, self.code) catch |err| switch (err) {
+        error.Syntax => {
+            return self.addError(.{
+                .syntax = .{
+                    .name = "bad escape",
+                    .sel = tok.loc.getSelection(self.code),
+                },
+            });
+        },
+    };
+}
 pub fn nextMust(self: *Parser, comptime tag: Token.Tag) !Token {
     return self.nextMustAny(&.{tag});
 }
