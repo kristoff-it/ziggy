@@ -171,10 +171,10 @@ fn formatFile(
         return;
     }
 
-    var af = try base_dir.atomicFile(sub_path, .{});
+    var af = try base_dir.atomicFile(sub_path, .{ .write_buffer = &.{} });
     defer af.deinit();
 
-    try af.file.writeAll(out_bytes);
+    try af.file_writer.interface.writeAll(out_bytes);
     try af.finish();
     try stdout.print("{s}\n", .{full_path});
 }

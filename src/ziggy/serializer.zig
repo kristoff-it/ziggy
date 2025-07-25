@@ -22,7 +22,11 @@ pub fn stringify(value: anytype, opts: StringifyOptions, writer: *Writer) !void 
     try stringifyInner(value, opts, 0, 0, writer);
 }
 
-pub fn indent(kind: StringifyOptions.Whitespace, level: usize, writer: *Writer) !void {
+pub fn indent(
+    kind: StringifyOptions.Whitespace,
+    level: usize,
+    writer: *Writer,
+) !void {
     var char: u8 = ' ';
     const n_chars = level * switch (kind) {
         .minified => return,
@@ -36,7 +40,7 @@ pub fn indent(kind: StringifyOptions.Whitespace, level: usize, writer: *Writer) 
         },
     };
     try writer.writeAll("\n");
-    try writer.writeByteNTimes(char, n_chars);
+    try writer.splatByteAll(char, n_chars);
 }
 
 pub fn stringifyInner(
@@ -45,7 +49,7 @@ pub fn stringifyInner(
     indent_level: usize,
     depth: usize,
     writer: *Writer,
-) @TypeOf(writer).Error!void {
+) Writer.Error!void {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
         .bool,
@@ -315,9 +319,12 @@ fn testStringify(value: anytype, opts: StringifyOptions, expected_output: []cons
     var output_buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer output_buffer.deinit();
 
-    try stringify(value, opts, output_buffer.writer());
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
 
-    try std.testing.expectEqualStrings(expected_output, output_buffer.items);
+    try stringify(value, opts, &out.writer);
+
+    try std.testing.expectEqualStrings(expected_output, out.getWritten());
 }
 
 test "basic data types" {

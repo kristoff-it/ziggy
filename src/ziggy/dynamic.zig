@@ -473,9 +473,9 @@ test "map + union stringify" {
         .name = "zine",
         .dependencies = deps,
     };
-    var output = std.ArrayList(u8).init(std.testing.allocator);
-    defer output.deinit();
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
 
-    try serializer.stringify(proj, .{ .whitespace = .space_4 }, output.writer());
-    try std.testing.expectEqualStrings(case, output.items);
+    try serializer.stringify(proj, .{ .whitespace = .space_4 }, &out.writer);
+    try std.testing.expectEqualStrings(case, out.getWritten());
 }
