@@ -522,6 +522,8 @@ pub const Command = struct {
             \\                 immediately.
             \\
             \\--help, -h       Print this help and exit.
+            \\
+            \\
         , .{});
 
         std.process.exit(1);
