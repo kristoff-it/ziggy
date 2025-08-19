@@ -583,8 +583,8 @@ pub fn check(
     diag: ?*ziggy.Diagnostic,
 ) !void {
     // TODO: check ziggy file against this ruleset
-    var stack = std.ArrayList(CheckItem).init(gpa);
-    defer stack.deinit();
+    var stack: std.ArrayList(CheckItem) = .empty;
+    defer stack.deinit(gpa);
 
     var doc_root_val: u32 = 1;
     if (doc.nodes.len < 2) return; // skip empty files
@@ -592,7 +592,7 @@ pub fn check(
         doc_root_val = doc.nodes[1].next_id;
     }
 
-    try stack.append(.{
+    try stack.append(gpa, .{
         .rule = rules.root,
         .doc_node = doc_root_val,
     });
@@ -629,7 +629,7 @@ pub fn check(
                     const child_rule: Rule = .{ .node = rule.first_child_id };
                     assert(child_rule.node != 0);
 
-                    try stack.append(.{
+                    try stack.append(gpa, .{
                         .optional = true,
                         .rule = child_rule,
                         .doc_node = elem.doc_node,
@@ -645,7 +645,7 @@ pub fn check(
                     var doc_child_id = doc_node.first_child_id;
                     while (doc_child_id != 0) {
                         assert(doc.nodes[doc_child_id].tag != .comment);
-                        try stack.append(.{
+                        try stack.append(gpa, .{
                             .rule = child_rule,
                             .doc_node = doc_child_id,
                         });
@@ -665,7 +665,7 @@ pub fn check(
                     var doc_child_id = doc_node.first_child_id;
                     while (doc_child_id != 0) {
                         assert(doc.nodes[doc_child_id].tag == .map_field);
-                        try stack.append(.{
+                        try stack.append(gpa, .{
                             .rule = child_rule,
                             .doc_node = doc.nodes[doc_child_id].last_child_id,
                         });
@@ -700,7 +700,7 @@ pub fn check(
                         const id_rule_src = id_rule.loc.src(rules.code);
                         log.debug("struct_union testing '{s}'", .{id_rule_src});
                         if (std.mem.eql(u8, struct_name, id_rule_src)) {
-                            try stack.append(.{
+                            try stack.append(gpa, .{
                                 .rule = .{ .node = ident_id },
                                 .doc_node = elem.doc_node,
                             });
@@ -758,7 +758,7 @@ pub fn check(
                         // via AST contruction.
                         try seen_fields.putNoClobber(field_name, {});
 
-                        try stack.append(.{
+                        try stack.append(gpa, .{
                             .rule = field_rule.rule,
                             .doc_node = field.last_child_id,
                         });

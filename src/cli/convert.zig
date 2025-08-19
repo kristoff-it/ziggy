@@ -241,10 +241,10 @@ pub const Command = struct {
 
     fn parse(gpa: std.mem.Allocator, args: []const []const u8) !Command {
         var stdin: ?Lang = null;
-        var json_paths = std.ArrayList([]const u8).init(gpa);
-        var yaml_paths = std.ArrayList([]const u8).init(gpa);
-        var toml_paths = std.ArrayList([]const u8).init(gpa);
-        var ziggy_paths = std.ArrayList([]const u8).init(gpa);
+        var json_paths: std.ArrayList([]const u8) = .empty;
+        var yaml_paths: std.ArrayList([]const u8) = .empty;
+        var toml_paths: std.ArrayList([]const u8) = .empty;
+        var ziggy_paths: std.ArrayList([]const u8) = .empty;
 
         var to: ?Lang = null;
         var schema: ?[]const u8 = null;
@@ -280,10 +280,10 @@ pub const Command = struct {
 
                 switch (arg[2]) {
                     else => unreachable,
-                    'j' => try json_paths.append(args[idx]),
-                    'y' => try yaml_paths.append(args[idx]),
-                    't' => try toml_paths.append(args[idx]),
-                    'z' => try ziggy_paths.append(args[idx]),
+                    'j' => try json_paths.append(gpa, args[idx]),
+                    'y' => try yaml_paths.append(gpa, args[idx]),
+                    't' => try toml_paths.append(gpa, args[idx]),
+                    'z' => try ziggy_paths.append(gpa, args[idx]),
                 }
                 continue;
             }
@@ -453,10 +453,10 @@ pub const Command = struct {
             .stdin = s,
         } else .{
             .paths = .{
-                .json = try json_paths.toOwnedSlice(),
-                .yaml = try yaml_paths.toOwnedSlice(),
-                .toml = try toml_paths.toOwnedSlice(),
-                .ziggy = try ziggy_paths.toOwnedSlice(),
+                .json = try json_paths.toOwnedSlice(gpa),
+                .yaml = try yaml_paths.toOwnedSlice(gpa),
+                .toml = try toml_paths.toOwnedSlice(gpa),
+                .ziggy = try ziggy_paths.toOwnedSlice(gpa),
             },
         };
 

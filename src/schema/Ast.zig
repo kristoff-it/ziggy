@@ -1,11 +1,17 @@
 const Ast = @This();
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const Diagnostic = @import("Diagnostic.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
 const Writer = std.Io.Writer;
+
+code: [:0]const u8,
+nodes: std.ArrayList(Node),
+tokenizer: Tokenizer = .{},
+diag: ?*Diagnostic,
 
 pub const Node = struct {
     tag: Tag,
@@ -46,6 +52,7 @@ pub const Node = struct {
 
     pub fn addChild(
         self: *Node,
+        gpa: Allocator,
         nodes: *std.ArrayList(Node),
         tag: Node.Tag,
     ) !*Node {
@@ -63,7 +70,7 @@ pub const Node = struct {
         }
 
         self.last_child_id = new_child_id;
-        const child = try nodes.addOne();
+        const child = try nodes.addOne(gpa);
         child.* = .{ .tag = tag, .parent_id = self_id };
 
         return child;
@@ -105,32 +112,27 @@ pub const Node = struct {
     }
 };
 
-code: [:0]const u8,
-nodes: std.ArrayList(Node),
-tokenizer: Tokenizer = .{},
-diag: ?*Diagnostic,
-
-pub fn deinit(self: Ast) void {
-    self.nodes.deinit();
+pub fn deinit(self: Ast, gpa: Allocator) void {
+    @constCast(&self).nodes.deinit(gpa);
 }
 
 pub fn init(
-    gpa: std.mem.Allocator,
+    gpa: Allocator,
     code: [:0]const u8,
     diagnostic: ?*Diagnostic,
 ) !Ast {
     var ast: Ast = .{
         .code = code,
         .diag = diagnostic,
-        .nodes = std.ArrayList(Node).init(gpa),
+        .nodes = .empty,
     };
-    errdefer ast.nodes.clearAndFree();
+    errdefer ast.nodes.clearAndFree(gpa);
 
     if (ast.diag) |d| {
         d.code = code;
     }
 
-    const root_node = try ast.nodes.addOne();
+    const root_node = try ast.nodes.addOne(gpa);
     root_node.* = .{ .tag = .root, .parent_id = 0 };
 
     var node = root_node;
@@ -139,10 +141,10 @@ pub fn init(
         switch (node.tag) {
             .root => {
                 try ast.must(token, .root_kw);
-                node = try node.addChild(&ast.nodes, .root_expr);
+                node = try node.addChild(gpa, &ast.nodes, .root_expr);
                 node.loc.start = token.loc.start;
                 _ = try ast.nextMust(.eq);
-                node = try node.addChild(&ast.nodes, ._expr);
+                node = try node.addChild(gpa, &ast.nodes, ._expr);
                 token = try ast.next();
             },
             .root_expr => {
@@ -152,7 +154,7 @@ pub fn init(
                     return ast;
                 }
 
-                node = try node.parent(&ast.nodes).addChild(&ast.nodes, .tag_definition);
+                node = try node.parent(&ast.nodes).addChild(gpa, &ast.nodes, .tag_definition);
             },
 
             .tag_definition => {
@@ -163,7 +165,7 @@ pub fn init(
                 if (token.tag == .doc_comment_line) {
                     assert(node.last_child_id == 0);
 
-                    node = try node.addChild(&ast.nodes, .doc_comment);
+                    node = try node.addChild(gpa, &ast.nodes, .doc_comment);
                     node.loc.start = token.loc.start;
                     continue;
                 }
@@ -178,7 +180,7 @@ pub fn init(
                 assert(token.tag == .at);
 
                 token = try ast.nextMust(.identifier);
-                node = try node.addChild(&ast.nodes, .identifier);
+                node = try node.addChild(gpa, &ast.nodes, .identifier);
                 node.loc = token.loc;
                 node = node.parent(&ast.nodes);
 
@@ -188,17 +190,17 @@ pub fn init(
 
                 switch (token.tag) {
                     .bytes => {
-                        node = try node.addChild(&ast.nodes, .bytes);
+                        node = try node.addChild(gpa, &ast.nodes, .bytes);
                         node.loc = token.loc;
                         node = node.parent(&ast.nodes);
                     },
                     .enum_kw => {
-                        node = try node.addChild(&ast.nodes, .enum_definition);
+                        node = try node.addChild(gpa, &ast.nodes, .enum_definition);
                         node.loc.start = token.loc.start;
                         _ = try ast.nextMust(.lb);
                         token = try ast.nextMustAny(&.{ .identifier, .rb });
                         while (token.tag == .identifier) {
-                            node = try node.addChild(&ast.nodes, .identifier);
+                            node = try node.addChild(gpa, &ast.nodes, .identifier);
                             node.loc = token.loc;
                             node = node.parent(&ast.nodes);
 
@@ -223,7 +225,7 @@ pub fn init(
                 if (token.tag == .eof) {
                     return ast;
                 }
-                node = try node.parent(&ast.nodes).addChild(&ast.nodes, .tag_definition);
+                node = try node.parent(&ast.nodes).addChild(gpa, &ast.nodes, .tag_definition);
             },
 
             .@"struct" => {
@@ -234,7 +236,7 @@ pub fn init(
                 if (token.tag == .doc_comment_line) {
                     assert(node.last_child_id == 0);
 
-                    node = try node.addChild(&ast.nodes, .doc_comment);
+                    node = try node.addChild(gpa, &ast.nodes, .doc_comment);
                     node.loc.start = token.loc.start;
                     continue;
                 }
@@ -242,7 +244,7 @@ pub fn init(
                 try ast.must(token, .struct_kw);
 
                 token = try ast.nextMust(.identifier);
-                node = try node.addChild(&ast.nodes, .identifier);
+                node = try node.addChild(gpa, &ast.nodes, .identifier);
                 node.loc = token.loc;
 
                 node = node.parent(&ast.nodes);
@@ -256,11 +258,11 @@ pub fn init(
                         return ast;
                     }
 
-                    node = try node.parent(&ast.nodes).addChild(&ast.nodes, .@"struct");
+                    node = try node.parent(&ast.nodes).addChild(gpa, &ast.nodes, .@"struct");
                     continue;
                 }
 
-                node = try node.addChild(&ast.nodes, .struct_field);
+                node = try node.addChild(gpa, &ast.nodes, .struct_field);
             },
 
             .struct_field => {
@@ -269,7 +271,7 @@ pub fn init(
                     if (token.tag == .doc_comment_line) {
                         assert(node.last_child_id == 0);
 
-                        node = try node.addChild(&ast.nodes, .doc_comment);
+                        node = try node.addChild(gpa, &ast.nodes, .doc_comment);
                         node.loc.start = token.loc.start;
                         continue;
                     }
@@ -279,13 +281,13 @@ pub fn init(
                     ast.nodes.items[node.last_child_id].tag == .doc_comment)
                 {
                     try ast.must(token, .identifier);
-                    node = try node.addChild(&ast.nodes, .identifier);
+                    node = try node.addChild(gpa, &ast.nodes, .identifier);
                     node.loc = token.loc;
                     node = node.parent(&ast.nodes);
 
                     _ = try ast.nextMust(.colon);
 
-                    node = try node.addChild(&ast.nodes, ._expr);
+                    node = try node.addChild(gpa, &ast.nodes, ._expr);
                     token = try ast.next();
                     continue;
                 }
@@ -305,16 +307,16 @@ pub fn init(
                         return ast;
                     }
 
-                    node = try node.parent(&ast.nodes).addChild(&ast.nodes, .@"struct");
+                    node = try node.parent(&ast.nodes).addChild(gpa, &ast.nodes, .@"struct");
                     continue;
                 }
-                node = try node.parent(&ast.nodes).addChild(&ast.nodes, .struct_field);
+                node = try node.parent(&ast.nodes).addChild(gpa, &ast.nodes, .struct_field);
             },
 
             .doc_comment => switch (token.tag) {
                 .doc_comment_line => {
                     node.loc.end = token.loc.end;
-                    node = try node.addChild(&ast.nodes, .doc_comment_line);
+                    node = try node.addChild(gpa, &ast.nodes, .doc_comment_line);
                     node.loc = token.loc;
                     node = node.parent(&ast.nodes);
                     token = try ast.next();
@@ -385,20 +387,20 @@ pub fn init(
                 .lsb => {
                     node.tag = .array;
                     node.loc.start = token.loc.start;
-                    node = try node.addChild(&ast.nodes, ._expr);
+                    node = try node.addChild(gpa, &ast.nodes, ._expr);
                     token = try ast.next();
                 },
                 .map_kw => {
                     node.tag = .map;
                     node.loc.start = token.loc.start;
                     _ = try ast.nextMust(.lsb);
-                    node = try node.addChild(&ast.nodes, ._expr);
+                    node = try node.addChild(gpa, &ast.nodes, ._expr);
                     token = try ast.next();
                 },
                 .qmark => {
                     node.tag = .optional;
                     node.loc.start = token.loc.start;
-                    node = try node.addChild(&ast.nodes, ._expr);
+                    node = try node.addChild(gpa, &ast.nodes, ._expr);
                     token = try ast.next();
                 },
                 .identifier => {
@@ -413,13 +415,13 @@ pub fn init(
 
                     node.tag = .struct_union;
                     node.loc.start = token.loc.start;
-                    node = try node.addChild(&ast.nodes, .identifier);
+                    node = try node.addChild(gpa, &ast.nodes, .identifier);
                     node.loc = token.loc;
                     node = node.parent(&ast.nodes);
 
                     while (pipe.tag == .pipe) {
                         token = try ast.nextMust(.identifier);
-                        node = try node.addChild(&ast.nodes, .identifier);
+                        node = try node.addChild(gpa, &ast.nodes, .identifier);
                         node.loc = token.loc;
                         node = node.parent(&ast.nodes);
                         pipe = try ast.next();
@@ -675,7 +677,7 @@ test "basics" {
     var diag: Diagnostic = .{ .lsp = false, .path = null };
     errdefer std.debug.print("diag: {f}", .{diag});
     const ast = try Ast.init(std.testing.allocator, case, &diag);
-    defer ast.deinit();
+    defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(case, "{f}", .{ast});
 }

@@ -404,7 +404,7 @@ fn finalizeStruct(
     inline for (info.fields, 0..) |field, idx| {
         if (fields_seen[idx] == null) {
             if (field.default_value_ptr) |ptr| {
-                const dv_ptr: *const field.type = @alignCast(@ptrCast(ptr));
+                const dv_ptr: *const field.type = @ptrCast(@alignCast(ptr));
                 @field(val, field.name) = dv_ptr.*;
             } else {
                 return self.addError(.{
@@ -459,19 +459,19 @@ pub fn parseBytes(self: *Parser, comptime T: type, token: Token) !T {
             return self.mustUnescape(str);
         },
         .line_string => {
-            var str = std.ArrayList(u8).init(self.gpa);
-            errdefer str.deinit();
+            var str: std.ArrayList(u8) = .empty;
+            errdefer str.deinit(self.gpa);
 
             var current = token;
             while (current.tag == .line_string) {
-                try str.appendSlice(current.loc.src(self.code)[2..]);
+                try str.appendSlice(self.gpa, current.loc.src(self.code)[2..]);
 
                 if (self.peek().tag != .line_string) break;
 
-                try str.append('\n');
+                try str.append(self.gpa, '\n');
                 current = self.next();
             }
-            return str.toOwnedSlice();
+            return str.toOwnedSlice(self.gpa);
         },
         else => unreachable,
     }

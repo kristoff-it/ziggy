@@ -173,9 +173,16 @@ pub fn @"textDocument/completion"(
             .items = &.{},
         },
     };
-    const offset = file.offsetFromPosition(
-        request.position.line,
-        request.position.character,
+
+    const doc = switch (file) {
+        .supermd, .ziggy => |doc| doc,
+        .ziggy_schema => return null,
+    };
+
+    const offset = lsp.offsets.positionToIndex(
+        doc.bytes,
+        request.position,
+        self.offset_encoding,
     );
 
     log.debug("completion at offset {}", .{offset});
@@ -189,7 +196,7 @@ pub fn @"textDocument/completion"(
                 },
             };
 
-            const ziggy_completion = ast.completionsForOffset(offset);
+            const ziggy_completion = ast.completionsForOffset(@intCast(offset));
 
             const completions = try arena.alloc(
                 types.CompletionItem,
@@ -261,14 +268,15 @@ pub fn @"textDocument/hover"(
         .ziggy_schema => return null,
     };
 
-    const offset = file.offsetFromPosition(
-        request.position.line,
-        request.position.character,
+    const offset = lsp.offsets.positionToIndex(
+        doc.bytes,
+        request.position,
+        self.offset_encoding,
     );
     log.debug("hover at offset {}", .{offset});
 
     const ast = doc.ast orelse return null;
-    const h = ast.hoverForOffset(offset) orelse return null;
+    const h = ast.hoverForOffset(@intCast(offset)) orelse return null;
 
     return types.Hover{
         .contents = .{

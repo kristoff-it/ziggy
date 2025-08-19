@@ -316,15 +316,15 @@ fn stringifyUnion(writer: *Writer, un: anytype, indent_level: usize, depth: usiz
 }
 
 fn testStringify(value: anytype, opts: StringifyOptions, expected_output: []const u8) !void {
-    var output_buffer = std.ArrayList(u8).init(std.testing.allocator);
-    defer output_buffer.deinit();
+    var output_buffer: std.ArrayList(u8) = .empty;
+    defer output_buffer.deinit(std.testing.allocator);
 
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
     try stringify(value, opts, &out.writer);
 
-    try std.testing.expectEqualStrings(expected_output, out.getWritten());
+    try std.testing.expectEqualStrings(expected_output, out.written());
 }
 
 test "basic data types" {

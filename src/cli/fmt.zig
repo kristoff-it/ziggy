@@ -143,9 +143,6 @@ fn formatFile(
         return;
     };
 
-    var buf = std.ArrayList(u8).init(arena);
-    defer buf.deinit();
-
     const out_bytes = switch (file_type) {
         .ziggy => try fmtZiggy(
             arena,

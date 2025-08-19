@@ -5,7 +5,7 @@ code: [:0]const u8,
 tokenizer: Tokenizer,
 diagnostic: ?*Diagnostic,
 fuel: u32,
-events: std.ArrayListUnmanaged(Event) = .{},
+events: std.ArrayList(Event) = .{},
 
 const std = @import("std");
 const mem = std.mem;
@@ -23,7 +23,7 @@ const Writer = std.Io.Writer;
 
 pub const Tree = struct {
     tag: Tree.Tag,
-    children: std.ArrayListUnmanaged(Child) = .{},
+    children: std.ArrayList(Child) = .{},
     suggestions: []const Suggestion = &.{},
     hovers: []const Hover = &.{},
 
@@ -91,18 +91,18 @@ pub const Tree = struct {
         ziggy_code: [:0]const u8,
     ) !void {
         // TODO: check ziggy file against this ruleset
-        var stack = std.ArrayList(CheckItem).init(gpa);
-        defer stack.deinit();
+        var stack: std.ArrayList(CheckItem) = .empty;
+        defer stack.deinit(gpa);
 
-        var suggestions = std.ArrayList(Suggestion).init(gpa);
-        var hovers = std.ArrayList(Hover).init(gpa);
+        var suggestions: std.ArrayList(Suggestion) = .empty;
+        var hovers: std.ArrayList(Hover) = .empty;
         defer {
-            doc.suggestions = suggestions.toOwnedSlice() catch blk: {
-                suggestions.deinit();
+            doc.suggestions = suggestions.toOwnedSlice(gpa) catch blk: {
+                suggestions.deinit(gpa);
                 break :blk &.{};
             };
-            doc.hovers = hovers.toOwnedSlice() catch blk: {
-                hovers.deinit();
+            doc.hovers = hovers.toOwnedSlice(gpa) catch blk: {
+                hovers.deinit(gpa);
                 break :blk &.{};
             };
         }
@@ -122,7 +122,7 @@ pub const Tree = struct {
                 return;
             }
             assert(doc_root_val < items.len);
-            try stack.append(.{
+            try stack.append(gpa, .{
                 .rule = rules.root,
                 .child = items[doc_root_val],
             });
@@ -150,7 +150,7 @@ pub const Tree = struct {
                         const child_rule: Rule = .{ .node = rule.first_child_id };
                         assert(child_rule.node != 0);
 
-                        try stack.append(.{
+                        try stack.append(gpa, .{
                             .optional = true,
                             .rule = child_rule,
                             .child = elem.child,
@@ -177,7 +177,7 @@ pub const Tree = struct {
                                     else => {},
                                 }
                             }
-                            try stack.append(.{
+                            try stack.append(gpa, .{
                                 .rule = child_rule,
                                 .child = arr_child,
                             });
@@ -209,7 +209,7 @@ pub const Tree = struct {
                                 map_child.tree.tag == .map_field and
                                 map_child.tree.children.items.len >= 3)
                             {
-                                try stack.append(.{
+                                try stack.append(gpa, .{
                                     .rule = child_rule,
                                     .child = map_child.tree.children.items[2],
                                 });
@@ -250,7 +250,7 @@ pub const Tree = struct {
                             defer ident_id = id_rule.next_id;
                             const id_rule_src = id_rule.loc.src(rules.code);
                             if (std.mem.eql(u8, struct_name, id_rule_src)) {
-                                try stack.append(.{
+                                try stack.append(gpa, .{
                                     .rule = .{ .node = ident_id },
                                     .child = elem.child,
                                 });
@@ -316,7 +316,7 @@ pub const Tree = struct {
                             }
                             // log.debug("field tree {}", .{field.tree.fmt(ziggy_code)});
                             if (field.tree.children.items.len < 2) {
-                                try suggestions.append(.{
+                                try suggestions.append(gpa, .{
                                     .loc = .{
                                         .start = field.loc().start,
                                         .end = field.loc().end,
@@ -331,7 +331,7 @@ pub const Tree = struct {
                             const field_name = field_name_node.token.loc.src(ziggy_code);
                             const field_rule = struct_rule.fields.get(field_name) orelse {
                                 log.debug("appending suggestion at {}", .{field_name_node.token.loc});
-                                try suggestions.append(.{
+                                try suggestions.append(gpa, .{
                                     .loc = .{
                                         .start = field.loc().start,
                                         .end = field_name_node.loc().end,
@@ -351,13 +351,13 @@ pub const Tree = struct {
                             // diagnostic errors produced.  but they appear as
                             // normal struct_field trees here.
                             try seen_fields.put(field_name, {});
-                            try hovers.append(.{
+                            try hovers.append(gpa, .{
                                 .loc = .{ .start = field.loc().start, .end = field_name_node.token.loc.end },
                                 .hover = field_rule.help.doc,
                             });
                             // guard against incomplete fields / errors
                             if (field.tree.children.items.len > 3) {
-                                try stack.append(.{
+                                try stack.append(gpa, .{
                                     .rule = field_rule.rule,
                                     // skip first 3 tokens of struct field: dot, name, equal
                                     .child = field.tree.children.items[3],
@@ -369,14 +369,14 @@ pub const Tree = struct {
                         }
                         log.debug("seen_fields.count {} struct_rule.fields.count {}", .{ seen_fields.count(), struct_rule.fields.count() });
                         if (seen_fields.count() != struct_rule.fields.count()) {
-                            var completions = std.ArrayList(Suggestion.Completion).init(gpa);
+                            var completions: std.ArrayList(Suggestion.Completion) = .empty;
                             const any_suggestion = suggestions_start != suggestions.items.len;
                             log.debug("any_suggestion {} suggestions {}", .{ any_suggestion, suggestions.items.len });
 
                             for (struct_rule.fields.keys(), struct_rule.fields.values()) |k, v| {
                                 if (rules.nodes[v.rule.node].tag == .optional) {
                                     if (any_suggestion and !seen_fields.contains(k)) {
-                                        try completions.append(.{
+                                        try completions.append(gpa, .{
                                             .name = k,
                                             .type = rules.nodes[v.rule.node].loc.src(rules.code),
                                             .desc = v.help.doc,
@@ -388,7 +388,7 @@ pub const Tree = struct {
 
                                 if (!seen_fields.contains(k)) {
                                     if (any_suggestion) {
-                                        try completions.append(.{
+                                        try completions.append(gpa, .{
                                             .name = k,
                                             .type = rules.nodes[v.rule.node].loc.src(rules.code),
                                             .desc = v.help.doc,
@@ -430,18 +430,18 @@ pub const Tree = struct {
                             try typeMismatch(gpa, rules, diag, elem, ziggy_code);
                         } else {
                             const literal_rule = rules.literals.get(rule_src).?;
-                            try hovers.append(.{
+                            try hovers.append(gpa, .{
                                 .loc = tree.loc(),
                                 .hover = literal_rule.hover,
                             });
 
-                            var cases = std.ArrayList(Suggestion.Completion).init(gpa);
-                            errdefer cases.deinit();
+                            var cases: std.ArrayList(Suggestion.Completion) = .empty;
+                            errdefer cases.deinit(gpa);
 
                             var enum_idx = rules.nodes[literal_rule.expr].first_child_id;
                             while (enum_idx != 0) {
                                 const enum_case = rules.nodes[enum_idx];
-                                try cases.append(.{
+                                try cases.append(gpa, .{
                                     .name = enum_case.loc.src(rules.code),
                                     .type = "bytes",
                                     .desc = "",
@@ -455,7 +455,7 @@ pub const Tree = struct {
                                 string_loc = child.loc();
                                 if (child == .token and child.token.tag == .string) break;
                             }
-                            try suggestions.append(.{
+                            try suggestions.append(gpa, .{
                                 .loc = string_loc,
                                 .completions = cases.items,
                             });
@@ -1482,12 +1482,12 @@ fn close(p: *Parser, m: MarkOpened, tag: Tree.Tag) MarkClosed {
 fn buildTree(p: *Parser) !Tree {
     assert(p.events.pop().? == .close);
     p.tokenizer.idx = 0;
-    var stack = std.ArrayList(Tree).init(p.gpa);
-    defer stack.deinit();
+    var stack: std.ArrayList(Tree) = .empty;
+    defer stack.deinit(p.gpa);
     for (p.events.items) |event| {
         // log.debug("build_tree() event={}", .{event});
         switch (event) {
-            .open => |tag| try stack.append(.{ .tag = tag }),
+            .open => |tag| try stack.append(p.gpa, .{ .tag = tag }),
             .close => {
                 const tree = stack.pop().?;
                 if (stack.items.len == 0) {

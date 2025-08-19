@@ -71,11 +71,11 @@ pub const Value = union(enum) {
                 },
 
                 .lsb => {
-                    var array = std.ArrayList(Value).init(p.gpa);
-                    errdefer array.deinit();
+                    var array: std.ArrayList(Value) = .empty;
+                    errdefer array.deinit(p.gpa);
                     var elem_tok = try p.nextNoEof();
                     while (elem_tok.tag != .rsb) {
-                        const new = try array.addOne();
+                        const new = try array.addOne(p.gpa);
                         new.* = try Value.ziggy_options.parse(p, elem_tok);
 
                         elem_tok = try p.nextMustAny(&.{ .comma, .rsb });
@@ -83,7 +83,7 @@ pub const Value = union(enum) {
                             elem_tok = p.next();
                         }
                     }
-                    return .{ .array = try array.toOwnedSlice() };
+                    return .{ .array = try array.toOwnedSlice(p.gpa) };
                 },
                 else => {
                     return p.addError(.{
@@ -477,5 +477,5 @@ test "map + union stringify" {
     defer out.deinit();
 
     try serializer.stringify(proj, .{ .whitespace = .space_4 }, &out.writer);
-    try std.testing.expectEqualStrings(case, out.getWritten());
+    try std.testing.expectEqualStrings(case, out.written());
 }
