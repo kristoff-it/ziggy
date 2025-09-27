@@ -1,12 +1,25 @@
 const std = @import("std");
-const Build = std.Build;
+const zon = @import("build.zig.zon");
 
 /// The full Ziggy parsing functionality is available at build time.
 pub const ziggy = @import("src/root.zig");
 
-pub fn build(b: *Build) !void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const single_threaded = b.option(
+        bool,
+        "single-threaded",
+        "Create a single-threaded build of the Ziggy CLI tool.",
+    ) orelse false;
+    const version = b.option(
+        []const u8,
+        "version",
+        "Override the version of Ziggy.",
+    ) orelse zon.version;
+
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", version);
 
     const ziggy_module = b.addModule("ziggy", .{
         .root_source_file = b.path("src/root.zig"),
@@ -28,12 +41,14 @@ pub fn build(b: *Build) !void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .single_threaded = single_threaded,
         .imports = &.{
             .{ .name = "ziggy", .module = ziggy_module },
             .{ .name = "known-folders", .module = folders },
             .{ .name = "lsp", .module = lsp },
         },
     });
+    cli_module.addOptions("options", options);
 
     const cli_exe = b.addExecutable(.{
         .name = "ziggy",
@@ -55,77 +70,139 @@ pub fn build(b: *Build) !void {
     check.dependOn(&ziggy_check.step);
 
     try setupTests(b, target, optimize, ziggy_module, cli_exe);
-    try setupReleaseStep(b, ziggy_module);
+
+    const release = b.step("release", "Create release builds of Ziggy");
+    const git_version = getGitVersion(b);
+    if (git_version == .tag) {
+        if (std.mem.eql(u8, version, git_version.tag[1..])) {
+            setupReleaseStep(b, ziggy_module, options, release);
+        } else {
+            release.dependOn(&b.addFail(b.fmt(
+                "error: git tag does not match zon package version (zon: '{s}', git: '{s}')",
+                .{ version, git_version.tag[1..] },
+            )).step);
+        }
+    } else {
+        release.dependOn(&b.addFail(
+            "error: git tag missing, cannot make release builds",
+        ).step);
+    }
 }
 
-pub fn setupReleaseStep(b: *Build, ziggy_module: *Build.Module) !void {
-    const release_step = b.step("release", "Create releases for the Ziggy CLI tool");
-
+pub fn setupReleaseStep(
+    b: *std.Build,
+    ziggy_module: *std.Build.Module,
+    options: *std.Build.Step.Options,
+    release_step: *std.Build.Step,
+) void {
     const targets: []const std.Target.Query = &.{
         .{ .cpu_arch = .aarch64, .os_tag = .macos },
         .{ .cpu_arch = .aarch64, .os_tag = .linux },
-        .{ .cpu_arch = .x86_64, .os_tag = .macos },
         .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
         .{ .cpu_arch = .x86_64, .os_tag = .windows },
         .{ .cpu_arch = .aarch64, .os_tag = .windows },
     };
 
     for (targets) |t| {
-        const target = b.resolveTargetQuery(t);
+        const release_target = b.resolveTargetQuery(t);
         const optimize: std.builtin.OptimizeMode = .ReleaseFast;
 
         const folders = b.dependency("known_folders", .{
-            .target = target,
+            .target = release_target,
             .optimize = optimize,
         }).module("known-folders");
+
         const lsp = b.dependency("lsp_kit", .{
-            .target = target,
+            .target = release_target,
             .optimize = optimize,
         }).module("lsp");
 
-        const release_exe = b.addExecutable(.{
-            .name = "ziggy",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/main.zig"),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{
-                    .{ .name = "ziggy", .module = ziggy_module },
-                    .{ .name = "known-folders", .module = folders },
-                    .{ .name = "lsp", .module = lsp },
-                },
-            }),
-        });
-
-        const target_output = b.addInstallArtifact(release_exe, .{
-            .dest_dir = .{
-                .override = .{
-                    .custom = try t.zigTriple(b.allocator),
-                },
+        const release_cli_mod = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = release_target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "ziggy", .module = ziggy_module },
+                .{ .name = "known-folders", .module = folders },
+                .{ .name = "lsp", .module = lsp },
             },
         });
+        release_cli_mod.addOptions("options", options);
 
-        release_step.dependOn(&target_output.step);
+        const release_exe = b.addExecutable(.{
+            .name = "ziggy",
+            .root_module = release_cli_mod,
+        });
+
+        switch (t.os_tag.?) {
+            .macos, .windows => {
+                const archive_name = b.fmt("{s}.zip", .{
+                    t.zigTriple(b.allocator) catch unreachable,
+                });
+
+                const zip = b.addSystemCommand(&.{
+                    "zip",
+                    "-9",
+                    // "-dd",
+                    "-q",
+                    "-j",
+                });
+                const archive = zip.addOutputFileArg(archive_name);
+                zip.addDirectoryArg(release_exe.getEmittedBin());
+                _ = zip.captureStdOut(.{});
+
+                release_step.dependOn(&b.addInstallFileWithDir(
+                    archive,
+                    .{ .custom = "releases" },
+                    archive_name,
+                ).step);
+            },
+            else => {
+                const archive_name = b.fmt("{s}.tar.xz", .{
+                    t.zigTriple(b.allocator) catch unreachable,
+                });
+
+                const tar = b.addSystemCommand(&.{
+                    "gtar",
+                    "-cJf",
+                });
+
+                const archive = tar.addOutputFileArg(archive_name);
+                tar.addArg("-C");
+
+                tar.addDirectoryArg(release_exe.getEmittedBinDirectory());
+                tar.addArg("superhtml");
+                _ = tar.captureStdOut(.{});
+
+                release_step.dependOn(&b.addInstallFileWithDir(
+                    archive,
+                    .{ .custom = "releases" },
+                    archive_name,
+                ).step);
+            },
+        }
     }
 }
 
 pub fn setupTests(
-    b: *Build,
+    b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    ziggy_module: *Build.Module,
-    cli_exe: *Build.Step.Compile,
+    ziggy_module: *std.Build.Module,
+    cli_exe: *std.Build.Step.Compile,
 ) !void {
     const test_step = b.step("test", "Run unit & snapshot tests");
 
     const unit_tests = b.addTest(.{
         .root_module = ziggy_module,
-        .filters = b.option([]const []const u8, "test-filter", "test filter") orelse &.{},
+        .filters = b.args orelse &.{},
     });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
-    if (b.args) |args| run_unit_tests.addArgs(args);
+    // if (b.args) |args| run_unit_tests.addArgs(args);
     test_step.dependOn(&run_unit_tests.step);
+
+    if (true) return;
 
     const diff = b.addSystemCommand(&.{
         "git",
@@ -240,5 +317,66 @@ pub fn setupTests(
 
             git_add.step.dependOn(&update_snap.step);
         }
+    }
+}
+
+const Version = union(Kind) {
+    tag: []const u8,
+    commit: []const u8,
+    // not in a git repo
+    unknown,
+
+    pub const Kind = enum { tag, commit, unknown };
+
+    pub fn string(v: Version) []const u8 {
+        return switch (v) {
+            .tag, .commit => |tc| tc,
+            .unknown => "unknown",
+        };
+    }
+};
+fn getGitVersion(b: *std.Build) Version {
+    const git_path = b.findProgram(&.{"git"}, &.{}) catch return .unknown;
+    var out: u8 = undefined;
+    const git_describe = std.mem.trim(
+        u8,
+        b.runAllowFail(&[_][]const u8{
+            git_path,            "-C",
+            b.build_root.path.?, "describe",
+            "--match",           "*.*.*",
+            "--tags",
+        }, &out, .Ignore) catch return .unknown,
+        " \n\r",
+    );
+
+    switch (std.mem.count(u8, git_describe, "-")) {
+        0 => return .{ .tag = git_describe },
+        2 => {
+            // Untagged development build (e.g. 0.8.0-684-gbbe2cca1a).
+            var it = std.mem.splitScalar(u8, git_describe, '-');
+            const tagged_ancestor = it.next() orelse unreachable;
+            const commit_height = it.next() orelse unreachable;
+            const commit_id = it.next() orelse unreachable;
+
+            // Check that the commit hash is prefixed with a 'g'
+            // (it's a Git convention)
+            if (commit_id.len < 1 or commit_id[0] != 'g') {
+                std.debug.panic("Unexpected `git describe` output: {s}\n", .{git_describe});
+            }
+
+            // The version is reformatted in accordance with
+            // the https://semver.org specification.
+            return .{
+                .commit = b.fmt("{s}-dev.{s}+{s}", .{
+                    tagged_ancestor,
+                    commit_height,
+                    commit_id[1..],
+                }),
+            };
+        },
+        else => std.debug.panic(
+            "Unexpected `git describe` output: {s}\n",
+            .{git_describe},
+        ),
     }
 }

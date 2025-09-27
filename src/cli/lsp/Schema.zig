@@ -1,46 +1,30 @@
 const Schema = @This();
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+const fatal = std.process.fatal;
 const assert = std.debug.assert;
 const ziggy = @import("ziggy");
 
 const log = std.log.scoped(.lsp_document);
 
-arena: std.heap.ArenaAllocator,
-bytes: [:0]const u8,
-diagnostic: ziggy.schema.Diagnostic,
-ast: ?ziggy.schema.Ast = null,
-rules: ?ziggy.schema.Schema = null,
+src: [:0]const u8,
+ast: ziggy.schema.Ast,
+// didOpen / didClose, we keep schemas around even when closed if there are
+// documents referencing them
+open: bool,
+// Number of Documents referencing this schema
+refs: usize = 0,
 
-pub fn deinit(doc: *Schema) void {
-    doc.arena.deinit();
+pub fn deinit(schema: *const Schema, gpa: Allocator) void {
+    schema.ast.deinit(gpa);
+    gpa.free(schema.src);
 }
 
-pub fn init(gpa: std.mem.Allocator, bytes: [:0]const u8) Schema {
-    var schema: Schema = .{
-        .arena = std.heap.ArenaAllocator.init(gpa),
-        .bytes = bytes,
-        .diagnostic = .{ .lsp = true, .path = null },
+pub fn init(gpa: Allocator, src: [:0]const u8, open: bool) Schema {
+    return .{
+        .src = src,
+        .ast = ziggy.schema.Ast.init(gpa, src) catch fatal("oom", .{}),
+        .open = open,
     };
-
-    const arena = schema.arena.allocator();
-
-    log.debug("schema: parsing", .{});
-    const ast = ziggy.schema.Ast.init(arena, bytes, &schema.diagnostic) catch return schema;
-    if (schema.diagnostic.err != .none) return schema;
-
-    schema.ast = ast;
-
-    log.debug("schema: analysis", .{});
-    const rules = ziggy.schema.Schema.init(
-        arena,
-        ast.nodes.items,
-        bytes,
-        &schema.diagnostic,
-    ) catch return schema;
-
-    schema.rules = rules;
-
-    log.debug("schema: done", .{});
-    return schema;
 }

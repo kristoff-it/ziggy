@@ -1,14 +1,17 @@
 const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const yaml = @import("yaml");
 const ziggy = @import("ziggy");
 const json = @import("convert/json.zig");
 const loadSchema = @import("load_schema.zig").loadSchema;
-const Diagnostic = ziggy.Diagnostic;
+// const Diagnostic = ziggy.Diagnostic;
 const Ast = ziggy.Ast;
 const Writer = std.Io.Writer;
 
-pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
+pub fn run(io: Io, gpa: std.mem.Allocator, args: []const []const u8) !void {
+    if (true) @panic("TODO");
+    _ = io;
     const cmd = try Command.parse(gpa, args);
     const schema = loadSchema(gpa, cmd.schema);
     switch (cmd.mode) {
@@ -190,15 +193,16 @@ fn convertToZiggy(
     schema: ziggy.schema.Schema,
     file: std.fs.File,
 ) ![]const u8 {
-    var diag: ziggy.Diagnostic = .{ .path = file_path };
+    // var diag: ziggy.Diagnostic = .{ .path = file_path };
 
+    _ = file_path;
     switch (format) {
         else => {
             @panic("TODO: support more file formats");
         },
         .json => {
-            const bytes = json.toZiggy(gpa, schema, &diag, file) catch {
-                std.debug.print("{} arstasr\n", .{diag});
+            const bytes = json.toZiggy(gpa, schema, file) catch {
+                // std.debug.print("{} arstasr\n", .{diag});
                 std.process.exit(1);
             };
 

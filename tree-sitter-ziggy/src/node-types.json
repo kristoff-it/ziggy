@@ -1,5 +1,55 @@
 [
   {
+    "type": "value",
+    "named": true,
+    "subtypes": [
+      {
+        "type": "array",
+        "named": true
+      },
+      {
+        "type": "dict",
+        "named": true
+      },
+      {
+        "type": "enum",
+        "named": true
+      },
+      {
+        "type": "false",
+        "named": true
+      },
+      {
+        "type": "line_string",
+        "named": true
+      },
+      {
+        "type": "null",
+        "named": true
+      },
+      {
+        "type": "number",
+        "named": true
+      },
+      {
+        "type": "string",
+        "named": true
+      },
+      {
+        "type": "struct",
+        "named": true
+      },
+      {
+        "type": "true",
+        "named": true
+      },
+      {
+        "type": "union",
+        "named": true
+      }
+    ]
+  },
+  {
     "type": "array",
     "named": true,
     "fields": {},
@@ -10,10 +60,6 @@
         {
           "type": "array_elem",
           "named": true
-        },
-        {
-          "type": "comment",
-          "named": true
         }
       ]
     }
@@ -23,63 +69,18 @@
     "named": true,
     "fields": {},
     "children": {
-      "multiple": true,
+      "multiple": false,
       "required": true,
       "types": [
         {
-          "type": "array",
-          "named": true
-        },
-        {
-          "type": "comment",
-          "named": true
-        },
-        {
-          "type": "false",
-          "named": true
-        },
-        {
-          "type": "float",
-          "named": true
-        },
-        {
-          "type": "integer",
-          "named": true
-        },
-        {
-          "type": "map",
-          "named": true
-        },
-        {
-          "type": "null",
-          "named": true
-        },
-        {
-          "type": "string",
-          "named": true
-        },
-        {
-          "type": "struct",
-          "named": true
-        },
-        {
-          "type": "tag_string",
-          "named": true
-        },
-        {
-          "type": "true",
+          "type": "value",
           "named": true
         }
       ]
     }
   },
   {
-    "type": "comment",
-    "named": true,
-    "fields": {}
-  },
-  {
-    "type": "document",
+    "type": "dict",
     "named": true,
     "fields": {},
     "children": {
@@ -87,97 +88,14 @@
       "required": false,
       "types": [
         {
-          "type": "array",
-          "named": true
-        },
-        {
-          "type": "false",
-          "named": true
-        },
-        {
-          "type": "float",
-          "named": true
-        },
-        {
-          "type": "integer",
-          "named": true
-        },
-        {
-          "type": "map",
-          "named": true
-        },
-        {
-          "type": "null",
-          "named": true
-        },
-        {
-          "type": "string",
-          "named": true
-        },
-        {
-          "type": "struct",
-          "named": true
-        },
-        {
-          "type": "tag_string",
-          "named": true
-        },
-        {
-          "type": "top_comment",
-          "named": true
-        },
-        {
-          "type": "top_level_struct",
-          "named": true
-        },
-        {
-          "type": "true",
+          "type": "dict_field",
           "named": true
         }
       ]
     }
   },
   {
-    "type": "escape_sequence",
-    "named": true,
-    "fields": {}
-  },
-  {
-    "type": "float",
-    "named": true,
-    "fields": {}
-  },
-  {
-    "type": "integer",
-    "named": true,
-    "fields": {}
-  },
-  {
-    "type": "line_string",
-    "named": true,
-    "fields": {}
-  },
-  {
-    "type": "map",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "comment",
-          "named": true
-        },
-        {
-          "type": "map_field",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "map_field",
+    "type": "dict_field",
     "named": true,
     "fields": {
       "key": {
@@ -195,61 +113,44 @@
         "required": true,
         "types": [
           {
-            "type": "array",
-            "named": true
-          },
-          {
-            "type": "false",
-            "named": true
-          },
-          {
-            "type": "float",
-            "named": true
-          },
-          {
-            "type": "integer",
-            "named": true
-          },
-          {
-            "type": "map",
-            "named": true
-          },
-          {
-            "type": "null",
-            "named": true
-          },
-          {
-            "type": "string",
-            "named": true
-          },
-          {
-            "type": "struct",
-            "named": true
-          },
-          {
-            "type": "tag_string",
-            "named": true
-          },
-          {
-            "type": "true",
+            "type": "value",
             "named": true
           }
         ]
       }
-    },
+    }
+  },
+  {
+    "type": "document",
+    "named": true,
+    "fields": {},
     "children": {
       "multiple": false,
       "required": false,
       "types": [
         {
-          "type": "comment",
+          "type": "top_level_struct",
+          "named": true
+        },
+        {
+          "type": "value",
           "named": true
         }
       ]
     }
   },
   {
-    "type": "quoted_string",
+    "type": "enum",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "line_string",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "string",
     "named": true,
     "fields": {},
     "children": {
@@ -259,24 +160,9 @@
         {
           "type": "escape_sequence",
           "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "string",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "line_string",
-          "named": true
         },
         {
-          "type": "quoted_string",
+          "type": "string_content",
           "named": true
         }
       ]
@@ -285,26 +171,11 @@
   {
     "type": "struct",
     "named": true,
-    "fields": {
-      "name": {
-        "multiple": false,
-        "required": false,
-        "types": [
-          {
-            "type": "struct_name",
-            "named": true
-          }
-        ]
-      }
-    },
+    "fields": {},
     "children": {
       "multiple": true,
       "required": false,
       "types": [
-        {
-          "type": "comment",
-          "named": true
-        },
         {
           "type": "struct_field",
           "named": true
@@ -331,99 +202,12 @@
         "required": true,
         "types": [
           {
-            "type": "array",
-            "named": true
-          },
-          {
-            "type": "false",
-            "named": true
-          },
-          {
-            "type": "float",
-            "named": true
-          },
-          {
-            "type": "integer",
-            "named": true
-          },
-          {
-            "type": "map",
-            "named": true
-          },
-          {
-            "type": "null",
-            "named": true
-          },
-          {
-            "type": "string",
-            "named": true
-          },
-          {
-            "type": "struct",
-            "named": true
-          },
-          {
-            "type": "tag_string",
-            "named": true
-          },
-          {
-            "type": "true",
+            "type": "value",
             "named": true
           }
         ]
       }
-    },
-    "children": {
-      "multiple": false,
-      "required": false,
-      "types": [
-        {
-          "type": "comment",
-          "named": true
-        }
-      ]
     }
-  },
-  {
-    "type": "struct_name",
-    "named": true,
-    "fields": {}
-  },
-  {
-    "type": "tag",
-    "named": true,
-    "fields": {}
-  },
-  {
-    "type": "tag_string",
-    "named": true,
-    "fields": {
-      "name": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "tag",
-            "named": true
-          }
-        ]
-      }
-    },
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "quoted_string",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "top_comment",
-    "named": true,
-    "fields": {}
   },
   {
     "type": "top_level_struct",
@@ -434,11 +218,22 @@
       "required": true,
       "types": [
         {
-          "type": "comment",
-          "named": true
-        },
-        {
           "type": "struct_field",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "union",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "value",
           "named": true
         }
       ]
@@ -473,15 +268,7 @@
     "named": false
   },
   {
-    "type": "@",
-    "named": false
-  },
-  {
     "type": "[",
-    "named": false
-  },
-  {
-    "type": "\\",
     "named": false
   },
   {
@@ -493,6 +280,18 @@
     "named": false
   },
   {
+    "type": "_enum_name",
+    "named": false
+  },
+  {
+    "type": "comment",
+    "named": true
+  },
+  {
+    "type": "escape_sequence",
+    "named": true
+  },
+  {
     "type": "false",
     "named": true
   },
@@ -502,6 +301,14 @@
   },
   {
     "type": "null",
+    "named": true
+  },
+  {
+    "type": "number",
+    "named": true
+  },
+  {
+    "type": "string_content",
     "named": true
   },
   {

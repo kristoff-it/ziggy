@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const ziggy = @import("ziggy");
 const Document = @import("lsp/Document.zig");
@@ -10,15 +11,15 @@ const logic = @import("lsp/logic.zig");
 
 const log = std.log.scoped(.ziggy_lsp);
 
-pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
+pub fn run(io: Io, gpa: std.mem.Allocator, args: []const []const u8) !void {
     _ = args;
-
     log.debug("Ziggy LSP started!", .{});
 
     var buf: [4096]u8 = undefined;
     var stdio: lsp.Transport.Stdio = .init(
+        io,
         &buf,
-        std.fs.File.stdin(),
+        Io.File.stdin(),
         std.fs.File.stdout(),
     );
 
@@ -40,14 +41,25 @@ pub const Handler = @This();
 
 gpa: std.mem.Allocator,
 transport: *lsp.Transport,
-files: std.StringHashMapUnmanaged(logic.File) = .{},
+docs: std.StringArrayHashMapUnmanaged(Document) = .{},
+schemas: std.StringHashMapUnmanaged(Schema) = .{},
+
 offset_encoding: offsets.Encoding = .@"utf-16",
 
 fn deinit(self: *Handler) void {
-    var file_it = self.files.valueIterator();
-    while (file_it.next()) |file| file.deinit();
-    self.files.deinit(self.gpa);
-    self.* = undefined;
+    _ = self;
+    // {
+    //     var docs_it = self.docs.valueIterator();
+    //     while (docs_it.next()) |file| file.deinit(self.gpa);
+    //     self.files.deinit(self.gpa);
+    //     self.* = undefined;
+    // }
+    // {
+    //     var schemas_it = self.schemas.valueIterator();
+    //     while (schemas_it.next()) |file| file.deinit(self.gpa);
+    //     self.schemas.deinit(self.gpa);
+    //     self.* = undefined;
+    // }
 }
 
 pub fn initialize(
@@ -56,7 +68,10 @@ pub fn initialize(
     request: types.InitializeParams,
 ) types.InitializeResult {
     if (request.clientInfo) |clientInfo| {
-        log.info("client is '{s}-{s}'", .{ clientInfo.name, clientInfo.version orelse "<no version>" });
+        log.info("client is '{s}-{s}'", .{
+            clientInfo.name,
+            clientInfo.version orelse "<no version>",
+        });
     }
 
     if (request.capabilities.general) |general| {
@@ -97,8 +112,8 @@ pub fn initialize(
 
     return .{
         .serverInfo = .{
-            .name = "Ziggy LSP",
-            .version = "0.0.1",
+            .name = "Ziggy",
+            .version = @import("options").version,
         },
         .capabilities = capabilities,
     };
@@ -114,9 +129,13 @@ pub fn @"textDocument/didOpen"(
 
     const language_id = notification.textDocument.languageId;
     const language = std.meta.stringToEnum(logic.Language, language_id) orelse {
-        log.debug("unrecognized language id: '{s}'", .{language_id});
+        log.debug(
+            "unrecognized language id: '{s}' (must be either 'ziggy' or 'ziggy_schema')",
+            .{language_id},
+        );
         return;
     };
+
     try logic.loadFile(
         self,
         arena,
@@ -132,23 +151,23 @@ pub fn @"textDocument/didChange"(
     notification: types.DidChangeTextDocumentParams,
 ) !void {
     if (notification.contentChanges.len == 0) return;
-
-    const new_text = try self.gpa.dupeZ(u8, notification.contentChanges[notification.contentChanges.len - 1].literal_1.text); // We informed the client that we only do full document syncs
+    const new_text = try self.gpa.dupeZ(
+        u8,
+        notification.contentChanges[notification.contentChanges.len - 1].literal_1.text,
+    ); // We informed the client that we only do full document syncs
     errdefer self.gpa.free(new_text);
 
-    // TODO: this is a hack while we wait for actual incremental reloads
-    const file = self.files.get(notification.textDocument.uri) orelse return;
-
-    log.debug("LOAD FILE URI: {s}, file tag = {s}", .{
-        notification.textDocument.uri,
-        @tagName(file),
-    });
     try logic.loadFile(
         self,
         arena,
         new_text,
         notification.textDocument.uri,
-        file,
+        if (self.docs.contains(notification.textDocument.uri))
+            .ziggy
+        else if (self.schemas.contains(notification.textDocument.uri))
+            .ziggy_schema
+        else
+            return,
     );
 }
 
@@ -157,9 +176,34 @@ pub fn @"textDocument/didClose"(
     _: std.mem.Allocator,
     notification: types.DidCloseTextDocumentParams,
 ) void {
-    var kv = self.files.fetchRemove(notification.textDocument.uri) orelse return;
-    self.gpa.free(kv.key);
-    kv.value.deinit();
+    if (self.docs.fetchSwapRemove(notification.textDocument.uri)) |kv| {
+        if (kv.value.schema_uri) |schema_path| {
+            const schema = self.schemas.getPtr(schema_path).?;
+            schema.refs -= 1;
+            if (schema.refs == 0 and !schema.open) {
+                const schema_kv = self.schemas.fetchRemove(schema_path).?;
+                self.gpa.free(schema_kv.key);
+                schema_kv.value.deinit(self.gpa);
+                return;
+            }
+        }
+
+        self.gpa.free(kv.key);
+        kv.value.deinit(self.gpa);
+        return;
+    }
+
+    if (self.schemas.getPtr(notification.textDocument.uri)) |schema| {
+        if (schema.refs > 0) {
+            schema.open = false;
+            return;
+        }
+
+        const kv = self.schemas.fetchRemove(notification.textDocument.uri).?;
+        self.gpa.free(kv.key);
+        kv.value.deinit(self.gpa);
+        return;
+    }
 }
 
 pub fn @"textDocument/completion"(
@@ -167,6 +211,7 @@ pub fn @"textDocument/completion"(
     arena: std.mem.Allocator,
     request: types.CompletionParams,
 ) error{OutOfMemory}!lsp.ResultType("textDocument/completion") {
+    if (true) return null;
     const file = self.files.get(request.textDocument.uri) orelse return .{
         .CompletionList = types.CompletionList{
             .isIncomplete = false,
@@ -175,12 +220,12 @@ pub fn @"textDocument/completion"(
     };
 
     const doc = switch (file) {
-        .supermd, .ziggy => |doc| doc,
+        .ziggy => |doc| doc,
         .ziggy_schema => return null,
     };
 
     const offset = lsp.offsets.positionToIndex(
-        doc.bytes,
+        doc.src,
         request.position,
         self.offset_encoding,
     );
@@ -188,7 +233,7 @@ pub fn @"textDocument/completion"(
     log.debug("completion at offset {}", .{offset});
 
     switch (file) {
-        .supermd, .ziggy => |z| {
+        .ziggy => |z| {
             const ast = z.ast orelse return .{
                 .CompletionList = types.CompletionList{
                     .isIncomplete = false,
@@ -240,16 +285,33 @@ pub fn @"textDocument/definition"(
     arena: std.mem.Allocator,
     request: types.DefinitionParams,
 ) error{OutOfMemory}!lsp.ResultType("textDocument/definition") {
-    const file = self.files.get(request.textDocument.uri) orelse return null;
-    if (file == .ziggy_schema) return null;
+    _ = arena;
+    const doc = self.docs.get(request.textDocument.uri) orelse return null;
+    const schema_path = doc.schema_uri orelse return null;
+    const schema = self.schemas.get(schema_path).?;
+    const offset = lsp.offsets.positionToIndex(
+        doc.src,
+        request.position,
+        self.offset_encoding,
+    );
+    log.debug("hover at offset {}", .{offset});
 
+    const node_idx = schema.ast.resolveZiggyOffset(
+        schema.src,
+        doc.ast,
+        doc.src,
+        @intCast(offset),
+    );
+    if (node_idx == 0) return null;
+
+    const node = schema.ast.nodes[node_idx];
     return .{
         .Definition = types.Definition{
             .Location = .{
-                .uri = try std.fmt.allocPrint(arena, "{s}-schema", .{request.textDocument.uri}),
+                .uri = schema_path,
                 .range = .{
-                    .start = .{ .line = 0, .character = 0 },
-                    .end = .{ .line = 0, .character = 0 },
+                    .start = lsp.offsets.indexToPosition(schema.src, node.loc.start, self.offset_encoding),
+                    .end = lsp.offsets.indexToPosition(schema.src, node.loc.end, self.offset_encoding),
                 },
             },
         },
@@ -258,31 +320,50 @@ pub fn @"textDocument/definition"(
 
 pub fn @"textDocument/hover"(
     self: *Handler,
-    _: std.mem.Allocator,
+    arena: std.mem.Allocator,
     request: types.HoverParams,
-) ?types.Hover {
-    const file = self.files.get(request.textDocument.uri) orelse return null;
-
-    const doc = switch (file) {
-        .supermd, .ziggy => |doc| doc,
-        .ziggy_schema => return null,
-    };
-
+) error{OutOfMemory}!lsp.ResultType("textDocument/hover") {
+    const doc = self.docs.get(request.textDocument.uri) orelse return null;
+    const schema_path = doc.schema_uri orelse return null;
+    const schema = self.schemas.get(schema_path).?;
     const offset = lsp.offsets.positionToIndex(
-        doc.bytes,
+        doc.src,
         request.position,
         self.offset_encoding,
     );
     log.debug("hover at offset {}", .{offset});
 
-    const ast = doc.ast orelse return null;
-    const h = ast.hoverForOffset(@intCast(offset)) orelse return null;
+    const node_idx = schema.ast.resolveZiggyOffset(
+        schema.src,
+        doc.ast,
+        doc.src,
+        @intCast(offset),
+    );
+    if (node_idx == 0) return null;
 
-    return types.Hover{
+    var out: std.ArrayList(u8) = .empty;
+    const node = schema.ast.nodes[node_idx];
+    log.debug("hover node: {any}", .{node});
+    switch (node.tag) {
+        .@"struct", .@"union", .struct_field, .union_field => {
+            if (node.docs_offset == 0) return null;
+            var t: ziggy.schema.Tokenizer = .{ .idx = node.docs_offset - 1 };
+            while (true) {
+                const tok = t.next(schema.src);
+                if (tok.tag != .doc_comment_line) break;
+                try out.appendSlice(arena, tok.loc.slice(schema.src)[3..]);
+                try out.append(arena, '\n');
+            }
+        },
+        .type_expr => return null,
+        else => unreachable,
+    }
+
+    return .{
         .contents = .{
             .MarkupContent = .{
                 .kind = .markdown,
-                .value = h,
+                .value = out.items,
             },
         },
     };
@@ -293,22 +374,22 @@ pub fn @"textDocument/formatting"(
     arena: std.mem.Allocator,
     request: types.DocumentFormattingParams,
 ) error{OutOfMemory}!?[]const types.TextEdit {
+    if (true) return null;
     const file = self.files.get(request.textDocument.uri) orelse return null;
 
     const new_text: []const u8 = switch (file) {
-        .supermd => return null,
         .ziggy => |doc| blk: {
-            const ast = ziggy.Ast.init(arena, doc.bytes, true, false, false, null) catch return null;
+            const ast = ziggy.Ast.init(arena, doc.src, true, false, false, null) catch return null;
             break :blk try std.fmt.allocPrint(arena, "{f}\n", .{ast});
         },
-        .ziggy_schema => |doc| try std.fmt.allocPrint(arena, "{f}", .{
-            doc.ast orelse return null,
-        }),
+        .ziggy_schema => |doc| blk: {
+            if (doc.ast.has_syntax_errors) return null;
+            break :blk try std.fmt.allocPrint(arena, "{f}", .{doc.ast.fmt(doc.src)});
+        },
     };
 
     const old_text = switch (file) {
-        .supermd => unreachable,
-        inline .ziggy, .ziggy_schema => |doc| doc.bytes,
+        inline .ziggy, .ziggy_schema => |doc| doc.src,
     };
 
     const range: offsets.Range = .{

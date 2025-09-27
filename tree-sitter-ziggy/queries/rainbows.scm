@@ -1,10 +1,11 @@
 [
   (struct)
-  (map)
+  (dict)
   (array)
 ] @rainbow.scope
 
 [
+  "(" ")"
   "[" "]"
   "{"  "}"
 ] @rainbow.bracket

@@ -1,16 +1,9 @@
 
-(struct_field
-  key: (_) @keyword)
-  
-(tag_name) @function
-
 [
-  "unknown"
   "any"
   "struct"
-  "root"
-  "enum"
-  "null"
+  "union"
+  "$"
 ] @keyword
 
 (string) @string
@@ -21,9 +14,21 @@
   "false"
 ] @bool
 
-(identifier) @type
 
-"?" @type
+[
+  "?"
+  "[]"
+  "{:}"
+] @type
+
+
+(struct
+  name: (_) @type)
+(union
+  name: (_) @type)
+
+(expr (identifier) @type)
+(identifier) @identifier
 
 [
   "bool"
@@ -32,19 +37,15 @@
   "float"
 ] @constant.builtin
 
-
 (doc_comment) @comment.line.documentation
 
 (ERROR) @error
 
 "," @punctuation.delimiter
 
-["|" ":"] @punctuation
-
+":" @punctuation
 
 [
-  "["
-  "]"
   "{"
   "}"
 ] @punctuation.bracket

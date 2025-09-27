@@ -2,6 +2,6 @@
 [
   (struct)
   (struct_field)
-  (map)
-  (map_field)
+  (dict)
+  (dict_field)
 ] @context
