@@ -47,7 +47,7 @@ const Converter = struct {
     code: [:0]const u8,
     tokenizer: *std.json.Scanner,
     json_diag: *std.json.Diagnostics,
-    diagnostic: ?*Diagnostic,
+    // diagnostic: ?*Diagnostic,
     schema: ziggy.schema.Schema,
     out: *Writer,
 
@@ -84,6 +84,7 @@ const Converter = struct {
         token: std.json.Token,
         rule: ziggy.schema.Schema.Rule,
     ) anyerror!void {
+        if (true) @panic("TODO: json conversion regressed");
         var sub_rule = rule;
         const r = c.schema.nodes[rule.node];
         if (r.tag == .optional) {

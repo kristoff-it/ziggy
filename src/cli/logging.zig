@@ -13,7 +13,7 @@ pub fn logFn(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    // if (scope != .ws and scope != .network) return;
+    if (scope != .ziggy_lsp) return;
 
     const l = log_file orelse return;
     const scope_prefix = "(" ++ @tagName(scope) ++ "): ";
@@ -21,9 +21,10 @@ pub fn logFn(
     std.debug.lockStdErr();
     defer std.debug.unlockStdErr();
 
-    var writer = l.writer(&.{});
-    const w = &writer.interface;
-    w.print(prefix ++ format ++ "\n", args) catch return;
+    var bufout: [4096]u8 = undefined;
+    var writer = l.writerStreaming(&bufout);
+    writer.interface.print(prefix ++ format ++ "\n", args) catch return;
+    writer.interface.flush() catch return;
 }
 
 pub fn setup(gpa: std.mem.Allocator) void {
@@ -36,14 +37,11 @@ pub fn setup(gpa: std.mem.Allocator) void {
 }
 
 fn setupInternal(gpa: std.mem.Allocator) !void {
-    const cache_base = try folders.open(gpa, .cache, .{}) orelse return error.Failure;
-    try cache_base.makePath("ziggy");
-
     const log_name = "ziggy.log";
-    const log_path = try std.fmt.allocPrint(gpa, "ziggy/{s}", .{log_name});
-    defer gpa.free(log_path);
+    var cache_base = try folders.open(gpa, .cache, .{}) orelse return error.Failure;
+    defer cache_base.close();
 
-    const file = try cache_base.createFile(log_path, .{ .truncate = false });
+    const file = try cache_base.createFile(log_name, .{ .truncate = false });
     const end = try file.getEndPos();
     try file.seekTo(end);
 

@@ -1,20 +1,5 @@
 [
   {
-    "type": "array",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "expr",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "default",
     "named": true,
     "fields": {},
@@ -39,21 +24,6 @@
     "fields": {}
   },
   {
-    "type": "enum_definition",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "identifier",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "expr",
     "named": true,
     "fields": {},
@@ -62,57 +32,7 @@
       "required": false,
       "types": [
         {
-          "type": "array",
-          "named": true
-        },
-        {
           "type": "identifier",
-          "named": true
-        },
-        {
-          "type": "map",
-          "named": true
-        },
-        {
-          "type": "optional",
-          "named": true
-        },
-        {
-          "type": "struct_union",
-          "named": true
-        },
-        {
-          "type": "tag_name",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "map",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "expr",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "optional",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "expr",
           "named": true
         }
       ]
@@ -131,31 +51,25 @@
             "named": true
           }
         ]
-      },
-      "structs": {
-        "multiple": true,
-        "required": false,
-        "types": [
-          {
-            "type": "struct",
-            "named": true
-          }
-        ]
-      },
-      "tags": {
-        "multiple": true,
-        "required": false,
-        "types": [
-          {
-            "type": ",",
-            "named": false
-          },
-          {
-            "type": "tag",
-            "named": true
-          }
-        ]
       }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "doc_comment",
+          "named": true
+        },
+        {
+          "type": "struct",
+          "named": true
+        },
+        {
+          "type": "union",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -198,6 +112,10 @@
         },
         {
           "type": "struct_field",
+          "named": true
+        },
+        {
+          "type": "union",
           "named": true
         }
       ]
@@ -254,22 +172,7 @@
     }
   },
   {
-    "type": "struct_union",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "identifier",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "tag",
+    "type": "union",
     "named": true,
     "fields": {
       "docs": {
@@ -282,26 +185,80 @@
           }
         ]
       },
-      "expr": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "bytes",
-            "named": false
-          },
-          {
-            "type": "enum_definition",
-            "named": true
-          }
-        ]
-      },
       "name": {
         "multiple": false,
         "required": true,
         "types": [
           {
-            "type": "tag_name",
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "struct",
+          "named": true
+        },
+        {
+          "type": "union",
+          "named": true
+        },
+        {
+          "type": "union_field",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "union_field",
+    "named": true,
+    "fields": {
+      "default": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "=",
+            "named": false
+          },
+          {
+            "type": "default",
+            "named": true
+          }
+        ]
+      },
+      "docs": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "doc_comment",
+            "named": true
+          }
+        ]
+      },
+      "key": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "expr",
             "named": true
           }
         ]
@@ -309,12 +266,11 @@
     }
   },
   {
-    "type": "tag_name",
-    "named": true,
-    "fields": {}
+    "type": "\"",
+    "named": false
   },
   {
-    "type": "\"",
+    "type": "$",
     "named": false
   },
   {
@@ -338,19 +294,11 @@
     "named": false
   },
   {
-    "type": "[",
-    "named": false
-  },
-  {
     "type": "[]",
     "named": false
   },
   {
-    "type": "]",
-    "named": false
-  },
-  {
-    "type": "_tag_name",
+    "type": "_enum_name",
     "named": false
   },
   {
@@ -363,10 +311,6 @@
   },
   {
     "type": "bytes",
-    "named": false
-  },
-  {
-    "type": "enum",
     "named": false
   },
   {
@@ -394,10 +338,6 @@
     "named": true
   },
   {
-    "type": "root",
-    "named": false
-  },
-  {
     "type": "struct",
     "named": false
   },
@@ -406,7 +346,7 @@
     "named": false
   },
   {
-    "type": "unknown",
+    "type": "union",
     "named": false
   },
   {
@@ -414,11 +354,11 @@
     "named": false
   },
   {
-    "type": "{}",
+    "type": "{:}",
     "named": false
   },
   {
-    "type": "|",
+    "type": "{}",
     "named": false
   },
   {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const builtin = @import("builtin");
 const folders = @import("known-folders");
 const ziggy = @import("ziggy");
@@ -20,31 +21,20 @@ pub const std_options: std.Options = .{
 var lsp_mode = false;
 pub fn panic(
     msg: []const u8,
-    trace: ?*std.builtin.StackTrace,
+    _: ?*std.builtin.StackTrace,
     ret_addr: ?usize,
 ) noreturn {
     if (lsp_mode) {
-        std.log.err("{s}\n\n{?f}", .{ msg, trace });
+        std.log.err("{s}\n", .{msg});
     } else {
-        std.debug.print("{s}\n\n{?f}", .{ msg, trace });
+        std.debug.print("{s}\n", .{msg});
     }
     blk: {
         const out = if (!lsp_mode) std.fs.File.stderr() else logging.log_file orelse break :blk;
-        var writer = out.writer(&.{});
+        var writer = out.writerStreaming(&.{});
         const w = &writer.interface;
 
-        if (builtin.strip_debug_info) {
-            w.print("Unable to dump stack trace: debug info stripped\n", .{}) catch return;
-            break :blk;
-        }
-        const debug_info = std.debug.getSelfDebugInfo() catch |err| {
-            w.print(
-                "Unable to dump stack trace: Unable to open debug info: {t}\n",
-                .{err},
-            ) catch break :blk;
-            break :blk;
-        };
-        std.debug.writeCurrentStackTrace(w, debug_info, .no_color, ret_addr) catch |err| {
+        std.debug.writeCurrentStackTrace(.{ .first_address = ret_addr }, w, .no_color) catch |err| {
             w.print("Unable to dump stack trace: {t}\n", .{err}) catch break :blk;
             break :blk;
         };
@@ -56,8 +46,23 @@ pub fn panic(
 pub const Command = enum { lsp, query, fmt, check, convert, help };
 
 pub fn main() !void {
-    var gpa_impl: std.heap.GeneralPurposeAllocator(.{}) = .{};
-    const gpa = gpa_impl.allocator();
+    const gpa = blk: {
+        if (builtin.single_threaded) {
+            const Gpa = struct {
+                var impl: std.heap.GeneralPurposeAllocator(.{}) = .{};
+            };
+            break :blk Gpa.impl.allocator();
+        } else break :blk std.heap.smp_allocator;
+    };
+
+    // Note: The Io impl must be `Threaded` because we use threadlocals
+    //       for storing arena allocators in the various subcommands.
+    var threaded: Io.Threaded = if (builtin.single_threaded)
+        .init_single_threaded
+    else
+        .init(gpa);
+    defer threaded.deinit();
+    const io = threaded.io();
 
     logging.setup(gpa);
 
@@ -74,10 +79,13 @@ pub fn main() !void {
     if (cmd == .lsp) lsp_mode = true;
 
     _ = switch (cmd) {
-        .lsp => lsp_exe.run(gpa, args[2..]),
-        .fmt => fmt_exe.run(gpa, args[2..]),
-        .check => check_exe.run(gpa, args[2..]),
-        .convert => convert_exe.run(gpa, args[2..]),
+        .lsp => {
+            threaded.cpu_count = 1;
+            lsp_exe.run(io, gpa, args[2..]) catch @panic("err");
+        },
+        .fmt => fmt_exe.run(io, gpa, args[2..]),
+        .check => check_exe.run(io, gpa, args[2..]),
+        .convert => convert_exe.run(io, gpa, args[2..]),
         .help => fatalHelp(),
         else => std.debug.panic("TODO cmd={s}", .{@tagName(cmd)}),
     } catch |err| fatal("unexpected error: {s}\n", .{@errorName(err)});
@@ -93,10 +101,10 @@ fn fatalHelp() noreturn {
         \\Usage: ziggy COMMAND [OPTIONS]
         \\
         \\Commands: 
-        \\  fmt          Format Ziggy files      
-        \\  query, q     Query Ziggy files 
-        \\  check        Check Ziggy files against a Ziggy schema 
-        \\  convert      Convert between JSON, YAML, TOML files and Ziggy
+        \\  fmt          Format Ziggy Documents      
+        \\  query, q     Query Ziggy Documents 
+        \\  check        Check Ziggy Documents against a Ziggy Schema 
+        \\  convert      Convert between JSON, YAML, TOML and Ziggy Documents
         \\  lsp          Start the Ziggy LSP
         \\  help         Show this menu and exit
         \\

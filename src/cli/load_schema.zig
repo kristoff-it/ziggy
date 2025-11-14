@@ -2,6 +2,8 @@ const std = @import("std");
 const ziggy = @import("ziggy");
 
 pub fn loadSchema(gpa: std.mem.Allocator, path: ?[]const u8) ziggy.schema.Schema {
+    //TODO: load schema regressed"
+    if (true) return defaultSchema();
     const p = path orelse return defaultSchema();
 
     var diag: ziggy.schema.Diagnostic = .{ .lsp = false, .path = p };
@@ -49,25 +51,25 @@ pub fn loadSchema(gpa: std.mem.Allocator, path: ?[]const u8) ziggy.schema.Schema
 }
 
 pub fn defaultSchema() ziggy.schema.Schema {
+    const src = "root = any";
     return .{
         .root = .{ .node = 1 },
-        .code = "unknown",
+        .src = src,
         .nodes = &.{
             .{
                 .tag = .root,
-                .loc = .{
-                    .start = 0,
-                    .end = "unknown".len,
-                },
-                .parent_id = 0,
+                .loc = .{ .start = 0, .end = src.len },
+                .parent_idx = 0,
             },
             .{
-                .tag = .any,
-                .loc = .{
-                    .start = 0,
-                    .end = "unknown".len,
-                },
-                .parent_id = 0,
+                .tag = .root_expr,
+                .loc = .{ .start = 0, .end = src.len },
+                .parent_idx = 1,
+            },
+            .{
+                .tag = .type_expr,
+                .loc = .{ .start = 7, .end = src.len },
+                .parent_idx = 2,
             },
         },
     };

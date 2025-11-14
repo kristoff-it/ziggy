@@ -1,28 +1,40 @@
+const builtin = @import("builtin");
 const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
 const ziggy = @import("ziggy");
-const loadSchema = @import("load_schema.zig").loadSchema;
+// const loadSchema = @import("load_schema.zig").loadSchema;
 const Diagnostic = ziggy.Diagnostic;
 const Ast = ziggy.Ast;
 
-const FileType = enum { ziggy, ziggy_schema };
+const FileType = enum {
+    ziggy,
+    ziggy_schema,
 
-pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
+    fn detect(basename: []const u8) ?FileType {
+        const ext = std.fs.path.extension(basename);
+        if (std.mem.eql(u8, ext, ".ziggy")) return .ziggy;
+        if (std.mem.eql(u8, ext, ".ziggy-schema")) return .ziggy_schema;
+        return null;
+    }
+};
+
+pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
     const cmd = Command.parse(args);
-    const schema = loadSchema(gpa, cmd.schema);
-    var any_error = false;
+    var any_error: std.atomic.Value(bool) = .init(false);
     switch (cmd.mode) {
         .stdin => {
-            var fr = std.fs.File.stdin().reader(&.{});
+            var fr = Io.File.stdin().reader(io, &.{});
             var aw: std.Io.Writer.Allocating = .init(gpa);
             _ = try fr.interface.streamRemaining(&aw.writer);
             const in_bytes = try aw.toOwnedSliceSentinel(0);
 
-            const out_bytes = try fmtZiggy(gpa, null, in_bytes, schema);
+            const out_bytes = try fmtZiggy(gpa, null, in_bytes);
 
             try std.fs.File.stdout().writeAll(out_bytes);
         },
         .stdin_schema => {
-            var fr = std.fs.File.stdin().reader(&.{});
+            var fr = Io.File.stdin().reader(io, &.{});
             var aw: std.Io.Writer.Allocating = .init(gpa);
             _ = try fr.interface.streamRemaining(&aw.writer);
             const in_bytes = try aw.toOwnedSliceSentinel(0);
@@ -32,123 +44,114 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
             try std.fs.File.stdout().writeAll(out_bytes);
         },
         .paths => |paths| {
-            // checkFile will reset the arena at the end of each call
-            var arena_impl = std.heap.ArenaAllocator.init(gpa);
             for (paths) |path| {
-                formatFile(
-                    &arena_impl,
-                    cmd.check,
-                    std.fs.cwd(),
-                    path,
-                    path,
-                    schema,
-                    &any_error,
-                ) catch |err| switch (err) {
-                    error.IsDir, error.AccessDenied => {
-                        formatDir(
-                            gpa,
-                            &arena_impl,
-                            cmd.check,
-                            path,
-                            schema,
-                            &any_error,
-                        ) catch |dir_err| {
-                            std.debug.print("Error walking dir '{s}': {t}\n", .{
-                                path,
-                                dir_err,
-                            });
-                            std.process.exit(1);
+                formatDir(io, gpa, cmd.check, path, &any_error) catch |err| switch (err) {
+                    error.NotDir, error.AccessDenied => {
+                        const ft = FileType.detect(path) orelse {
+                            std.debug.print(
+                                "error: path argument '{s}' is not a directory nor a ziggy / ziggy-schema file\n",
+                                .{path},
+                            );
+                            continue;
                         };
+                        formatFile(gpa, cmd.check, try gpa.dupe(u8, path), ft, &any_error);
                     },
-                    else => {
-                        std.debug.print("Error while accessing '{s}': {t}\n", .{
-                            path, err,
-                        });
-                        std.process.exit(1);
-                    },
+                    else => fatal("unable to open '{s}' as directory: {t}", .{ path, err }),
                 };
             }
         },
     }
 
-    if (any_error) {
+    if (any_error.load(.monotonic)) {
         std.process.exit(1);
     }
 }
 
 fn formatDir(
-    gpa: std.mem.Allocator,
-    arena_impl: *std.heap.ArenaAllocator,
+    io: Io,
+    gpa: Allocator,
     check: bool,
     path: []const u8,
-    schema: ziggy.schema.Schema,
-    any_error: *bool,
+    any_error: *std.atomic.Value(bool),
 ) !void {
     var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
     var walker = dir.walk(gpa) catch oom();
     defer walker.deinit();
+
+    var g: Io.Group = .init;
+    defer g.cancel(io);
+
     while (try walker.next()) |item| {
         switch (item.kind) {
             .file => {
-                try formatFile(
-                    arena_impl,
+                const ft = FileType.detect(item.basename) orelse continue;
+                const file_path = try std.fs.path.join(gpa, &.{ path, item.path });
+                g.async(io, formatFile, .{
+                    gpa,
                     check,
-                    item.dir,
-                    item.basename,
-                    item.path,
-                    schema,
+                    file_path,
+                    ft,
                     any_error,
-                );
+                });
             },
             else => {},
         }
     }
+
+    g.wait(io);
 }
 
 fn formatFile(
-    arena_impl: *std.heap.ArenaAllocator,
+    gpa: Allocator,
     check: bool,
-    base_dir: std.fs.Dir,
-    sub_path: []const u8,
     full_path: []const u8,
-    schema: ziggy.schema.Schema,
-    any_error: *bool,
-) !void {
-    defer _ = arena_impl.reset(.retain_capacity);
-    const arena = arena_impl.allocator();
+    ft: FileType,
+    any_error: *std.atomic.Value(bool),
+) void {
+    defer gpa.free(full_path);
+    formatFileFallible(check, full_path, ft, any_error) catch |err| switch (err) {
+        error.OutOfMemory => oom(),
+        error.Syntax => any_error.store(true, .unordered),
+        else => fatal("unable to access '{s}': {t}", .{
+            full_path,
+            err,
+        }),
+    };
+}
 
-    const in_bytes = try base_dir.readFileAllocOptions(
+threadlocal var format_arena: std.heap.ArenaAllocator = if (!builtin.single_threaded) .init(
+    std.heap.smp_allocator,
+) else blk: {
+    const Gpa = struct {
+        var impl: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    };
+    break :blk .init(Gpa.impl.allocator());
+};
+
+/// Don't call this, call `formatFile`
+fn formatFileFallible(
+    check: bool,
+    full_path: []const u8,
+    ft: FileType,
+    any_error: *std.atomic.Value(bool),
+) !void {
+    defer _ = format_arena.reset(.retain_capacity);
+    const arena = format_arena.allocator();
+
+    const in_bytes = try std.fs.cwd().readFileAllocOptions(
+        full_path,
         arena,
-        sub_path,
-        ziggy.max_size,
-        null,
+        .limited(ziggy.max_size),
         .of(u8),
         0,
     );
 
-    const file_type: FileType = blk: {
-        const ext = std.fs.path.extension(sub_path);
-        if (std.mem.eql(u8, ext, ".ziggy") or
-            std.mem.eql(u8, ext, ".zgy"))
-        {
-            break :blk .ziggy;
-        }
-
-        if (std.mem.eql(u8, ext, ".ziggy-schema") or
-            std.mem.eql(u8, ext, ".zgy-schema"))
-        {
-            break :blk .ziggy_schema;
-        }
-        return;
-    };
-
-    const out_bytes = switch (file_type) {
+    const out_bytes = switch (ft) {
         .ziggy => try fmtZiggy(
             arena,
             full_path,
             in_bytes,
-            schema,
         ),
         .ziggy_schema => try fmtSchema(
             arena,
@@ -162,66 +165,73 @@ fn formatFile(
     var stdout_writer = std.fs.File.stdout().writer(&.{});
     const stdout = &stdout_writer.interface;
 
-    if (check) {
-        any_error.* = true;
-        try stdout.print("{s}\n", .{full_path});
-        return;
+    if (check) any_error.store(true, .unordered) else {
+        var af = try std.fs.cwd().atomicFile(full_path, .{ .write_buffer = &.{} });
+        defer af.deinit();
+        try af.file_writer.interface.writeAll(out_bytes);
+        try af.finish();
     }
 
-    var af = try base_dir.atomicFile(sub_path, .{ .write_buffer = &.{} });
-    defer af.deinit();
-
-    try af.file_writer.interface.writeAll(out_bytes);
-    try af.finish();
+    std.debug.lockStdErr();
+    defer std.debug.unlockStdErr();
     try stdout.print("{s}\n", .{full_path});
 }
 
 pub fn fmtZiggy(
-    gpa: std.mem.Allocator,
+    gpa: Allocator,
     path: ?[]const u8,
-    code: [:0]const u8,
-    schema: ziggy.schema.Schema,
+    src: [:0]const u8,
 ) ![]const u8 {
-    var diag: Diagnostic = .{ .path = path };
-    const doc = Ast.init(gpa, code, true, false, false, &diag) catch {
-        if (diag.errors.items.len != 0) {
-            std.debug.print("{f}\n", .{diag.fmt(code)});
-        }
-        std.process.exit(1);
-    };
+    const ast = try Ast.init(gpa, src, .{});
+    defer ast.deinit(gpa);
 
-    doc.check(gpa, schema, &diag) catch {
-        if (diag.errors.items.len != 0) {
-            std.debug.print("{f}\n", .{diag.fmt(code)});
+    if (ast.errors.len > 0) {
+        std.debug.lockStdErr();
+        for (ast.errors) |err| {
+            const sel = err.main_location.getSelection(src);
+            std.debug.print("{s}:{}:{} {f}\n", .{
+                path orelse "<stdin>",
+                sel.start.line,
+                sel.start.col,
+                err.tag,
+            });
         }
-        std.process.exit(1);
-    };
+        std.debug.unlockStdErr();
+    }
 
-    return std.fmt.allocPrint(gpa, "{f}\n", .{doc});
+    if (ast.has_syntax_errors) return error.Syntax;
+
+    return std.fmt.allocPrint(gpa, "{f}\n", .{ast.fmt(src)});
 }
 
 fn fmtSchema(
-    gpa: std.mem.Allocator,
+    gpa: Allocator,
     path: ?[]const u8,
-    code: [:0]const u8,
+    src: [:0]const u8,
 ) ![]const u8 {
-    var diag: ziggy.schema.Diagnostic = .{ .lsp = false, .path = path };
-    const ast = ziggy.schema.Ast.init(gpa, code, &diag) catch {
-        std.debug.print("{f}\n", .{diag});
-        std.process.exit(1);
-    };
+    const ast = try ziggy.schema.Ast.init(gpa, src);
+    defer ast.deinit(gpa);
 
-    return std.fmt.allocPrint(gpa, "{f}", .{ast});
-}
+    if (ast.errors.len > 0) {
+        std.debug.lockStdErr();
+        for (ast.errors) |err| {
+            const sel = err.main_location.getSelection(src);
+            std.debug.print("{s}:{}:{} {f}\n", .{
+                path orelse "<stdin>",
+                sel.start.line,
+                sel.start.col,
+                err.tag,
+            });
+        }
+        std.debug.unlockStdErr();
+    }
 
-fn oom() noreturn {
-    std.debug.print("Out of memory\n", .{});
-    std.process.exit(1);
+    if (ast.has_syntax_errors) return error.Syntax;
+    return std.fmt.allocPrint(gpa, "{f}", .{ast.fmt(src)});
 }
 
 pub const Command = struct {
     check: bool,
-    schema: ?[]const u8,
     mode: Mode,
 
     const Mode = union(enum) {
@@ -232,7 +242,6 @@ pub const Command = struct {
 
     fn parse(args: []const []const u8) Command {
         var check: bool = false;
-        var schema: ?[]const u8 = null;
         var mode: ?Mode = null;
 
         var idx: usize = 0;
@@ -254,21 +263,21 @@ pub const Command = struct {
                 continue;
             }
 
-            if (std.mem.eql(u8, arg, "--schema")) {
-                if (schema != null) {
-                    std.debug.print("error: duplicate '--schema' option\n\n", .{});
-                    std.process.exit(1);
-                }
+            // if (std.mem.eql(u8, arg, "--schema")) {
+            //     if (schema != null) {
+            //         std.debug.print("error: duplicate '--schema' option\n\n", .{});
+            //         std.process.exit(1);
+            //     }
 
-                idx += 1;
-                if (idx == args.len) {
-                    std.debug.print("error: missing '--schema' option value\n\n", .{});
-                    std.process.exit(1);
-                }
+            //     idx += 1;
+            //     if (idx == args.len) {
+            //         std.debug.print("error: missing '--schema' option value\n\n", .{});
+            //         std.process.exit(1);
+            //     }
 
-                schema = args[idx];
-                continue;
-            }
+            //     schema = args[idx];
+            //     continue;
+            // }
 
             if (std.mem.startsWith(u8, arg, "-")) {
                 if (std.mem.eql(u8, arg, "--stdin") or
@@ -320,7 +329,6 @@ pub const Command = struct {
 
         return .{
             .check = check,
-            .schema = schema,
             .mode = m,
         };
     }
@@ -333,8 +341,8 @@ pub const Command = struct {
             \\   be searched recursively for Ziggy and Ziggy Schema files.
             \\     
             \\   Detected extensions:     
-            \\        Ziggy         .ziggy, .zgy  
-            \\        Ziggy Schema  .ziggy-schema, .zgy-schema 
+            \\        Ziggy         .ziggy  
+            \\        Ziggy Schema  .ziggy-schema 
             \\
             \\Options:
             \\
@@ -343,9 +351,6 @@ pub const Command = struct {
             \\
             \\--stdin-schema     Same as --stdin but for Ziggy Schema files.
             \\
-            \\--schema PATH      Path to a Ziggy schema file used when formatting
-            \\                   Ziggy files.
-            \\                  
             \\--check            List non-conforming files and exit with an
             \\                   error if the list is not empty.
             \\
@@ -355,3 +360,13 @@ pub const Command = struct {
         std.process.exit(1);
     }
 };
+
+fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
+    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
+    if (builtin.mode == .Debug) @breakpoint();
+    std.process.exit(1);
+}
+
+fn oom() noreturn {
+    fatal("out of memory", .{});
+}

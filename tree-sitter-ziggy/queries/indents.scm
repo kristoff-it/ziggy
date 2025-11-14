@@ -1,6 +1,6 @@
 [
   (struct)
-  (map)
+  (dict)
   (array)
 ] @indent
 
