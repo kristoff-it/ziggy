@@ -367,6 +367,8 @@ pub const Command = struct {
             \\                 first argument if present (mutually 
             \\                 exclusive with '--schema').
             \\--help, -h       Print this help and exit.
+            \\
+            \\
         , .{});
 
         std.process.exit(1);
