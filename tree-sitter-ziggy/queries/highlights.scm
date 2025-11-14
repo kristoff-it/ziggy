@@ -6,7 +6,6 @@
 (null) @constant.builtin
 (number) @constant.numeric
 
-
 (struct_field
   key: (_) @field)
   
@@ -16,7 +15,6 @@
   (string) 
   (line_string)*
 ] @string
-
 
 (comment) @comment.line
 

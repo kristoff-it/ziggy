@@ -44,7 +44,7 @@ module.exports = grammar({
     top_level_struct: $ => seq(commaSep1($.struct_field)),
 
     struct: $ => prec(1, seq(
-      '.{', 
+      seq('.', token.immediate('{')), 
         commaSep($.struct_field), 
       '}',
     )),

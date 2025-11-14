@@ -123,6 +123,7 @@
   {
     "type": "document",
     "named": true,
+    "root": true,
     "fields": {},
     "children": {
       "multiple": false,
@@ -260,10 +261,6 @@
     "named": false
   },
   {
-    "type": ".{",
-    "named": false
-  },
-  {
     "type": ":",
     "named": false
   },
@@ -289,7 +286,8 @@
   },
   {
     "type": "comment",
-    "named": true
+    "named": true,
+    "extra": true
   },
   {
     "type": "escape_sequence",
