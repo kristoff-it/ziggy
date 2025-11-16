@@ -13,8 +13,6 @@ pub fn logFn(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (scope != .ziggy_lsp) return;
-
     const l = log_file orelse return;
     const scope_prefix = "(" ++ @tagName(scope) ++ "): ";
     const prefix = "[" ++ @tagName(level) ++ "] " ++ scope_prefix;

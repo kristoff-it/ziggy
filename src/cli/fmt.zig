@@ -3,18 +3,18 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const ziggy = @import("ziggy");
-// const loadSchema = @import("load_schema.zig").loadSchema;
-const Diagnostic = ziggy.Diagnostic;
 const Ast = ziggy.Ast;
 
 const FileType = enum {
     ziggy,
     ziggy_schema,
+    supermd,
 
     fn detect(basename: []const u8) ?FileType {
         const ext = std.fs.path.extension(basename);
         if (std.mem.eql(u8, ext, ".ziggy")) return .ziggy;
         if (std.mem.eql(u8, ext, ".ziggy-schema")) return .ziggy_schema;
+        if (std.mem.eql(u8, ext, ".smd")) return .supermd;
         return null;
     }
 };
@@ -30,6 +30,16 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
             const in_bytes = try aw.toOwnedSliceSentinel(0);
 
             const out_bytes = try fmtZiggy(gpa, null, in_bytes);
+
+            try std.fs.File.stdout().writeAll(out_bytes);
+        },
+        .stdin_supermd => {
+            var fr = Io.File.stdin().reader(io, &.{});
+            var aw: std.Io.Writer.Allocating = .init(gpa);
+            _ = try fr.interface.streamRemaining(&aw.writer);
+            const in_bytes = try aw.toOwnedSliceSentinel(0);
+
+            const out_bytes = try fmtSuperMD(gpa, null, in_bytes);
 
             try std.fs.File.stdout().writeAll(out_bytes);
         },
@@ -148,6 +158,11 @@ fn formatFileFallible(
     );
 
     const out_bytes = switch (ft) {
+        .supermd => try fmtSuperMD(
+            arena,
+            full_path,
+            in_bytes,
+        ),
         .ziggy => try fmtZiggy(
             arena,
             full_path,
@@ -175,6 +190,44 @@ fn formatFileFallible(
     std.debug.lockStdErr();
     defer std.debug.unlockStdErr();
     try stdout.print("{s}\n", .{full_path});
+}
+
+pub fn fmtSuperMD(
+    gpa: Allocator,
+    path: ?[]const u8,
+    src: [:0]const u8,
+) ![]const u8 {
+    const ast = try Ast.init(gpa, src, .{
+        .delimiter = .{
+            .dashes = blk: {
+                var t: ziggy.Tokenizer = .init(.{ .dashes = 0 });
+                const start = t.next(src, true);
+                break :blk switch (start.tag) {
+                    .eod => start.loc.end,
+                    else => 0,
+                };
+            },
+        },
+    });
+    defer ast.deinit(gpa);
+
+    if (ast.errors.len > 0) {
+        std.debug.lockStdErr();
+        for (ast.errors) |err| {
+            const sel = err.main_location.getSelection(src);
+            std.debug.print("{s}:{}:{} {f}\n", .{
+                path orelse "<stdin>",
+                sel.start.line,
+                sel.start.col,
+                err.tag,
+            });
+        }
+        std.debug.unlockStdErr();
+    }
+
+    if (ast.has_syntax_errors) return error.Syntax;
+
+    return std.fmt.allocPrint(gpa, "{f}\n", .{ast.fmt(src)});
 }
 
 pub fn fmtZiggy(
@@ -237,6 +290,7 @@ pub const Command = struct {
     const Mode = union(enum) {
         stdin,
         stdin_schema,
+        stdin_supermd,
         paths: []const []const u8,
     };
 
@@ -289,6 +343,15 @@ pub const Command = struct {
                     }
 
                     mode = .stdin;
+                } else if (std.mem.eql(u8, arg, "--stdin-supermd") or
+                    std.mem.eql(u8, arg, "-"))
+                {
+                    if (mode != null) {
+                        std.debug.print("unexpected flag: '{s}'\n", .{arg});
+                        std.process.exit(1);
+                    }
+
+                    mode = .stdin_supermd;
                 } else if (std.mem.eql(u8, arg, "--stdin-schema")) {
                     if (mode != null) {
                         std.debug.print("unexpected flag: '{s}'\n", .{arg});
@@ -337,12 +400,16 @@ pub const Command = struct {
         std.debug.print(
             \\Usage: ziggy fmt PATH [PATH...] [OPTIONS]
             \\
-            \\   Formats input paths inplace. If PATH is a directory, it will
-            \\   be searched recursively for Ziggy and Ziggy Schema files.
+            \\Formats input paths inplace. If PATH is a directory, it will
+            \\be searched recursively for Ziggy and Ziggy Schema files.
             \\     
-            \\   Detected extensions:     
-            \\        Ziggy         .ziggy  
-            \\        Ziggy Schema  .ziggy-schema 
+            \\Detected extensions:     
+            \\     Ziggy         .ziggy  
+            \\     Ziggy Schema  .ziggy-schema 
+            \\     SuperMD       .supermd  
+            \\
+            \\NOTE: SuperMD support is temporary until a dedicated
+            \\      CLI tool is created.
             \\
             \\Options:
             \\
@@ -350,6 +417,8 @@ pub const Command = struct {
             \\                   Mutually exclusive with other input aguments.    
             \\
             \\--stdin-schema     Same as --stdin but for Ziggy Schema files.
+            \\
+            \\--stdin-supermd     Same as --stdin but for SuperMD files.
             \\
             \\--check            List non-conforming files and exit with an
             \\                   error if the list is not empty.

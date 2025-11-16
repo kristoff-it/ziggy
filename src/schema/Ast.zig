@@ -1949,7 +1949,11 @@ pub fn validate(
                                         continue;
                                     },
                                     .@"union" => {
-                                        var t: ZiggyTokenizer = .{ .idx = node.loc.start };
+                                        var t: ZiggyTokenizer = .{
+                                            .lines = 0,
+                                            .delimiter = .none,
+                                            .idx = node.loc.start,
+                                        };
                                         const name_tok = t.next(ziggy_src, true);
                                         assert(name_tok.tag == .union_case);
                                         const name_raw = name_tok.loc.slice(ziggy_src);
@@ -2080,7 +2084,11 @@ pub fn validate(
                         }
                     },
                     .dict_field, .struct_field => {
-                        var t: ZiggyTokenizer = .{ .idx = node.loc.start };
+                        var t: ZiggyTokenizer = .{
+                            .lines = 0,
+                            .delimiter = .none,
+                            .idx = node.loc.start,
+                        };
                         const name_tok = t.next(ziggy_src, true);
                         const name_raw = name_tok.loc.slice(ziggy_src);
                         const name = switch (name_tok.tag) {
@@ -2344,7 +2352,11 @@ pub fn resolveZiggyOffset(
 
                                     if (child.loc.start <= ziggy_offset and child.loc.end > ziggy_offset) {
                                         const name = blk: {
-                                            var name_t: ZiggyTokenizer = .{ .idx = child.loc.start };
+                                            var name_t: ZiggyTokenizer = .{
+                                                .lines = 0,
+                                                .delimiter = .none,
+                                                .idx = child.loc.start,
+                                            };
                                             const tok = name_t.next(ziggy_src, true);
                                             assert(tok.tag == .identifier);
                                             switch (tok.tag) {
@@ -2367,7 +2379,9 @@ pub fn resolveZiggyOffset(
                                             ziggy_node = value;
                                             scope_idx = container_idx;
                                             schema_idx = schema_field.idx + 1;
-                                            tokenizer = .{ .idx = schema_ast.nodes[schema_idx].loc.start };
+                                            tokenizer = .{
+                                                .idx = schema_ast.nodes[schema_idx].loc.start,
+                                            };
                                             continue :outer;
                                         }
 
@@ -2384,7 +2398,11 @@ pub fn resolveZiggyOffset(
                     .@"union" => switch (ziggy_node.tag) {
                         .@"union" => {
                             const name = blk: {
-                                var name_t: ZiggyTokenizer = .{ .idx = ziggy_node.loc.start };
+                                var name_t: ZiggyTokenizer = .{
+                                    .lines = 0,
+                                    .delimiter = .none,
+                                    .idx = ziggy_node.loc.start,
+                                };
                                 const tok = name_t.next(ziggy_src, true);
                                 assert(tok.tag == .union_case);
                                 const raw = tok.loc.slice(ziggy_src);

@@ -20,16 +20,11 @@ pub const Options = struct {
     /// outlasts the result of calling `deserializeLeaky`.
     copy_strings: CopyStrings = .to_unescape,
     /// Allows you to parse a Ziggy Document embedded in another file, like
-    /// SuperMD or HTML.
+    /// SuperMD for example.
     ///
-    /// When set to anything other than `.none`:
-    /// - `src` must start after the initial delimiter (e.g. after the opening
-    ///   `---` in a SuperMD file)
-    /// - `src` can continue up to the end of the document, including non-Ziggy
-    ///   data. While not mandatory, you will generally want to do this since
-    ///   `src` must be `[:0]const u8`.
+    /// See the doc comment of `Tokenizer.Delimiter` for more info.
     ///
-    /// When expecting a delimiter, on successful deserialization `meta.doc`
+    /// When expecting a delimiter, on successful deserialization, `meta.doc`
     /// will be populated with information about the length of the Ziggy
     /// Document that can help you with subsequent parsing operations.
     delimiter: Tokenizer.Delimiter = .none,
@@ -39,23 +34,30 @@ pub const Options = struct {
     };
 };
 
-/// See the description of `deserializeLeaky` to know how to use this
-/// information.
+/// Metadata relative to a deserialization process.
+/// All the data in this type will be filled out by the deserialization
+/// function. Depending on the outcome and deserialization options provided,
+/// different sections will be defined, leaving others set to `undefined`.
+///
+/// Make sure to learn which section is populated under which conditions.
 pub const Meta = struct {
-    /// Contains the location where the error happened.
+    /// On deserialization ERROR contains the location where the error happened,
+    /// set to undefined otherwise.
     error_loc: Token.Loc,
-    /// Set when `deserializeLeaky` returns `error.MissingField`, contains the name
-    /// of the first missing field encountered.
+    /// On deserialization ERROR, when the error is `MissingField`, contains the
+    /// name of the first missing field encountered (points at static memory),
+    /// set to undefined otherwise.
     missing_field_name: []const u8,
-    /// Populated when `deserializeLeaky` succeeds and `delimiter` is not `.none`.
+    /// On deserialization SUCCESS, when delimiter is not `.none`, set to
+    /// undefined otherwise
     doc: struct {
         /// Number of newlines encountered while deserializing the Ziggy
         /// Document. This value is useful to compensate for the missing
         /// lines if you then need to report parsing errors in the outer
-        /// document.
+        /// document and must exclude.
         lines: u32,
-        /// Byte offset where the Ziggy Document ends. Includes the end
-        /// delimiter.
+        /// Byte offset where the Ziggy Document ends.
+        /// Does *NOT* incude the end delimiter.
         end: u32,
     },
 
@@ -230,7 +232,8 @@ pub fn missingField(d: *const Deserializer, tok: Token, name: []const u8) Error 
 ///    returned by this function.
 ///
 /// This will guarantee the highest level of quality of error reporting.
-/// See `Meta.reportErrors` for a convenient way of showing errors.
+/// See `Meta.reportErrors` for a convenience function that implements this
+/// process.
 ///
 /// Given that the type passed in might have default values, it might be not
 /// immediately obvious how to free an allocated value correctly, hence the
@@ -246,20 +249,20 @@ pub fn deserializeLeaky(
     meta: *Meta,
     opts: Options,
 ) Deserializer.Error!T {
-    var t: Tokenizer = .{ .delimiter = opts.delimiter };
+    var tokenizer: Tokenizer = .init(opts.delimiter);
     var d: Deserializer = .{
         .gpa = gpa,
         .src = src,
         .meta = meta,
         .opts = opts,
-        .tokenizer = &t,
+        .tokenizer = &tokenizer,
     };
 
-    const result = try d.deserializeOne(T, t.next(src, true), true);
-    const end = t.next(src, true);
+    const result = try d.deserializeOne(T, tokenizer.next(src, true), true);
+    const end = tokenizer.next(src, true);
     switch (end.tag) {
         .eof => {},
-        .eod => meta.doc = .{ .lines = t.lines, .end = end.loc.end },
+        .eod => meta.doc = .{ .lines = tokenizer.lines, .end = end.loc.end },
         else => {
             meta.error_loc = end.loc;
             return error.Unexpected;
@@ -1039,12 +1042,12 @@ test "braceless struct - frontmatter" {
     const arena = arena_state.allocator();
 
     var meta: Meta = undefined;
-    const opts: Options = .{ .delimiter = .dashes };
-    _ = try deserializeLeaky(Case, arena, case["---".len..], &meta, opts);
+    const opts: Options = .{ .delimiter = .{ .dashes = 3 } };
+    _ = try deserializeLeaky(Case, arena, case, &meta, opts);
 
     const lines: u32 = @intCast(std.mem.count(u8, case, "\n"));
     try std.testing.expectEqual(lines, meta.doc.lines);
-    try std.testing.expectEqual(case.len - "---".len, meta.doc.end);
+    try std.testing.expectEqual(case.len, meta.doc.end);
 }
 
 test "braceless struct no trailing comma - frontmatter" {
@@ -1065,12 +1068,12 @@ test "braceless struct no trailing comma - frontmatter" {
     const arena = arena_state.allocator();
 
     var meta: Meta = undefined;
-    const opts: Options = .{ .delimiter = .dashes };
-    _ = try deserializeLeaky(Case, arena, case["---".len..], &meta, opts);
+    const opts: Options = .{ .delimiter = .{ .dashes = 3 } };
+    _ = try deserializeLeaky(Case, arena, case, &meta, opts);
 
     const lines: u32 = @intCast(std.mem.count(u8, case, "\n"));
     try std.testing.expectEqual(lines, meta.doc.lines);
-    try std.testing.expectEqual(case.len - "---".len, meta.doc.end);
+    try std.testing.expectEqual(case.len, meta.doc.end);
 }
 
 test "struct - frontmatter" {
@@ -1093,12 +1096,12 @@ test "struct - frontmatter" {
     const arena = arena_state.allocator();
 
     var meta: Meta = undefined;
-    const opts: Options = .{ .delimiter = .dashes };
-    _ = try deserializeLeaky(Case, arena, case["---".len..], &meta, opts);
+    const opts: Options = .{ .delimiter = .{ .dashes = 3 } };
+    _ = try deserializeLeaky(Case, arena, case, &meta, opts);
 
     const lines: u32 = @intCast(std.mem.count(u8, case, "\n"));
     try std.testing.expectEqual(lines, meta.doc.lines);
-    try std.testing.expectEqual(case.len - "---".len, meta.doc.end);
+    try std.testing.expectEqual(case.len, meta.doc.end);
 }
 
 test "struct - frontmatter plus markdown" {
@@ -1110,7 +1113,7 @@ test "struct - frontmatter plus markdown" {
         \\}
         \\---
         \\
-        \\ bla bla bla 
+        \\ bla bla bla
     ;
 
     const Case = struct {
@@ -1123,11 +1126,11 @@ test "struct - frontmatter plus markdown" {
     const arena = arena_state.allocator();
 
     var meta: Meta = undefined;
-    const opts: Options = .{ .delimiter = .dashes };
-    _ = try deserializeLeaky(Case, arena, case["---".len..], &meta, opts);
+    const opts: Options = .{ .delimiter = .{ .dashes = 3 } };
+    _ = try deserializeLeaky(Case, arena, case, &meta, opts);
 
     try std.testing.expectEqual(5, meta.doc.lines);
-    try std.testing.expectEqual(74, meta.doc.end);
+    try std.testing.expectEqual(77, meta.doc.end);
 }
 
 test "braceless struct no trailing comma - frontmatter + markdown" {
@@ -1137,7 +1140,7 @@ test "braceless struct no trailing comma - frontmatter + markdown" {
         \\.bar = false
         \\---
         \\
-        \\aarst arst arst 
+        \\aarst arst arst
         \\
         \\ arstarst
     ;
@@ -1152,11 +1155,11 @@ test "braceless struct no trailing comma - frontmatter + markdown" {
     const arena = arena_state.allocator();
 
     var meta: Meta = undefined;
-    const opts: Options = .{ .delimiter = .dashes };
-    _ = try deserializeLeaky(Case, arena, case["---".len..], &meta, opts);
+    const opts: Options = .{ .delimiter = .{ .dashes = 3 } };
+    _ = try deserializeLeaky(Case, arena, case, &meta, opts);
 
     try std.testing.expectEqual(3, meta.doc.lines);
-    try std.testing.expectEqual(31, meta.doc.end);
+    try std.testing.expectEqual(34, meta.doc.end);
 }
 
 test "missing delimiter in markdown" {
@@ -1165,7 +1168,7 @@ test "missing delimiter in markdown" {
         \\.foo = "bar",
         \\.bar = false
         \\
-        \\aarst arst arst 
+        \\aarst arst arst
         \\
         \\ arstarst
     ;
@@ -1180,22 +1183,16 @@ test "missing delimiter in markdown" {
     const arena = arena_state.allocator();
 
     var meta: Meta = undefined;
-    const opts: Options = .{ .delimiter = .dashes };
+    const opts: Options = .{ .delimiter = .{ .dashes = 3 } };
     try std.testing.expectError(
         error.Unexpected,
-        deserializeLeaky(Case, arena, case["---".len..], &meta, opts),
+        deserializeLeaky(Case, arena, case, &meta, opts),
     );
 
     try std.testing.expectFmt(
         \\<stdin>:5:1 unexpected token
         \\
-    , "{f}", .{meta.reportErrorsFmt(
-        arena,
-        opts,
-        case["---".len..],
-        null,
-        error.Unexpected,
-    )});
+    , "{f}", .{meta.reportErrorsFmt(arena, opts, case, null, error.Unexpected)});
 }
 
 test "duplicate field + syntax error" {
@@ -1204,7 +1201,7 @@ test "duplicate field + syntax error" {
         \\.foo = "bar",
         \\.foo = false
         \\
-        \\aarst arst arst 
+        \\aarst arst arst
         \\
         \\ arstarst
     ;
@@ -1219,22 +1216,16 @@ test "duplicate field + syntax error" {
     const arena = arena_state.allocator();
 
     var meta: Meta = undefined;
-    const opts: Options = .{ .delimiter = .dashes };
+    const opts: Options = .{ .delimiter = .{ .dashes = 3 } };
     try std.testing.expectError(
         error.DuplicateField,
-        deserializeLeaky(Case, arena, case["---".len..], &meta, opts),
+        deserializeLeaky(Case, arena, case, &meta, opts),
     );
 
     try std.testing.expectFmt(
         \\<stdin>:5:1 unexpected token
         \\
-    , "{f}", .{meta.reportErrorsFmt(
-        arena,
-        opts,
-        case["---".len..],
-        null,
-        error.DuplicateField,
-    )});
+    , "{f}", .{meta.reportErrorsFmt(arena, opts, case, null, error.DuplicateField)});
 }
 
 test "duplicate field in markdown" {
@@ -1258,20 +1249,14 @@ test "duplicate field in markdown" {
     const arena = arena_state.allocator();
 
     var meta: Meta = undefined;
-    const opts: Options = .{ .delimiter = .dashes };
+    const opts: Options = .{ .delimiter = .{ .dashes = 3 } };
     try std.testing.expectError(
         error.DuplicateField,
-        deserializeLeaky(Case, arena, case["---".len..], &meta, opts),
+        deserializeLeaky(Case, arena, case, &meta, opts),
     );
 
     try std.testing.expectFmt(
         \\<stdin>:3:1 duplicate field
         \\
-    , "{f}", .{meta.reportErrorsFmt(
-        arena,
-        opts,
-        case["---".len..],
-        null,
-        error.DuplicateField,
-    )});
+    , "{f}", .{meta.reportErrorsFmt(arena, opts, case, null, error.DuplicateField)});
 }

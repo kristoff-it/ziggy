@@ -2,19 +2,42 @@ const Tokenizer = @This();
 
 const std = @import("std");
 
-delimiter: Delimiter = .none,
-lines: u32 = 0,
-idx: u32 = 0,
+delimiter: std.meta.Tag(Delimiter),
+lines: u32,
+idx: u32,
 
-pub const Delimiter = enum {
-    /// No delimiter
+/// When parsing Ziggy Documents embedded in external files, the *CLOSING*
+/// delimiter to expect after the Ziggy Document ends.
+pub const Delimiter = union(enum) {
+    /// No delimiter, tokenization will start from the first byte and continue
+    /// to the end.
     none,
-    /// '---'
-    dashes,
-    /// '```'
-    backticks,
-    /// '</script>'
-    script,
+    /// For all the following cases, tokenization will begin at the provided
+    /// offset and continue until the specified delimiter is encountered.
+    ///
+    /// The starting offset must be set to *AFTER* the opening delimiter (which
+    /// might or might not be the same as the closing delimiter, and since it's
+    /// on you to parse it, it makes no difference).
+    ///
+    /// The Ziggy tokenizer will start tokenizing from this position and you
+    /// won't need to adjust any offset / line count in error messages.
+    ///
+    /// This means that it's up to you to ensure that the opening delimiter is
+    /// present before you start parsing a Ziggy Document. It also means that
+    /// you will have to handle empty files.
+    ///
+    /// Dashes (---) are normally the frontmatter delimiter of Markdown and SuperMD
+    /// documents.
+    dashes: u32,
+    /// Backticks (```) are the delimiter of code blocks in Markdown and SuperMD.
+    /// It's also common to have extra syntax on the same line where the opening
+    /// delimiter is, like so:
+    ///    ```python foo=bar
+    ///    my = ["python", "code"]
+    ///    ```
+    /// In such cases it's necessary to provide a starting offset that points
+    /// the end of the line.
+    backticks: u32,
 };
 
 pub const Token = struct {
@@ -103,6 +126,17 @@ const State = enum {
     invalid,
 };
 
+pub fn init(delimiter: Delimiter) Tokenizer {
+    return .{
+        .delimiter = delimiter,
+        .lines = 0,
+        .idx = switch (delimiter) {
+            .none => 0,
+            inline else => |offset| offset,
+        },
+    };
+}
+
 pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
     var tok: Token = .{
         .tag = undefined,
@@ -117,7 +151,7 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
         .start => switch (src[t.idx]) {
             0 => {
                 tok.tag = .eof;
-                tok.loc.start = @intCast(src.len -| 1); // code.len may == 0
+                tok.loc.start = @intCast(src.len); // code.len may == 0
                 tok.loc.end = @intCast(src.len);
                 return tok;
             },
@@ -232,16 +266,16 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
 
                 continue :state .invalid;
             },
-            '<' => {
-                if (t.delimiter == .script and std.mem.startsWith(u8, src[t.idx..], "</script>")) {
-                    tok.tag = .eod;
-                    tok.loc.end = t.idx + 9;
-                    t.idx = @intCast(src.len);
-                    return tok;
-                }
+            // '<' => {
+            //     if (t.delimiter == .script and std.mem.startsWith(u8, src[t.idx..], "</script>")) {
+            //         tok.tag = .eod;
+            //         tok.loc.end = t.idx + 9;
+            //         t.idx = @intCast(src.len);
+            //         return tok;
+            //     }
 
-                continue :state .invalid;
-            },
+            //     continue :state .invalid;
+            // },
 
             else => {
                 t.idx += 1;
@@ -445,7 +479,7 @@ test "fuzz" {
             defer std.testing.allocator.free(src);
 
             if (@import("builtin").fuzz) std.debug.print("---begin---\n{s}\n-------\n", .{input});
-            var t: Tokenizer = .{};
+            var t: Tokenizer = .init(.none);
             while (true) {
                 if (t.next(src, false).tag == .eof) break;
             }
@@ -460,7 +494,7 @@ fn testCase(
     skip_comments: bool,
     delimiter: Delimiter,
 ) !void {
-    var t: Tokenizer = .{ .delimiter = delimiter };
+    var t: Tokenizer = .init(delimiter);
 
     var success = true;
     for (expected, 0..) |e, idx| {
@@ -559,6 +593,7 @@ test "multiline bytes" {
 test "frontmatter" {
     // zig fmt: off
     try testCase(
+        \\---
         \\.foo = "bar",
         \\.bar = false,
         \\.baz = .{ .bax = null },
@@ -569,7 +604,7 @@ test "frontmatter" {
         .identifier, .eql, .dotlb, .identifier, .eql, .null, .rb, .comma,
         .eod,
         .eof,
-    }, true, .dashes);
+    }, true, .{.dashes = 3});
     // zig fmt: on
 
 }
@@ -577,6 +612,7 @@ test "frontmatter" {
 test "frontmatter newline" {
     // zig fmt: off
     try testCase(
+        \\---
         \\.foo = "bar",
         \\.bar = false,
         \\.baz = .{ .bax = null },
@@ -586,7 +622,7 @@ test "frontmatter newline" {
         .identifier, .eql, .false, .comma,
         .identifier, .eql, .dotlb, .identifier, .eql, .null, .rb, .comma,
         .eod,
-    }, true, .dashes);
+    }, true, .{.dashes = 3});
     // zig fmt: on
 
 }

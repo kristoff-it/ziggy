@@ -99,7 +99,7 @@ pub fn initialize(
             },
         },
         .completionProvider = .{
-            .triggerCharacters = &[_][]const u8{ ".", ":", "@", "\"" },
+            .triggerCharacters = &[_][]const u8{ ".", ":", "=" },
         },
         .hoverProvider = .{ .bool = true },
         .definitionProvider = .{ .bool = true },
@@ -130,7 +130,7 @@ pub fn @"textDocument/didOpen"(
     const language_id = notification.textDocument.languageId;
     const language = std.meta.stringToEnum(logic.Language, language_id) orelse {
         log.debug(
-            "unrecognized language id: '{s}' (must be either 'ziggy' or 'ziggy_schema')",
+            "unrecognized language id: '{s}' (must be one of {{supermd, ziggy, ziggy_schema}}",
             .{language_id},
         );
         return;
@@ -162,8 +162,8 @@ pub fn @"textDocument/didChange"(
         arena,
         new_text,
         notification.textDocument.uri,
-        if (self.docs.contains(notification.textDocument.uri))
-            .ziggy
+        if (self.docs.get(notification.textDocument.uri)) |doc|
+            doc.language
         else if (self.schemas.contains(notification.textDocument.uri))
             .ziggy_schema
         else
@@ -373,34 +373,48 @@ pub fn @"textDocument/formatting"(
     self: *Handler,
     arena: std.mem.Allocator,
     request: types.DocumentFormattingParams,
-) error{OutOfMemory}!?[]const types.TextEdit {
-    if (true) return null;
-    const file = self.files.get(request.textDocument.uri) orelse return null;
+) !?[]const types.TextEdit {
+    if (self.docs.get(request.textDocument.uri)) |doc| {
+        if (doc.ast.has_syntax_errors) return null;
+        const range: offsets.Range = .{
+            .start = .{ .line = 0, .character = 0 },
+            .end = offsets.indexToPosition(doc.src, doc.src.len, self.offset_encoding),
+        };
 
-    const new_text: []const u8 = switch (file) {
-        .ziggy => |doc| blk: {
-            const ast = ziggy.Ast.init(arena, doc.src, true, false, false, null) catch return null;
-            break :blk try std.fmt.allocPrint(arena, "{f}\n", .{ast});
-        },
-        .ziggy_schema => |doc| blk: {
-            if (doc.ast.has_syntax_errors) return null;
-            break :blk try std.fmt.allocPrint(arena, "{f}", .{doc.ast.fmt(doc.src)});
-        },
-    };
+        log.debug("format doc!", .{});
 
-    const old_text = switch (file) {
-        inline .ziggy, .ziggy_schema => |doc| doc.src,
-    };
+        var aw = std.Io.Writer.Allocating.init(arena);
+        try doc.ast.render(doc.src, &aw.writer);
 
-    const range: offsets.Range = .{
-        .start = .{ .line = 0, .character = 0 },
-        .end = offsets.indexToPosition(old_text, old_text.len, self.offset_encoding),
-    };
+        return try arena.dupe(types.TextEdit, &.{.{
+            .range = range,
+            .newText = aw.written(),
+        }});
+    }
 
-    return try arena.dupe(types.TextEdit, &.{.{
-        .range = range,
-        .newText = new_text,
-    }});
+    if (self.docs.get(request.textDocument.uri)) |schema| {
+        if (schema.ast.has_syntax_errors) return null;
+        const range: offsets.Range = .{
+            .start = .{ .line = 0, .character = 0 },
+            .end = offsets.indexToPosition(
+                schema.src,
+                schema.src.len,
+                self.offset_encoding,
+            ),
+        };
+
+        log.debug("format schema!", .{});
+
+        var aw = std.Io.Writer.Allocating.init(arena);
+        try schema.ast.render(schema.src, &aw.writer);
+
+        return try arena.dupe(types.TextEdit, &.{.{
+            .range = range,
+            .newText = aw.written(),
+        }});
+    }
+
+    return null;
 }
 
 pub fn onResponse(

@@ -8,7 +8,7 @@ const Document = @import("Document.zig");
 const Schema = @import("Schema.zig");
 const log = std.log.scoped(.ziggy_lsp);
 
-pub const Language = enum { ziggy, ziggy_schema };
+pub const Language = enum { supermd, ziggy, ziggy_schema };
 
 pub fn loadFile(
     self: *Handler,
@@ -112,8 +112,8 @@ pub fn loadFile(
                 }
             }
         },
-        .ziggy => {
-            var doc = try Document.init(self.gpa, new_text);
+        .ziggy, .supermd => {
+            var doc = try Document.init(self.gpa, language, new_text);
             const gop = try self.docs.getOrPut(self.gpa, uri);
             if (gop.found_existing) {
                 gop.value_ptr.deinit(self.gpa);
@@ -126,15 +126,20 @@ pub fn loadFile(
 
             const validation_errors = if (gop.value_ptr.schema_uri) |schema_uri| blk: {
                 const schema = self.schemas.get(schema_uri).?;
-                if (doc.ast.errors.len != 0 or schema.ast.errors.len != 0) break :blk &.{};
+                if (doc.ast.errors.len != 0 or schema.ast.errors.len != 0) {
+                    break :blk &.{};
+                }
                 break :blk try schema.ast.validate(arena, schema.src, doc.ast, doc.src);
             } else if (try schemaForZiggy(self, arena, uri)) |ms| blk: {
                 assert(gop.value_ptr.schema_uri == null);
                 const schema_uri, const schema = ms;
                 gop.value_ptr.schema_uri = schema_uri;
-                if (doc.ast.errors.len != 0 or schema.ast.errors.len != 0) break :blk &.{};
+                if (doc.ast.errors.len != 0 or schema.ast.errors.len != 0) {
+                    break :blk &.{};
+                }
                 break :blk try schema.ast.validate(arena, schema.src, doc.ast, doc.src);
             } else blk: {
+                if (doc.ast.errors.len != 0) break :blk &.{};
                 break :blk try ziggy.schema.Ast.validateDefault(arena, doc.ast, doc.src);
             };
 

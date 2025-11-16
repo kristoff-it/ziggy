@@ -87,10 +87,12 @@ pub fn deinit(ast: Ast, gpa: Allocator) void {
 }
 
 pub const Options = struct {
-    /// Set to true when parsing a Ziggy frontmatter inside of another
-    /// document, like SuperMD, or HTML for example.
+    /// When parsing a SuperMD frontmatter, set to `.dashes`.
+    /// See the doc comments of `Tokenizer.Delimiter` for more information on
+    /// how to parse Ziggy Documents embedded in other files.
     delimiter: Tokenizer.Delimiter = .none,
 };
+
 pub fn init(
     gpa: Allocator,
     src: [:0]const u8,
@@ -123,11 +125,11 @@ const Parser = struct {
     }
 
     fn parse(p: *Parser) error{OutOfMemory}!Ast {
-        p.tokenizer = .{ .delimiter = p.options.delimiter };
+        p.tokenizer = .init(p.options.delimiter);
         try p.meta.append(p.gpa, .{});
         try p.nodes.append(p.gpa, .{
             .tag = .root,
-            .loc = .{ .start = 0, .end = undefined },
+            .loc = .{ .start = p.tokenizer.idx, .end = undefined },
             .parent_idx = 0,
         });
 
@@ -149,7 +151,7 @@ const Parser = struct {
                     },
                 },
                 .eod, .eof => {
-                    p.cur().loc.end = p.tok.loc.end;
+                    p.cur().loc.end = p.tok.loc.start;
                     return p.finalize();
                 },
                 else => {
@@ -158,7 +160,7 @@ const Parser = struct {
                 },
             } else switch (p.tok.tag) {
                 .eof, .eod => {
-                    p.cur().loc.end = p.tok.loc.end;
+                    p.cur().loc.end = p.tok.loc.start;
                     return p.finalize();
                 },
                 else => {
@@ -175,7 +177,7 @@ const Parser = struct {
                 const next_is_field = switch (peek_tok) {
                     .eof, .eod => {
                         if (p.tok.tag == .comma) p.consume();
-                        p.cur().loc.end = p.tok.loc.end;
+                        p.cur().loc.end = p.tok.loc.start;
                         p.up();
                         assert(p.cur().tag == .root);
                         continue :parse .root;
@@ -315,12 +317,24 @@ const Parser = struct {
                 });
 
                 const peek_token = if (p.tok.tag == .comma) p.peek() else p.tok.tag;
-                if (peek_token == .rsb) {
-                    if (p.tok.tag == .comma) p.consume() else p.cur().tag = .array_h;
-                    p.cur().loc.end = p.tok.loc.end;
-                    p.consume();
-                    p.up();
-                    continue :parse p.cur().tag;
+                switch (peek_token) {
+                    .rsb => {
+                        if (p.tok.tag == .comma) p.consume() else p.cur().tag = .array_h;
+                        p.cur().loc.end = p.tok.loc.end;
+                        p.consume();
+                        p.up();
+                        continue :parse p.cur().tag;
+                    },
+                    .eod, .eof => {
+                        try p.err(.{
+                            .tag = .{ .missing_token = "']' after last array element" },
+                            .main_location = p.prev_loc,
+                        });
+                        p.cur().loc.end = p.tok.loc.start;
+                        p.up();
+                        return p.finalize();
+                    },
+                    else => {},
                 }
 
                 if (!p.curIsEmpty() and p.tok.tag != .comma) {
@@ -623,6 +637,7 @@ const Parser = struct {
 
     fn up(p: *Parser) void {
         const current = p.cur();
+        std.log.debug("up cur {any} tok {any}", .{ p.cur().*, p.tok });
         assert(current.loc.end >= current.loc.start);
         assert(current.loc.end <= p.src.len);
         p.node_idx = p.cur().parent_idx;
@@ -821,7 +836,7 @@ fn renderComments(
     src: [:0]const u8,
     w: *Writer,
 ) !void {
-    var t: Tokenizer = .{ .idx = last_end };
+    var t: Tokenizer = .{ .idx = last_end, .delimiter = .none, .lines = 0 };
     var tok = t.next(src, false);
     var first = true;
     while (tok.tag == .comment_line) : (tok = t.next(src, false)) {
@@ -865,6 +880,11 @@ fn fixupApplies(f: ?Fixup, offset: u32) bool {
 pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
     const nodes = ast.nodes;
 
+    if (ast.nodes[0].loc.start != 0) {
+        try w.writeAll(src[0..ast.nodes[0].loc.start]);
+        try w.writeAll("\n");
+    }
+
     var next_fixup: ?Fixup = ast.nextFixup(0);
     var it: Iterator = .{ .nodes = nodes };
     var indent: u32 = 0;
@@ -901,7 +921,11 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                         try renderComments(&at_newline, indent, node.loc.start + 1, src, w);
                     },
                     .struct_field, .dict_field => {
-                        var t: Tokenizer = .{ .idx = node.loc.start };
+                        var t: Tokenizer = .{
+                            .idx = node.loc.start,
+                            .delimiter = .none,
+                            .lines = 0,
+                        };
                         const parent_tag = nodes[node.parent_idx].tag;
                         switch (parent_tag) {
                             .braceless_struct, .struct_v, .struct_v_fixup, .dict_v => {
@@ -984,7 +1008,11 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                         at_newline = false;
                     },
                     .@"union" => {
-                        var t: Tokenizer = .{ .idx = node.loc.start };
+                        var t: Tokenizer = .{
+                            .idx = node.loc.start,
+                            .delimiter = .none,
+                            .lines = 0,
+                        };
                         const case = t.next(src, true);
                         assert(case.tag == .union_case);
                         try w.writeAll(case.loc.slice(src));
@@ -992,7 +1020,11 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                         try renderComments(&at_newline, indent, case.loc.end, src, w);
                     },
                     .bytes_multiline => {
-                        var t: Tokenizer = .{ .idx = node.loc.start };
+                        var t: Tokenizer = .{
+                            .idx = node.loc.start,
+                            .delimiter = .none,
+                            .lines = 0,
+                        };
                         var line = t.next(src, false);
                         if (!at_newline) {
                             try w.writeAll("\n");
@@ -1073,7 +1105,11 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                     },
                 }
             },
-            .done => return,
+            .done => {
+                try w.writeAll("\n");
+                try w.writeAll(src[ast.nodes[0].loc.end..]);
+                return;
+            },
         }
     }
 }
