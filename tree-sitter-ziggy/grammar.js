@@ -43,11 +43,11 @@ module.exports = grammar({
 
     top_level_struct: $ => seq(commaSep1($.struct_field)),
 
-    struct: $ => prec(1, seq(
+    struct: $ =>  seq(
       seq('.', token.immediate('{')), 
         commaSep($.struct_field), 
       '}',
-    )),
+    ),
     
     struct_field: $ => seq(
       '.',
@@ -77,17 +77,8 @@ module.exports = grammar({
     union: $ => seq($.enum, '(', $.value, ')'),
     enum: $ => seq('.', alias($.identifier, "_enum_name")),
  
-    line_string: _ => seq("\\\\", /[^\n]*/),
+    line_string: _ => repeat1(seq("\\\\", /[^\n]*/)),
           
-    quoted_string: $ => seq(
-      '"',
-      repeat(choice(
-        token.immediate(prec(1, /[^"\\]+/)),
-        $.escape_sequence,
-      )),
-      '"',
-    ),
-
             
     identifier: (_) => {
       const identifier_start = /[a-zA-Z_]/;
