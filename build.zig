@@ -70,6 +70,7 @@ pub fn build(b: *std.Build) !void {
     check.dependOn(&ziggy_check.step);
 
     try setupTests(b, target, optimize, ziggy_module, cli_exe);
+    setupWasmStep(b, optimize, options, ziggy_module, lsp);
 
     const release = b.step("release", "Create release builds of Ziggy");
     const git_version = getGitVersion(b);
@@ -87,6 +88,38 @@ pub fn build(b: *std.Build) !void {
             "error: git tag missing, cannot make release builds",
         ).step);
     }
+}
+
+fn setupWasmStep(
+    b: *std.Build,
+    optimize: std.builtin.OptimizeMode,
+    options: *std.Build.Step.Options,
+    ziggy_mod: *std.Build.Module,
+    lsp: *std.Build.Module,
+) void {
+    const wasm = b.step("wasm", "Generate a WASM build of the Ziggy LSP");
+    const ziggy_wasm_lsp = b.addExecutable(.{
+        .name = "ziggy",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/wasm.zig"),
+            .target = b.resolveTargetQuery(.{
+                .cpu_arch = .wasm32,
+                .os_tag = .wasi,
+            }),
+            .optimize = optimize,
+            .single_threaded = true,
+            .link_libc = false,
+        }),
+    });
+
+    ziggy_wasm_lsp.root_module.addImport("ziggy", ziggy_mod);
+    ziggy_wasm_lsp.root_module.addImport("lsp", lsp);
+    ziggy_wasm_lsp.root_module.addOptions("options", options);
+
+    const target_output = b.addInstallArtifact(ziggy_wasm_lsp, .{
+        .dest_dir = .{ .override = .{ .custom = "" } },
+    });
+    wasm.dependOn(&target_output.step);
 }
 
 pub fn setupReleaseStep(

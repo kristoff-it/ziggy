@@ -6,32 +6,29 @@
 			"include": "#strings"
 		},
 		{
-			"include": "#tag_names"
+			"include": "#enums"
 		},
 		{
 			"include": "#builtins"
 		},
 		{
 			"include": "#comments"
-		},
-		{
-			"include": "#variables"
 		}
 	],
 	"repository": {
-		"tag_names": {
-			"comment": "Built-in functions",
-			"name": "support.function.builtin.ziggy",
-			"match": "@[_a-zA-Z][_a-zA-Z0-9]*"
+		"enums": {
+			"comment": "Enums",
+			"name": "meta.variable.ziggy",
+			"match": ".[_a-zA-Z][_a-zA-Z0-9]*"
 		},
 		"builtins": {
 			"patterns": [
 				{
-					"name": "keyword.constant.default.zig",
+					"name": "keyword.constant.default.ziggy",
 					"match": "\\b(null)\\b"
 				},
 				{
-					"name": "keyword.constant.bool.zig",
+					"name": "keyword.constant.bool.ziggy",
 					"match": "\\b(true|false)\\b"
 				}
 			]
@@ -55,33 +52,6 @@
 				{
 					"match": "\\b(TODO|FIXME|XXX|NOTE)\\b:?",
 					"name": "keyword.todo.ziggy"
-				},
-				{
-					"match": "\\b(ziggy-schema)\\b:?",
-					"name": "keyword.ziggy"
-				}
-			]
-		},
-		"variables": {
-			"patterns": [
-				{
-					"name": "meta.variable.ziggy",
-					"patterns": [
-						{
-							"match": "\\b[_a-zA-Z][_a-zA-Z0-9]*\\b",
-							"name": "variable.ziggy"
-						},
-						{
-							"begin": "@\"",
-							"end": "\"",
-							"name": "variable.string.ziggy",
-							"patterns": [
-								{
-									"include": "#stringcontent"
-								}
-							]
-						}
-					]
 				}
 			]
 		},

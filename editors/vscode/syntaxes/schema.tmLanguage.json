@@ -12,9 +12,6 @@
 			"include": "#builtins"
 		},
 		{
-			"include": "#tag_names"
-		},
-		{
 			"include": "#comments"
 		},
 		{
@@ -61,7 +58,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.ziggy_schema",
-					"match": "\\b(root|struct|map|any)\\b"
+					"match": "\\b(struct|union|any)\\b"
 				}
 			]
 		},
@@ -69,20 +66,7 @@
 			"patterns": [
 				{
 					"name": "support.type.ziggy_schema",
-					"match": "\\b(bytes|int|bool|float)\\b"
-				}
-			]
-		},
-		"tag_names": {
-			"comment": "Built-in functions",
-			"name": "support.function.builtin.ziggy_schema",
-			"match": "@[_a-zA-Z][_a-zA-Z0-9]*"
-		},
-		"operators": {
-			"patterns": [
-				{
-					"name": "keyword.control.ziggy_schema",
-					"match": "\\?"
+					"match": "(bytes|int|bool|float|\\?|\\[\\]|\\{:\\})"
 				}
 			]
 		},
@@ -90,7 +74,7 @@
 			"patterns": [
 				{
 					"name": "comment.line.documentation.ziggy_schema",
-					"begin": "//[!/](?=[^/])",
+					"begin": "///(?=[^/])",
 					"end": "$",
 					"patterns": [
 						{

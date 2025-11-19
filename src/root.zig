@@ -29,7 +29,7 @@ pub const Dynamic = @import("dynamic.zig").Dynamic;
 pub const schema = @import("schema.zig");
 
 // Ziggy Documents and Schemas can have a maximum size of 4GB
-pub const max_size = 4 * 1024 * 1024 * 1024;
+pub const max_size = @import("std").math.maxInt(u32);
 
 test {
     _ = Ast;

@@ -9,23 +9,29 @@ pub const Token = struct {
 
     pub const Tag = enum {
         invalid,
+        root_sigil,
         union_kw,
         struct_kw,
         any_kw,
         int_kw,
         float_kw,
-        root_sigil,
         slice_sigil,
         dict_sigil,
         bytes_kw,
         bool_kw,
+        identifier,
+        opt_int_kw,
+        opt_float_kw,
+        opt_slice_sigil,
+        opt_dict_sigil,
+        opt_bytes_kw,
+        opt_bool_kw,
+        opt_identifier,
         lb,
         rb,
         eq,
         colon,
         comma,
-        qmark,
-        identifier,
         doc_comment_line,
         eof,
 
@@ -40,6 +46,13 @@ pub const Token = struct {
                 .bool_kw,
                 .any_kw,
                 .identifier,
+                .opt_int_kw,
+                .opt_float_kw,
+                .opt_slice_sigil,
+                .opt_dict_sigil,
+                .opt_bytes_kw,
+                .opt_bool_kw,
+                .opt_identifier,
                 => true,
                 else => false,
             };
@@ -59,13 +72,19 @@ pub const Token = struct {
                 .colon => ":",
                 .lb => "{",
                 .rb => "}",
-                .qmark => "?",
-                .identifier => "(identifier)",
                 .doc_comment_line => "(doc comment)",
                 .bytes_kw => "bytes",
                 .int_kw => "int",
                 .float_kw => "float",
                 .bool_kw => "bool",
+                .identifier => "(identifier)",
+                .opt_int_kw => "?int",
+                .opt_float_kw => "?float",
+                .opt_slice_sigil => "?[]",
+                .opt_dict_sigil => "?{:}",
+                .opt_bytes_kw => "?bytes",
+                .opt_bool_kw => "?bool",
+                .opt_identifier => "(optional identifier)",
                 .eof => "EOF",
             };
         }
@@ -117,6 +136,8 @@ pub const Token = struct {
 
 const State = enum {
     start,
+    optional,
+    optional_identifier,
     identifier,
     doc_comment_start,
     doc_comment,
@@ -210,9 +231,7 @@ pub fn next(t: *Tokenizer, src: [:0]const u8) Token {
             },
             '?' => {
                 t.idx += 1;
-                tok.tag = .qmark;
-                tok.loc.end = t.idx;
-                return tok;
+                continue :state .optional;
             },
             'a'...'z', 'A'...'Z', '_' => {
                 t.idx += 1;
@@ -226,6 +245,70 @@ pub fn next(t: *Tokenizer, src: [:0]const u8) Token {
                 t.idx += 1;
                 tok.tag = .invalid;
                 tok.loc.end = t.idx;
+                return tok;
+            },
+        },
+        .optional => switch (src[t.idx]) {
+            '[' => {
+                t.idx += 1;
+                if (src[t.idx] == ']') {
+                    t.idx += 1;
+                    tok.tag = .opt_slice_sigil;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                tok.tag = .invalid;
+                tok.loc.end = t.idx;
+                return tok;
+            },
+            '{' => {
+                if (std.mem.eql(u8, src[t.idx .. t.idx + 3], "{:}")) {
+                    t.idx += 3;
+                    tok.tag = .opt_dict_sigil;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                tok.tag = .invalid;
+                tok.loc.end = t.idx;
+                return tok;
+            },
+            'a'...'z', 'A'...'Z', '_' => {
+                t.idx += 1;
+                continue :state .optional_identifier;
+            },
+            else => {
+                tok.tag = .invalid;
+                tok.loc.end = t.idx;
+                return tok;
+            },
+        },
+        .optional_identifier => switch (src[t.idx]) {
+            'a'...'z', 'A'...'Z', '_', '0'...'9' => {
+                t.idx += 1;
+                continue :state .optional_identifier;
+            },
+            else => {
+                tok.loc.end = t.idx;
+                const slice = tok.loc.slice(src);
+                if (std.mem.eql(u8, slice, "?bytes")) {
+                    tok.tag = .opt_bytes_kw;
+                } else if (std.mem.eql(u8, slice, "?bool")) {
+                    tok.tag = .opt_bool_kw;
+                } else if (std.mem.eql(u8, slice, "?int")) {
+                    tok.tag = .opt_int_kw;
+                } else if (std.mem.eql(u8, slice, "?float")) {
+                    tok.tag = .opt_float_kw;
+                } else if (std.mem.eql(u8, slice, "?struct")) {
+                    tok.tag = .invalid;
+                } else if (std.mem.eql(u8, slice, "?union")) {
+                    tok.tag = .invalid;
+                } else if (std.mem.eql(u8, slice, "?any")) {
+                    tok.tag = .invalid;
+                } else {
+                    tok.tag = .opt_identifier;
+                }
                 return tok;
             },
         },
@@ -381,7 +464,7 @@ test "more" {
             .identifier, .colon, .bytes_kw, .comma,
             .identifier, .colon, .slice_sigil, .bytes_kw, .comma,
             .doc_comment_line,
-            .identifier, .colon, .qmark, .dict_sigil, .bytes_kw, .comma,
+            .identifier, .colon, .opt_dict_sigil, .bytes_kw, .comma,
             
             .union_kw, .identifier, .lb,
                 .identifier, .comma, 

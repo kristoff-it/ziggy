@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
@@ -210,8 +211,13 @@ pub fn schemaForZiggy(
         kv.value_ptr.refs += 1;
         return .{ kv.key_ptr.*, kv.value_ptr.* };
     } else blk: {
-        const src = std.fs.cwd().readFileAllocOptions(
-            uri_schema["file://".len..],
+        const path = switch (builtin.target.os.tag) {
+            .wasi => uri_schema["file:///".len..],
+            else => uri_schema["file://".len..],
+        };
+
+        const src = self.dir.readFileAllocOptions(
+            path,
             self.gpa,
             .limited(ziggy.max_size),
             .of(u8),
@@ -256,8 +262,12 @@ pub fn schemaForZiggy(
         }
         defer arena.free(dot_schema_path);
 
-        const schema_src = std.fs.cwd().readFileAllocOptions(
-            dot_schema_path,
+        const path = switch (builtin.target.os.tag) {
+            .wasi => dot_schema_path["/".len..],
+            else => dot_schema_path,
+        };
+        const schema_src = self.dir.readFileAllocOptions(
+            path,
             self.gpa,
             .limited(ziggy.max_size),
             .of(u8),

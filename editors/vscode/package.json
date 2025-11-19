@@ -1,12 +1,12 @@
 {
   "name": "ziggy",
-  "displayName": "ziggy",
-  "description": "Ziggy document file format",
+  "displayName": "Ziggy",
+  "description": "Data serialization language and schema lanugage for clear config files and API messages.",
   "repository": "https://github.com/kristoff-it/ziggy",
   "publisher": "LorisCro",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "engines": {
-    "vscode": "^1.87.0"
+    "vscode": "^1.92.0"
   },
   "categories": [
     "Programming Languages"
@@ -20,11 +20,10 @@
           "ziggy"
         ],
         "extensions": [
-          ".ziggy",
-          ".zgy"
+          ".ziggy"
         ],
         "configuration": "./language-configuration.json"
-      },      
+      },
       {
         "id": "ziggy_schema",
         "aliases": [
@@ -32,12 +31,13 @@
           "ziggy schema",
           "ziggy_schema",
           "ziggy-schema",
-          "ziggy-schema",
-          "zschema"
+          "ziggy-schema"
         ],
         "extensions": [
-          ".ziggy-schema",
-          ".zgy-schema"
+          ".ziggy-schema"
+        ],
+        "filenames": [
+          ".ziggy-schema"
         ],
         "configuration": "./schema.language-configuration.json"
       }
@@ -54,6 +54,18 @@
         "path": "./syntaxes/schema.tmLanguage.json"
       }
     ],
+    "configurationDefaults": {
+      "[ziggy]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "LorisCro.ziggy",
+        "files.eol": "\n"
+      },
+      "[ziggy_schema]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "LorisCro.ziggy",
+        "files.eol": "\n"
+      }
+    },
     "configuration": {
       "type": "object",
       "title": "Ziggy",
@@ -73,21 +85,28 @@
     }
   },
   "main": "./out/extension",
-
+  "browser": "./out/extension",
+  "extensionDependencies": [
+    "ms-vscode.wasm-wasi-core"
+  ],
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@types/vscode": "^1.90.0",
-    "@vscode/vsce": "^3.6.0",
-    "esbuild": "^0.25.0"
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.92.0",
+    "@typescript-eslint/eslint-plugin": "^6.7.0",
+    "@typescript-eslint/parser": "^6.7.0",
+    "eslint": "^8.49.0"
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.1",
-    "which": "^3.0.0"
+    "@vscode/vsce": "^2.24.0",
+    "@vscode/wasm-wasi-lsp": "^0.1.0-pre.7",
+    "esbuild": "^0.12.1",
+    "vscode-languageclient": "^10.0.0-next.12"
   },
   "scripts": {
     "vscode:prepublish": "npm run build-base -- --minify",
     "build-base": "esbuild --bundle --external:vscode src/extension.ts --outdir=out --platform=node --format=cjs",
     "build": "npm run build-base -- --sourcemap",
-    "watch": "npm run build-base -- --sourcemap --watch"
+    "watch": "npm run build-base -- --sourcemap --watch",
+    "lint": "eslint . --ext .ts"
   }
 }

@@ -81,7 +81,7 @@ pub fn main() !void {
     _ = switch (cmd) {
         .lsp => {
             threaded.cpu_count = 1;
-            lsp_exe.run(io, gpa, args[2..]) catch @panic("err");
+            lsp_exe.run(io, gpa, std.fs.cwd(), args[2..]) catch @panic("err");
         },
         .fmt => fmt_exe.run(io, gpa, args[2..]),
         .check => check_exe.run(io, gpa, args[2..]),

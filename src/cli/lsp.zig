@@ -11,7 +11,7 @@ const logic = @import("lsp/logic.zig");
 
 const log = std.log.scoped(.ziggy_lsp);
 
-pub fn run(io: Io, gpa: std.mem.Allocator, args: []const []const u8) !void {
+pub fn run(io: Io, gpa: std.mem.Allocator, dir: std.fs.Dir, args: []const []const u8) !void {
     _ = args;
     log.debug("Ziggy LSP started!", .{});
 
@@ -26,6 +26,7 @@ pub fn run(io: Io, gpa: std.mem.Allocator, args: []const []const u8) !void {
     var handler: Handler = .{
         .gpa = gpa,
         .transport = &stdio.transport,
+        .dir = dir,
     };
     defer handler.deinit();
 
@@ -41,6 +42,7 @@ pub const Handler = @This();
 
 gpa: std.mem.Allocator,
 transport: *lsp.Transport,
+dir: std.fs.Dir,
 docs: std.StringArrayHashMapUnmanaged(Document) = .{},
 schemas: std.StringHashMapUnmanaged(Schema) = .{},
 
@@ -126,6 +128,11 @@ pub fn @"textDocument/didOpen"(
 ) !void {
     const new_text = try self.gpa.dupeZ(u8, notification.textDocument.text); // We informed the client that we only do full document syncs
     errdefer self.gpa.free(new_text);
+
+    std.log.debug("didopen! {s} {s}", .{
+        notification.textDocument.languageId,
+        notification.textDocument.uri,
+    });
 
     const language_id = notification.textDocument.languageId;
     const language = std.meta.stringToEnum(logic.Language, language_id) orelse {

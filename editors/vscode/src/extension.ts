@@ -1,70 +1,93 @@
-import * as path from 'path';
-import { workspace, ExtensionContext, window, languages } from 'vscode';
-import { ZiggyFormatProvider, ZiggyRangeFormatProvider } from './formatter';
-
 import {
-	LanguageClient,
-	LanguageClientOptions,
-	ServerOptions
+    // createStdioOptions,
+    createUriConverters,
+    startServer
+} from '@vscode/wasm-wasi-lsp';
+import { ProcessOptions, Stdio, Wasm } from '@vscode/wasm-wasi/v1';
+import { ConfigurationTarget, ExtensionContext, Uri, window, workspace, env } from 'vscode';
+import {
+    LanguageClient,
+    LanguageClientOptions,
+    ServerOptions
 } from 'vscode-languageclient/node';
 
 let client: LanguageClient;
+export async function activate(context: ExtensionContext) {
+    const wasm: Wasm = await Wasm.load();
 
-const logChannel = window.createOutputChannel("ziggy");
+    const channel = window.createOutputChannel('Ziggy Language Server');
+    // The server options to run the WebAssembly language server.
+    const serverOptions: ServerOptions = async () => {
+        const options: ProcessOptions = {
+            stdio: createStdioOptions(),
+            mountPoints: [{ kind: 'workspaceFolder' }],
+            args: [],
+        };
 
-export function activate(context: ExtensionContext) {
-    context.subscriptions.push(
-        languages.registerDocumentFormattingEditProvider(
-            [{ scheme: "file", language: "ziggy"}],
-            new ZiggyFormatProvider(logChannel),
-        ),
-      );
-      context.subscriptions.push(
-        languages.registerDocumentRangeFormattingEditProvider(
-            [{ scheme: "file", language: "ziggy"}],
-            new ZiggyRangeFormatProvider(logChannel),
-        ),
-      );
+        // Load the WebAssembly code
+        const filename = Uri.joinPath(
+            context.extensionUri,
+            'wasm',
+            'ziggy.wasm'
+        );
 
+        const bits = await workspace.fs.readFile(filename);
+        const module = await WebAssembly.compile(bits);
 
-	// If the extension is launched in debug mode then the debug server options are used
-	// Otherwise the run options are used
-	const serverOptions: ServerOptions = {
-		run: { command: "ziggy", args: ["lsp"] },
-        debug: { command: "ziggy", args: ["lsp"] },
-	};
+        // Create the wasm worker that runs the LSP server
+        const process = await wasm.createProcess(
+            'ziggy',
+            module,
+            { initial: 160, maximum: 160, shared: false },
+            options
+        );
 
-	// Options to control the language client
-	const clientOptions: LanguageClientOptions = {
-		// Register the server for plain text documents
+        // Hook stderr to the output channel
+        const decoder = new TextDecoder('utf-8');
+        process.stderr!.onData(data => {
+            channel.append(decoder.decode(data));
+        });
+
+        return startServer(process);
+    };
+
+    const clientOptions: LanguageClientOptions = {
         documentSelector: [
             { scheme: "file", language: 'ziggy' },
             { scheme: "file", language: 'ziggy_schema' },
         ],
-		synchronize: {
-			// Notify the server about file changes to '.clientrc files contained in the workspace
-			fileEvents: workspace.createFileSystemWatcher('**/.zgy')
-		}
-	};
+        outputChannel: channel,
+        uriConverters: createUriConverters()
+    };
 
-	// Create the language client and start the client.
-    const client = new LanguageClient(
-      "ziggy",
-      "Ziggy Language Server",
-      serverOptions,
-      clientOptions
+    client = new LanguageClient(
+        "ziggy",
+        "Ziggy Language Server",
+        serverOptions,
+        clientOptions
     );
 
-    client.start().catch(reason => {
-        window.showWarningMessage(`Failed to run Ziggy Language Server: ${reason}`);
-    }).then(() => {
-        client.getFeature("textDocument/formatting").clear();
-    });
+    await client.start();
 }
 
 export function deactivate(): Thenable<void> | undefined {
-	if (!client) {
-		return undefined;
-	}
-	return client.stop();
+    if (!client) {
+        return undefined;
+    }
+    return client.stop();
+}
+
+
+function createStdioOptions(): Stdio {
+    return {
+        in: {
+            kind: 'pipeIn',
+        },
+        out: {
+            kind: 'pipeOut'
+        },
+        err: {
+            kind: 'pipeOut'
+        }
+    };
 }

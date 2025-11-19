@@ -1,10 +1,18 @@
 {
   "compilerOptions": {
-    "moduleResolution": "bundler",
-    "target": "esnext",
+    "module": "NodeNext",
+    "target": "ESNext",
+    "outDir": "out",
+    "esModuleInterop": true,
     "lib": [
-      "ESNext"
+      "esnext"
     ],
-    "noEmit": true,
-  }
+    "sourceMap": true,
+    "rootDir": "src",
+    "moduleResolution": "NodeNext"
+  },
+  "exclude": [
+    "node_modules",
+    ".vscode-test"
+  ]
 }

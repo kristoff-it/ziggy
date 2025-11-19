@@ -194,8 +194,8 @@ const Parser = struct {
     src: [:0]const u8,
     tokenizer: Tokenizer = .{},
     node_idx: u32 = 0,
-    prev_loc: Loc = .{ .start = 0, .end = 0 },
-    tok: Token = undefined,
+    prev_loc: Loc = undefined,
+    tok: Token = .{ .tag = .invalid, .loc = .{ .start = 0, .end = 0 } },
     has_syntax_errors: bool = false,
     docs_offset: u32 = 0,
     refs: std.ArrayList(Ref) = .empty,
@@ -272,7 +272,13 @@ const Parser = struct {
                         },
 
                         .eq,
-                        .qmark,
+                        .opt_slice_sigil,
+                        .opt_dict_sigil,
+                        .opt_identifier,
+                        .opt_bytes_kw,
+                        .opt_bool_kw,
+                        .opt_int_kw,
+                        .opt_float_kw,
                         .slice_sigil,
                         .dict_sigil,
                         .identifier,
@@ -283,12 +289,13 @@ const Parser = struct {
                         .float_kw,
                         => {
                             try p.err(.{
-                                .tag = .{ .missing_token = "root" },
+                                .tag = .{ .missing_token = "$" },
                                 .main_location = .{
                                     .start = p.prev_loc.end,
                                     .end = p.tok.loc.start,
                                 },
                             });
+                            try p.addChild(.root_expr);
                             // intentional fallthrough
                         },
                         .struct_kw, .union_kw => {
@@ -335,7 +342,13 @@ const Parser = struct {
                             }
                             p.consume();
                         },
-                        .qmark,
+                        .opt_slice_sigil,
+                        .opt_dict_sigil,
+                        .opt_identifier,
+                        .opt_bytes_kw,
+                        .opt_bool_kw,
+                        .opt_int_kw,
+                        .opt_float_kw,
                         .slice_sigil,
                         .dict_sigil,
                         .identifier,
@@ -384,7 +397,13 @@ const Parser = struct {
 
                     assert(p.node().tag == .root_expr);
                     switch (p.tok.tag) {
-                        .qmark,
+                        .opt_slice_sigil,
+                        .opt_dict_sigil,
+                        .opt_identifier,
+                        .opt_bytes_kw,
+                        .opt_bool_kw,
+                        .opt_int_kw,
+                        .opt_float_kw,
                         .slice_sigil,
                         .dict_sigil,
                         .identifier,
@@ -436,8 +455,13 @@ const Parser = struct {
             .root_expr => unreachable,
             .type_expr => {
                 while (true) : (p.consume()) switch (p.tok.tag) {
-                    .qmark, .slice_sigil, .dict_sigil => continue,
+                    .opt_slice_sigil, .opt_dict_sigil, .slice_sigil, .dict_sigil => continue,
 
+                    .opt_identifier,
+                    .opt_bytes_kw,
+                    .opt_bool_kw,
+                    .opt_int_kw,
+                    .opt_float_kw,
                     .bytes_kw,
                     .int_kw,
                     .float_kw,
@@ -445,7 +469,10 @@ const Parser = struct {
                     .any_kw,
                     .identifier,
                     => {
-                        if (p.tok.tag == .identifier) try p.ref();
+                        switch (p.tok.tag) {
+                            .identifier, .opt_identifier => try p.ref(),
+                            else => {},
+                        }
                         p.node().loc.end = p.tok.loc.end;
                         p.consume();
                         break;
@@ -725,7 +752,13 @@ const Parser = struct {
                 switch (p.tok.tag) {
                     .colon => p.consume(),
 
-                    .qmark,
+                    .opt_slice_sigil,
+                    .opt_dict_sigil,
+                    .opt_identifier,
+                    .opt_bytes_kw,
+                    .opt_bool_kw,
+                    .opt_int_kw,
+                    .opt_float_kw,
                     .slice_sigil,
                     .dict_sigil,
                     .bytes_kw,
@@ -799,7 +832,13 @@ const Parser = struct {
                 }
 
                 switch (p.tok.tag) {
-                    .qmark,
+                    .opt_slice_sigil,
+                    .opt_dict_sigil,
+                    .opt_identifier,
+                    .opt_bytes_kw,
+                    .opt_bool_kw,
+                    .opt_int_kw,
+                    .opt_float_kw,
                     .slice_sigil,
                     .dict_sigil,
                     .bytes_kw,
@@ -985,11 +1024,18 @@ const Parser = struct {
     }
 
     fn ref(p: *Parser) !void {
-        assert(p.tok.tag == .identifier);
         assert(p.node().tag == .type_expr);
+        const loc: Loc = switch (p.tok.tag) {
+            .identifier => p.tok.loc,
+            .opt_identifier => .{
+                .start = p.tok.loc.start + 1, // skip '?'
+                .end = p.tok.loc.end,
+            },
+            else => unreachable,
+        };
         try p.refs.append(p.gpa, .{
             .container_idx = p.getMeta().container_idx,
-            .loc = p.tok.loc,
+            .loc = loc,
         });
     }
 
@@ -1677,22 +1723,22 @@ pub const ValidationError = struct {
                     try w.print("duplicate field", .{});
                 },
                 .unknown_union_case => {
-                    try w.print("schema mismatch: unknown union case", .{});
+                    try w.print("schema: unknown union case", .{});
                 },
                 .erroneous_union_case_value => {
-                    try w.print("schema mismatch: union case with unexpected value", .{});
+                    try w.print("schema: union case with unexpected value", .{});
                 },
                 .missing_union_value => |value| {
-                    try w.print("schema mismatch: missing union value of type {s}", .{value});
+                    try w.print("schema: missing union value of type {s}", .{value});
                 },
                 .unknown_field => {
-                    try w.print("schema mismatch: unknown field", .{});
+                    try w.print("schema: unknown field", .{});
                 },
                 .missing_field => |name| {
-                    try w.print("schema mismatch: missing field '{s}'", .{name});
+                    try w.print("schema: missing field '{s}'", .{name});
                 },
                 .mismatch => |sm| {
-                    try w.print("schema mismatch: expected {s} found {s}", .{
+                    try w.print("schema: expected {s} found {s}", .{
                         sm.expected, switch (sm.found) {
                             .root, .missing_value => unreachable,
                             .braceless_struct => "braceless struct",
@@ -1774,14 +1820,22 @@ pub fn validate(
         // }
         // std.debug.print("validate ev: {any}\n", .{ev});
 
-        const expr = type_expr_stack.items[type_expr_idx];
+        var expr = type_expr_stack.items[type_expr_idx];
         switch (ev) {
             .enter => |node| {
                 switch (node.tag) {
                     .root, .missing_value => unreachable,
                     .null => {
                         switch (expr.tag) {
-                            .any_kw, .qmark => {},
+                            .any_kw,
+                            .opt_slice_sigil,
+                            .opt_dict_sigil,
+                            .opt_identifier,
+                            .opt_bytes_kw,
+                            .opt_bool_kw,
+                            .opt_int_kw,
+                            .opt_float_kw,
+                            => {},
                             else => {
                                 try errors.append(gpa, .{
                                     .tag = .{
@@ -1798,7 +1852,7 @@ pub fn validate(
                     },
                     .bool => {
                         switch (expr.tag) {
-                            .any_kw, .bool_kw => {},
+                            .any_kw, .bool_kw, .opt_bool_kw => {},
                             else => {
                                 try errors.append(gpa, .{
                                     .tag = .{
@@ -1815,7 +1869,7 @@ pub fn validate(
                     },
                     .integer => {
                         switch (expr.tag) {
-                            .any_kw, .int_kw, .float_kw => {},
+                            .any_kw, .int_kw, .float_kw, .opt_int_kw, .opt_float_kw => {},
                             else => {
                                 try errors.append(gpa, .{
                                     .tag = .{
@@ -1832,7 +1886,7 @@ pub fn validate(
                     },
                     .float => {
                         switch (expr.tag) {
-                            .any_kw, .float_kw => {},
+                            .any_kw, .float_kw, .opt_float_kw => {},
                             else => {
                                 try errors.append(gpa, .{
                                     .tag = .{
@@ -1849,7 +1903,7 @@ pub fn validate(
                     },
                     .bytes, .bytes_multiline => {
                         switch (expr.tag) {
-                            .any_kw, .bytes_kw => {},
+                            .any_kw, .bytes_kw, .opt_bytes_kw => {},
                             else => {
                                 try errors.append(gpa, .{
                                     .tag = .{
@@ -1867,10 +1921,15 @@ pub fn validate(
                     .@"enum" => {
                         switch (expr.tag) {
                             .any_kw => {},
-                            .identifier => {
+                            .identifier, .opt_identifier => {
                                 const scope = scopes_stack.getLast();
+                                const container_name = expr.loc.slice(schema_src);
                                 const container_idx = schema_ast.scopes.get(scope).?.types.get(
-                                    expr.loc.slice(schema_src),
+                                    switch (expr.tag) {
+                                        .identifier => container_name,
+                                        .opt_identifier => container_name[1..], // skip '?'
+                                        else => unreachable,
+                                    },
                                 ).?;
                                 const info = containerInfo(schema_ast.nodes, schema_src, container_idx);
                                 switch (info.kind) {
@@ -1927,10 +1986,15 @@ pub fn validate(
                             .any_kw => if (any_ziggy_start == null) {
                                 any_ziggy_start = node;
                             },
-                            .identifier => {
+                            .identifier, .opt_identifier => {
                                 const scope = scopes_stack.getLast();
+                                const container_name = expr.loc.slice(schema_src);
                                 const container_idx = schema_ast.scopes.get(scope).?.types.get(
-                                    expr.loc.slice(schema_src),
+                                    switch (expr.tag) {
+                                        .identifier => container_name,
+                                        .opt_identifier => container_name[1..], // skip '?'
+                                        else => unreachable,
+                                    },
                                 ).?;
                                 const info = containerInfo(schema_ast.nodes, schema_src, container_idx);
                                 switch (info.kind) {
@@ -2012,8 +2076,7 @@ pub fn validate(
                     .dict_h, .dict_v => {
                         try seen_fields_stack.append(gpa, .{ .dict = .empty });
                         switch (expr.tag) {
-                            .dict_sigil => {},
-                            .any_kw => {},
+                            .any_kw, .dict_sigil, .opt_dict_sigil => {},
                             else => {
                                 try errors.append(gpa, .{
                                     .tag = .{
@@ -2037,10 +2100,15 @@ pub fn validate(
                                 // the exit event case.
                                 try seen_fields_stack.append(gpa, .{ .dict = .empty });
                             },
-                            .identifier => {
+                            .identifier, .opt_identifier => {
                                 const scope = scopes_stack.getLast();
+                                const container_name = expr.loc.slice(schema_src);
                                 const container_idx = schema_ast.scopes.get(scope).?.types.get(
-                                    expr.loc.slice(schema_src),
+                                    switch (expr.tag) {
+                                        .identifier => container_name,
+                                        .opt_identifier => container_name[1..], // skip '?'
+                                        else => unreachable,
+                                    },
                                 ).?;
                                 const info = containerInfo(schema_ast.nodes, schema_src, container_idx);
                                 switch (info.kind) {
@@ -2122,7 +2190,10 @@ pub fn validate(
                                 bits.set(field_slot);
                                 if (expr.tag != .any_kw) {
                                     const field = scope.fields.values()[field_slot];
+                                    const old_len = type_expr_stack.items.len;
+                                    assert(type_expr_idx == old_len - 1);
                                     try schema_ast.loadExpr(gpa, schema_src, &type_expr_stack, field.idx + 1);
+                                    assert(type_expr_stack.items.len > old_len);
                                     type_expr_idx += 1;
                                     if (type_expr_stack.items[type_expr_idx].tag == .any_kw) {
                                         if (any_ziggy_start == null) any_ziggy_start = node;
@@ -2148,8 +2219,7 @@ pub fn validate(
                     },
                     .array_h, .array_v => {
                         switch (expr.tag) {
-                            .slice_sigil => {},
-                            .any_kw => {},
+                            .any_kw, .slice_sigil, .opt_slice_sigil => {},
                             else => {
                                 try errors.append(gpa, .{
                                     .tag = .{
@@ -2262,10 +2332,18 @@ fn loadExpr(
     node_idx: u32,
 ) !void {
     var tokenizer: Tokenizer = .{ .idx = schema_ast.nodes[node_idx].loc.start };
+    log.debug("load expr start", .{});
     while (true) {
         const t = tokenizer.next(schema_src);
         log.debug("loadexpr: '{s}'", .{t.loc.slice(schema_src)});
         switch (t.tag) {
+            .opt_slice_sigil,
+            .opt_dict_sigil,
+            .opt_identifier,
+            .opt_bytes_kw,
+            .opt_bool_kw,
+            .opt_int_kw,
+            .opt_float_kw,
             .slice_sigil,
             .dict_sigil,
             .identifier,
@@ -2304,14 +2382,21 @@ pub fn resolveZiggyOffset(
     var ziggy_node = ziggy_ast.nodes[ziggy_idx];
 
     outer: while (true) {
-        log.debug("resolve: scope_idx: {}, ziggy_idx: {} ({t}), schema_idx: {}\n", .{ scope_idx, ziggy_idx, ziggy_node.tag, schema_idx });
+        log.debug("resolve: scope_idx: {}, ziggy_idx: {} ({t}), schema_idx: {}\n", .{
+            scope_idx,
+            ziggy_idx,
+            ziggy_node.tag,
+            schema_idx,
+        });
+
         if (ziggy_node.loc.start > ziggy_offset or ziggy_node.loc.end <= ziggy_offset) {
             return 0;
         }
 
         const t = tokenizer.next(schema_src);
         switch (t.tag) {
-            .slice_sigil => switch (ziggy_node.tag) {
+            .slice_sigil, .opt_slice_sigil => switch (ziggy_node.tag) {
+                .null => if (t.tag == .opt_slice_sigil) return schema_idx else return 0,
                 .array_h, .array_v => {
                     var child_idx = ziggy_idx + 1;
                     if (child_idx == ziggy_ast.nodes.len or
@@ -2330,8 +2415,17 @@ pub fn resolveZiggyOffset(
                 },
                 else => return 0,
             },
-            .identifier => {
-                const container_idx = schema_ast.scopes.get(scope_idx).?.types.get(t.loc.slice(schema_src)) orelse return 0;
+            .identifier, .opt_identifier => {
+                if (t.tag == .opt_identifier and ziggy_node.tag == .null) return schema_idx;
+
+                const container_name = t.loc.slice(schema_src);
+                const container_idx = schema_ast.scopes.get(scope_idx).?.types.get(
+                    switch (t.tag) {
+                        .identifier => container_name,
+                        .opt_identifier => container_name[1..],
+                        else => unreachable,
+                    },
+                ) orelse return 0;
                 const info = containerInfo(schema_ast.nodes, schema_src, container_idx);
 
                 switch (info.kind) {
@@ -2428,8 +2522,9 @@ pub fn resolveZiggyOffset(
                     },
                 }
             },
-            .dict_sigil => {
+            .dict_sigil, .opt_dict_sigil => {
                 switch (ziggy_node.tag) {
+                    .null => if (t.tag == .opt_dict_sigil) return schema_idx else return 0,
                     .dict_h, .dict_v => {
                         var field_idx = ziggy_idx + 1;
                         if (field_idx == ziggy_ast.nodes.len or
@@ -2459,11 +2554,16 @@ pub fn resolveZiggyOffset(
                     else => return 0,
                 }
             },
-            .qmark => switch (ziggy_node.tag) {
-                .null => return schema_idx,
-                else => continue :outer, // continue to the next type expr token
-            },
-            .bytes_kw, .bool_kw, .any_kw, .int_kw, .float_kw => return schema_idx,
+            .opt_bytes_kw,
+            .opt_bool_kw,
+            .opt_int_kw,
+            .opt_float_kw,
+            .bytes_kw,
+            .bool_kw,
+            .int_kw,
+            .float_kw,
+            .any_kw,
+            => return schema_idx,
             else => unreachable,
         }
     }
@@ -2839,16 +2939,16 @@ test "validate structs" {
             \\.baz = .{ .qix = false },
             \\.bax = true,
             ,
-            \\10:11 schema mismatch: missing field 'qux'
-            \\29:34 schema mismatch: expected int found bool
+            \\10:11 schema: missing field 'qux'
+            \\29:34 schema: expected int found bool
             \\
             ,
         },
         .{
             \\.bar = .{ .qux = 42 },
             ,
-            \\21:22 schema mismatch: missing field 'baz'
-            \\21:22 schema mismatch: missing field 'bax'
+            \\21:22 schema: missing field 'baz'
+            \\21:22 schema: missing field 'bax'
             \\
             ,
         },
@@ -2857,10 +2957,10 @@ test "validate structs" {
             \\.baz = .{ .qqx = .{ .bar = 123 } },
             \\.bax = true,
             ,
-            \\10:11 schema mismatch: missing field 'qux'
-            \\22:44 schema mismatch: unknown field
-            \\46:47 schema mismatch: missing field 'qix'
-            \\59:60 schema mismatch: missing field 'bax'
+            \\10:11 schema: missing field 'qux'
+            \\22:44 schema: unknown field
+            \\46:47 schema: missing field 'qix'
+            \\59:60 schema: missing field 'bax'
             \\
             ,
         },
@@ -2868,10 +2968,10 @@ test "validate structs" {
             \\.bar = .{},
             \\.bar = .{},
             ,
-            \\10:11 schema mismatch: missing field 'qux'
+            \\10:11 schema: missing field 'qux'
             \\12:16 duplicate field
-            \\22:23 schema mismatch: missing field 'baz'
-            \\22:23 schema mismatch: missing field 'bax'
+            \\22:23 schema: missing field 'baz'
+            \\22:23 schema: missing field 'bax'
             \\
             ,
         },
@@ -3050,10 +3150,10 @@ test "validate unions" {
             \\.bor = "wrong",
             \\.boz = {"a": .qux({"x": false}), "b": .qux({"x": 10, "y": "wrong", "z": 30}), "c": .qux({})},
             ,
-            \\32:34 schema mismatch: expected {:} found int
-            \\43:50 schema mismatch: expected {:} found bytes
-            \\76:81 schema mismatch: expected int found bool
-            \\110:117 schema mismatch: expected int found bytes
+            \\32:34 schema: expected {:} found int
+            \\43:50 schema: expected {:} found bytes
+            \\76:81 schema: expected int found bool
+            \\110:117 schema: expected int found bytes
             \\
             ,
         },
@@ -3064,9 +3164,9 @@ test "validate unions" {
             \\.bor = {"a": {"x": .qux(false)}, "b": {"x": .qux}, "c": {"x": "banana"}},
             \\.boz = {},
             ,
-            \\60:65 schema mismatch: expected {:} found bool
-            \\80:84 schema mismatch: missing union value of type {:}int
-            \\98:106 schema mismatch: expected Bar found bytes
+            \\60:65 schema: expected {:} found bool
+            \\80:84 schema: missing union value of type {:}int
+            \\98:106 schema: expected Bar found bytes
             \\
             ,
         },
@@ -3243,10 +3343,10 @@ test "validate nested any" {
             \\71:76 duplicate field
             \\82:87 duplicate field
             \\201:205 duplicate field
-            \\230:238 schema mismatch: expected {:} found bytes
-            \\246:247 schema mismatch: expected Bar found int
+            \\230:238 schema: expected {:} found bytes
+            \\246:247 schema: expected Bar found int
             \\249:252 duplicate field
-            \\254:255 schema mismatch: expected Bar found int
+            \\254:255 schema: expected Bar found int
             \\
             ,
         },
@@ -3304,7 +3404,361 @@ test "this crashed at some point" {
             \\    .baz = .{},
             \\}
             ,
-            \\14:18 schema mismatch: expected {:} found struct
+            \\14:18 schema: expected {:} found struct
+            \\
+            ,
+        },
+    };
+
+    const gpa = std.testing.allocator;
+
+    const schema_ast: Ast = try .init(gpa, schema_src);
+    defer schema_ast.deinit(gpa);
+
+    for (cases) |case| {
+        errdefer std.debug.print("{s}\n", .{case[0]});
+        const ziggy_ast: ZiggyAst = try .init(gpa, case[0], .{});
+        defer ziggy_ast.deinit(gpa);
+
+        try std.testing.expectEqual(0, ziggy_ast.errors.len);
+
+        const errors = try schema_ast.validate(gpa, schema_src, ziggy_ast, case[0]);
+        defer gpa.free(errors);
+
+        var aw: std.Io.Writer.Allocating = .init(gpa);
+        defer aw.deinit();
+
+        for (errors) |err| {
+            try aw.writer.print("{}:{} {f}\n", .{
+                err.main_location.start,
+                err.main_location.end,
+                err.tag,
+            });
+        }
+        try std.testing.expectEqualStrings(case[1], aw.written());
+    }
+}
+
+test "optionals - basics" {
+    const schema_src =
+        \\$ = ?bool
+    ;
+
+    const cases: []const [2][:0]const u8 = &.{
+        .{ "null", "" },
+        .{ "true", "" },
+        .{ "false", "" },
+        .{
+            "",
+            \\
+            ,
+        },
+        .{
+            "20",
+            \\0:2 schema: expected ?bool found int
+            \\
+            ,
+        },
+        .{
+            "[null, null]",
+            \\0:12 schema: expected ?bool found []
+            \\
+            ,
+        },
+    };
+
+    const gpa = std.testing.allocator;
+
+    const schema_ast: Ast = try .init(gpa, schema_src);
+    defer schema_ast.deinit(gpa);
+
+    for (cases) |case| {
+        errdefer std.debug.print("{s}\n", .{case[0]});
+        const ziggy_ast: ZiggyAst = try .init(gpa, case[0], .{});
+        defer ziggy_ast.deinit(gpa);
+
+        try std.testing.expectEqual(0, ziggy_ast.errors.len);
+
+        const errors = try schema_ast.validate(gpa, schema_src, ziggy_ast, case[0]);
+        defer gpa.free(errors);
+
+        var aw: std.Io.Writer.Allocating = .init(gpa);
+        defer aw.deinit();
+
+        for (errors) |err| {
+            try aw.writer.print("{}:{} {f}\n", .{
+                err.main_location.start,
+                err.main_location.end,
+                err.tag,
+            });
+        }
+        try std.testing.expectEqualStrings(case[1], aw.written());
+    }
+}
+
+test "optionals - structs" {
+    const schema_src =
+        \\$ = ?Foo
+        \\struct Foo {
+        \\  bar: ?bytes,
+        \\  baz: ?Bar,   
+        \\
+        \\  struct Bar { quix: ?int }
+        \\}
+    ;
+
+    const cases: []const [2][:0]const u8 = &.{
+        .{ "null", "" },
+        .{
+            \\.bar = null,
+            \\.baz = null,
+            ,
+            \\
+            ,
+        },
+        .{
+            \\.bar = "banana",
+            \\.baz = null,
+            ,
+            \\
+            ,
+        },
+        .{
+            \\.bar = 30,
+            \\.baz = null,
+            ,
+            \\7:9 schema: expected ?bytes found int
+            \\
+            ,
+        },
+        .{
+            \\.bar = null,
+            \\.baz = .{ .quix = null },
+            ,
+            \\
+            ,
+        },
+    };
+
+    const gpa = std.testing.allocator;
+
+    const schema_ast: Ast = try .init(gpa, schema_src);
+    defer schema_ast.deinit(gpa);
+
+    for (cases) |case| {
+        errdefer std.debug.print("{s}\n", .{case[0]});
+        const ziggy_ast: ZiggyAst = try .init(gpa, case[0], .{});
+        defer ziggy_ast.deinit(gpa);
+
+        try std.testing.expectEqual(0, ziggy_ast.errors.len);
+
+        const errors = try schema_ast.validate(gpa, schema_src, ziggy_ast, case[0]);
+        defer gpa.free(errors);
+
+        var aw: std.Io.Writer.Allocating = .init(gpa);
+        defer aw.deinit();
+
+        for (errors) |err| {
+            try aw.writer.print("{}:{} {f}\n", .{
+                err.main_location.start,
+                err.main_location.end,
+                err.tag,
+            });
+        }
+        try std.testing.expectEqualStrings(case[1], aw.written());
+    }
+}
+
+test "optionals - slices" {
+    const schema_src =
+        \\$ = Foo
+        \\struct Foo {
+        \\  one: ?[]bytes,
+        \\  two: []?bytes,
+        \\  three: ?[]Bar,   
+        \\  four: []?Bar,   
+        \\
+        \\  struct Bar { quix: ?int }
+        \\}
+    ;
+
+    const cases: []const [2][:0]const u8 = &.{
+        .{
+            \\.one = null,
+            \\.two = [],
+            \\.three = null,
+            \\.four = [],
+            ,
+            \\
+            ,
+        },
+        .{
+            \\.one = null,
+            \\.two = null,
+            \\.three = null,
+            \\.four = null,
+            ,
+            \\20:24 schema: expected [] found null
+            \\49:53 schema: expected [] found null
+            \\
+            ,
+        },
+        .{
+            \\.one = ["a", "b", "c", null, "d"],
+            \\.two = [],
+            \\.three = null,
+            \\.four = [],
+            ,
+            \\23:27 schema: expected bytes found null
+            \\
+            ,
+        },
+        .{
+            \\.one = ["a", "b", "c",],
+            \\.two = ["a", null, "c", null],
+            \\.three = null,
+            \\.four = [],
+            ,
+            \\
+            ,
+        },
+        .{
+            \\.one = ["a", "b", "c",],
+            \\.two = ["a", null, "c", null],
+            \\.three = [.{ .quix = null}, .{.quix = 40}],
+            \\.four = [],
+            ,
+            \\
+            ,
+        },
+        .{
+            \\.one = ["a", "b", "c",],
+            \\.two = ["a", null, "c", null],
+            \\.three = [.{ .quix = 30}, .{.quix = 40 }, null],
+            \\.four = [],
+            ,
+            \\98:102 schema: expected Bar found null
+            \\
+            ,
+        },
+        .{
+            \\.one = ["a", "b", "c",],
+            \\.two = ["a", null, "c", null],
+            \\.three = [.{ .quix = null}, .{.quix = 40}],
+            \\.four = [.{ .quix = null}, null, .{ .quix = 40}],
+            ,
+            \\
+            ,
+        },
+    };
+
+    const gpa = std.testing.allocator;
+
+    const schema_ast: Ast = try .init(gpa, schema_src);
+    defer schema_ast.deinit(gpa);
+
+    for (cases) |case| {
+        errdefer std.debug.print("{s}\n", .{case[0]});
+        const ziggy_ast: ZiggyAst = try .init(gpa, case[0], .{});
+        defer ziggy_ast.deinit(gpa);
+
+        try std.testing.expectEqual(0, ziggy_ast.errors.len);
+
+        const errors = try schema_ast.validate(gpa, schema_src, ziggy_ast, case[0]);
+        defer gpa.free(errors);
+
+        var aw: std.Io.Writer.Allocating = .init(gpa);
+        defer aw.deinit();
+
+        for (errors) |err| {
+            try aw.writer.print("{}:{} {f}\n", .{
+                err.main_location.start,
+                err.main_location.end,
+                err.tag,
+            });
+        }
+        try std.testing.expectEqualStrings(case[1], aw.written());
+    }
+}
+
+test "optionals - dicts" {
+    const schema_src =
+        \\$ = Foo
+        \\struct Foo {
+        \\  one: ?{:}bytes,
+        \\  two: {:}?bytes,
+        \\  three: ?{:}Bar,   
+        \\  four: {:}?Bar,   
+        \\
+        \\  struct Bar { quix: ?{:}?int }
+        \\}
+    ;
+
+    const cases: []const [2][:0]const u8 = &.{
+        .{
+            \\.one = null,
+            \\.two = {},
+            \\.three = null,
+            \\.four = {},
+            ,
+            \\
+            ,
+        },
+        .{
+            \\.one = null,
+            \\.two = null,
+            \\.three = null,
+            \\.four = null,
+            ,
+            \\20:24 schema: expected {:} found null
+            \\49:53 schema: expected {:} found null
+            \\
+            ,
+        },
+        .{
+            \\.one = {"a": "b", "c": "d", "x": null},
+            \\.two = {},
+            \\.three = null,
+            \\.four = {},
+            ,
+            \\33:37 schema: expected bytes found null
+            \\
+            ,
+        },
+        .{
+            \\.one = {"a": "b", "c": "d"},
+            \\.two = {"a": null, "b": "c"},
+            \\.three = null,
+            \\.four = {},
+            ,
+            \\
+            ,
+        },
+        .{
+            \\.one = {"a": "b", "c": "d"},
+            \\.two = {"a": null, "b": "c"},
+            \\.three = { "a": .{ .quix = {"foo": null}}, "b": .{.quix = {"bar": 40}}},
+            \\.four = {},
+            ,
+            \\
+            ,
+        },
+        .{
+            \\.one = {"a": "b", "c": "d"},
+            \\.two = {"a": null, "b": "c"},
+            \\.three = { "a": .{ .quix = {"foo": null}}, "b": null},
+            \\.four = {},
+            ,
+            \\107:111 schema: expected Bar found null
+            \\
+            ,
+        },
+        .{
+            \\.one = {"a": "b", "c": "d"},
+            \\.two = {"a": null, "b": "c"},
+            \\.three = { "a": .{ .quix = {"foo": null}}, "b": .{.quix = {"bar": 40}}},
+            \\.four = { "a": .{ .quix = null}, "b": null, "c": .{ .quix = {"x": 10}}},
+            ,
             \\
             ,
         },
