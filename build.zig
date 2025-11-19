@@ -215,6 +215,51 @@ pub fn setupReleaseStep(
             },
         }
     }
+
+    // wasm
+    {
+        const release_target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .wasi });
+        const ziggy_wasm_lsp = b.addExecutable(.{
+            .name = "ziggy",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/wasm.zig"),
+                .target = release_target,
+                .optimize = .ReleaseSmall,
+                .single_threaded = true,
+                .link_libc = false,
+            }),
+        });
+
+        const folders = b.dependency("known_folders", .{
+            .target = release_target,
+            .optimize = .ReleaseSmall,
+        }).module("known-folders");
+
+        const lsp = b.dependency("lsp_kit", .{
+            .target = release_target,
+            .optimize = .ReleaseSmall,
+        }).module("lsp");
+
+        ziggy_wasm_lsp.root_module.addImport("folders", folders);
+        ziggy_wasm_lsp.root_module.addImport("lsp", lsp);
+        ziggy_wasm_lsp.root_module.addOptions("options", options);
+
+        const archive_name = "wasm32-wasi-lsponly.tar.xz";
+        const tar = b.addSystemCommand(&.{
+            "gtar",
+            "-cJf",
+        });
+        const archive = tar.addOutputFileArg(archive_name);
+        tar.addArg("-C");
+        tar.addDirectoryArg(ziggy_wasm_lsp.getEmittedBinDirectory());
+        tar.addArg("ziggy.wasm");
+        _ = tar.captureStdOut();
+        release_step.dependOn(&b.addInstallFileWithDir(
+            archive,
+            .{ .custom = "releases" },
+            archive_name,
+        ).step);
+    }
 }
 
 pub fn setupTests(

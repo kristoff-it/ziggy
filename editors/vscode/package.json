@@ -11,6 +11,9 @@
   "categories": [
     "Programming Languages"
   ],
+  "activationEvents": [
+    "onLanguage:supermd"
+  ],
   "contributes": {
     "languages": [
       {
@@ -61,6 +64,11 @@
         "files.eol": "\n"
       },
       "[ziggy_schema]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "LorisCro.ziggy",
+        "files.eol": "\n"
+      },
+      "[supermd]": {
         "editor.formatOnSave": true,
         "editor.defaultFormatter": "LorisCro.ziggy",
         "files.eol": "\n"

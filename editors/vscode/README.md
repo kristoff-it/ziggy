@@ -12,4 +12,4 @@ This extension provides syntax highlighting and LSP support for both **Ziggy** a
 the Ziggy CLI tool installed for this extension to work.
 
 This extension will temporarily also offer LSP features for the frontmatter of SuperMD files, until
-a dedicated SuperMD Language Server will be created.
+a dedicated SuperMD Language Server is created.

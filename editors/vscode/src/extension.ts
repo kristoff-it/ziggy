@@ -55,6 +55,7 @@ export async function activate(context: ExtensionContext) {
         documentSelector: [
             { scheme: "file", language: 'ziggy' },
             { scheme: "file", language: 'ziggy_schema' },
+            { scheme: "file", language: 'supermd' },
         ],
         outputChannel: channel,
         uriConverters: createUriConverters()
