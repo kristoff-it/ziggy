@@ -204,7 +204,7 @@ pub fn setupReleaseStep(
                 tar.addArg("-C");
 
                 tar.addDirectoryArg(release_exe.getEmittedBinDirectory());
-                tar.addArg("superhtml");
+                tar.addArg("ziggy");
                 _ = tar.captureStdOut(.{});
 
                 release_step.dependOn(&b.addInstallFileWithDir(
@@ -240,6 +240,7 @@ pub fn setupReleaseStep(
             .optimize = .ReleaseSmall,
         }).module("lsp");
 
+        ziggy_wasm_lsp.root_module.addImport("ziggy", ziggy_module);
         ziggy_wasm_lsp.root_module.addImport("folders", folders);
         ziggy_wasm_lsp.root_module.addImport("lsp", lsp);
         ziggy_wasm_lsp.root_module.addOptions("options", options);
@@ -253,7 +254,7 @@ pub fn setupReleaseStep(
         tar.addArg("-C");
         tar.addDirectoryArg(ziggy_wasm_lsp.getEmittedBinDirectory());
         tar.addArg("ziggy.wasm");
-        _ = tar.captureStdOut();
+        _ = tar.captureStdOut(.{});
         release_step.dependOn(&b.addInstallFileWithDir(
             archive,
             .{ .custom = "releases" },

@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0-dev.1236+26db54d69",
     .dependencies = .{
         .known_folders = .{
-            .url = "git+https://github.com/ziglibs/known-folders#aa24df42183ad415d10bc0a33e6238c437fc0f59",
-            .hash = "known_folders-0.0.0-Fy-PJtLDAADGDOwYwMkVydMSTp_aN-nfjCZw6qPQ2ECL",
+            .url = "git+https://github.com/ziglibs/known-folders#bafef170a73c064dc706fcfbdc2e406a35681a9c",
+            .hash = "known_folders-0.0.0-Fy-PJovNAAAtqbaXgBhV6G-Z4-WNo7P0Rov-x-npZq21",
         },
         .lsp_kit = .{
             .url = "git+https://github.com/zigtools/lsp-kit#c46ac866dda11ab58e4ba71ed0d8ba21f43e81db",

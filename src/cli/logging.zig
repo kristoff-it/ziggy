@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const builtin = @import("builtin");
 const folders = @import("known-folders");
 
@@ -25,21 +26,22 @@ pub fn logFn(
     writer.interface.flush() catch return;
 }
 
-pub fn setup(gpa: std.mem.Allocator) void {
+pub fn setup(io: Io, gpa: std.mem.Allocator) void {
     std.debug.lockStdErr();
     defer std.debug.unlockStdErr();
 
-    setupInternal(gpa) catch {
+    setupInternal(io, gpa) catch {
         log_file = null;
     };
 }
 
-fn setupInternal(gpa: std.mem.Allocator) !void {
+fn setupInternal(io: Io, gpa: std.mem.Allocator) !void {
     const log_name = "ziggy.log";
-    var cache_base = try folders.open(gpa, .cache, .{}) orelse return error.Failure;
-    defer cache_base.close();
+    var cache_base = try folders.open(io, gpa, .cache, .{}) orelse return error.Failure;
+    defer cache_base.close(io);
 
-    const file = try cache_base.createFile(log_name, .{ .truncate = false });
+    const f: Io.File = try cache_base.createFile(io, log_name, .{ .truncate = false });
+    const file: std.fs.File = .{ .handle = f.handle };
     const end = try file.getEndPos();
     try file.seekTo(end);
 

@@ -64,7 +64,7 @@ pub fn main() !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    logging.setup(gpa);
+    logging.setup(io, gpa);
 
     const args = std.process.argsAlloc(gpa) catch fatal("oom\n", .{});
     defer std.process.argsFree(gpa, args);
