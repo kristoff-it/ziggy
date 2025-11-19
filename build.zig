@@ -28,49 +28,49 @@ pub fn build(b: *std.Build) !void {
         .strip = false,
     });
 
-    const folders = b.dependency("known_folders", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("known-folders");
-    const lsp = b.dependency("lsp_kit", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("lsp");
+    if (b.option(bool, "cli", "enable building the CLI tool") orelse false) {
+        const folders = b.lazyDependency("known_folders", .{
+            .target = target,
+            .optimize = optimize,
+        }) orelse return;
+        const lsp = b.lazyDependency("lsp_kit", .{
+            .target = target,
+            .optimize = optimize,
+        }) orelse return;
 
-    const cli_module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .single_threaded = single_threaded,
-        .imports = &.{
-            .{ .name = "ziggy", .module = ziggy_module },
-            .{ .name = "known-folders", .module = folders },
-            .{ .name = "lsp", .module = lsp },
-        },
-    });
-    cli_module.addOptions("options", options);
+        const cli_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .single_threaded = single_threaded,
+            .imports = &.{
+                .{ .name = "ziggy", .module = ziggy_module },
+                .{ .name = "known-folders", .module = folders.module("known-folders") },
+                .{ .name = "lsp", .module = lsp.module("lsp") },
+            },
+        });
+        cli_module.addOptions("options", options);
 
-    const cli_exe = b.addExecutable(.{
-        .name = "ziggy",
-        .root_module = cli_module,
-    });
-    b.installArtifact(cli_exe);
+        const cli_exe = b.addExecutable(.{
+            .name = "ziggy",
+            .root_module = cli_module,
+        });
+        b.installArtifact(cli_exe);
+        const run_exe = b.addRunArtifact(cli_exe);
+        if (b.args) |args| run_exe.addArgs(args);
+        const run_exe_step = b.step("run", "Run the Ziggy tool");
+        run_exe_step.dependOn(&run_exe.step);
 
-    const run_exe = b.addRunArtifact(cli_exe);
-    if (b.args) |args| run_exe.addArgs(args);
-    const run_exe_step = b.step("run", "Run the Ziggy tool");
-    run_exe_step.dependOn(&run_exe.step);
+        const ziggy_check = b.addExecutable(.{
+            .name = "ziggy_check",
+            .root_module = cli_module,
+        });
 
-    const ziggy_check = b.addExecutable(.{
-        .name = "ziggy_check",
-        .root_module = cli_module,
-    });
-
-    const check = b.step("check", "Check if the project compiles");
-    check.dependOn(&ziggy_check.step);
-
-    try setupTests(b, target, optimize, ziggy_module, cli_exe);
-    setupWasmStep(b, optimize, options, ziggy_module, lsp);
+        const check = b.step("check", "Check if the project compiles");
+        check.dependOn(&ziggy_check.step);
+        try setupTests(b, target, optimize, ziggy_module, cli_exe);
+        setupWasmStep(b, optimize, options, ziggy_module, lsp.module("lsp"));
+    }
 
     const release = b.step("release", "Create release builds of Ziggy");
     const git_version = getGitVersion(b);
@@ -182,7 +182,7 @@ pub fn setupReleaseStep(
                 });
                 const archive = zip.addOutputFileArg(archive_name);
                 zip.addDirectoryArg(release_exe.getEmittedBin());
-                _ = zip.captureStdOut(.{});
+                _ = zip.captureStdOut();
 
                 release_step.dependOn(&b.addInstallFileWithDir(
                     archive,
@@ -205,7 +205,7 @@ pub fn setupReleaseStep(
 
                 tar.addDirectoryArg(release_exe.getEmittedBinDirectory());
                 tar.addArg("superhtml");
-                _ = tar.captureStdOut(.{});
+                _ = tar.captureStdOut();
 
                 release_step.dependOn(&b.addInstallFileWithDir(
                     archive,
