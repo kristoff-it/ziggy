@@ -1,35 +1,62 @@
 {
-  description = "Description for the project";
-
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-parts.url = "github:hercules-ci/flake-parts";
-  };
+    zig2nix = {
+      url = "github:Cloudef/zig2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
 
-  outputs = inputs@{ flake-parts, ... }:
-    flake-parts.lib.mkFlake { inherit inputs; } {
-      systems =
-        [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" "x86_64-darwin" ];
-      perSystem = { pkgs, lib, config, ... }: {
-        packages = {
-          ziggy = pkgs.stdenv.mkDerivation {
-            name = "ziggy";
-            version = "0.0.0";
-            src = ./.;
-            postPatch = ''
-              ln -s ${pkgs.callPackage ./deps.nix { }} $ZIG_GLOBAL_CACHE_DIR/p
-            '';
-            nativeBuildInputs = [ pkgs.zig.hook ];
+  };
+  outputs =
+    {
+      self,
+      nixpkgs,
+      zig2nix,
+
+      ...
+    }:
+    let
+      inherit (nixpkgs) lib;
+      forAllSystems =
+        body:
+        lib.genAttrs lib.systems.flakeExposed (
+          system:
+          let
+            pkgs = nixpkgs.legacyPackages.${system};
+            zig016 = zig2nix.packages.${system}.zig-master;
+            env = zig2nix.outputs.zig-env.${system} {
+              inherit nixpkgs;
+              zig = zig016;
+            };
+          in
+          body {
+            inherit system pkgs zig016 env;
+          }
+        );
+    in
+    {
+      packages = forAllSystems (
+        {
+          system,
+          env,
+          zig016,
+          ...
+        }:
+        {
+          ziggy = env.package {
+            src = lib.cleanSource ./.;
+            nativeBuildInputs = [ zig016 ];
+            buildInputs = [ zig016 ];
+            zigPreferMusl = false;
           };
-          default = config.packages.ziggy;
-          update-deps = pkgs.writeShellApplication {
-            name = "update-deps";
-            text = "${lib.getExe pkgs.zon2nix} > deps.nix";
-          };
-        };
-        devShells.default = pkgs.mkShell {
-          buildInputs = [ config.packages.default.nativeBuildInputs ];
-        };
-      };
+          default = self.packages.${system}.ziggy;
+        }
+      );
+      devShells = forAllSystems (
+        { env, zig016, ... }:
+        {
+          default = env.mkShell { packages = [ zig016 ]; };
+        }
+      );
     };
 }
