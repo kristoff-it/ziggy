@@ -336,6 +336,9 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                     unreachable;
                 };
             },
+            .pos_inf => return std.math.inf(T),
+            .neg_inf => return -std.math.inf(T),
+            .nan => return std.math.nan(T),
             else => return d.unexpected(first),
         },
         .comptime_int, .int => switch (first.tag) {
@@ -874,6 +877,37 @@ test "float basics" {
     const result = try deserializeLeaky(f64, arena, case, &meta, .{});
 
     try std.testing.expectEqual(10.42, result);
+}
+
+test "float special values" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var meta: Meta = undefined;
+
+    const case_pos_inf =
+        \\
+        \\ inf
+        \\
+    ;
+    const result_pos_inf = try deserializeLeaky(f64, arena, case_pos_inf, &meta, .{});
+    try std.testing.expect(std.math.isPositiveInf(result_pos_inf));
+
+    const case_neg_inf =
+        \\
+        \\ -inf
+        \\
+    ;
+    const result_neg_inf = try deserializeLeaky(f64, arena, case_neg_inf, &meta, .{});
+    try std.testing.expect(std.math.isNegativeInf(result_neg_inf));
+
+    const case_nan =
+        \\
+        \\ nan
+        \\
+    ;
+    const result_nan = try deserializeLeaky(f64, arena, case_nan, &meta, .{});
+    try std.testing.expect(std.math.isNan(result_nan));
 }
 
 test "array basics" {

@@ -343,6 +343,12 @@ test "basic data types" {
     try testStringify(true, .{}, "true");
 }
 
+test "float special values" {
+    try testStringify(std.math.inf(f64), .{}, "inf");
+    try testStringify(-std.math.inf(f64), .{}, "-inf");
+    try testStringify(std.math.nan(f64), .{}, "nan");
+}
+
 test "strings" {
     const x: []const u8 = "Hello";
     try testStringify(x, .{ .whitespace = .minified }, "\"Hello\"");
