@@ -87,7 +87,7 @@ pub const Dynamic = union(enum) {
                 .integer => return .{
                     .integer = try d.deserializeOne(i64, first, false),
                 },
-                .float => return .{
+                .float, .pos_inf, .neg_inf, .nan => return .{
                     .float = try d.deserializeOne(f64, first, false),
                 },
                 .bytes, .bytes_line => return .{
