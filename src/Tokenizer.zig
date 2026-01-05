@@ -309,7 +309,7 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                     tok.tag = .null;
                 } else if (std.mem.eql(u8, slice, "nan")) {
                     tok.tag = .nan;
-                } else if (std.mem.eql(u8, slice, "inf") or std.mem.eql(u8, slice, "+inf")) {
+                } else if (std.mem.eql(u8, slice, "inf")) {
                     tok.tag = .pos_inf;
                 } else tok.tag = .invalid;
 
