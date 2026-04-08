@@ -1,6 +1,7 @@
 node_modules/
 .zig-cache/
 zig-out/
+zig-pkg/
 release/
 result
 Cargo.lock

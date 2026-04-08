@@ -384,3 +384,227 @@ const Converter = struct {
         }
     }
 };
+
+fn renderJsonValue(
+    value: json.Value,
+    rule: ziggy.schema.Schema.Rule,
+    schema: ziggy.schema.Schema,
+    w: *Writer,
+) anyerror!void {
+    var sub_rule = rule;
+    const r = schema.nodes[rule.node];
+    if (r.tag == .optional) {
+        if (value == null) {
+            try w.writeAll("null");
+            return;
+        }
+        sub_rule = .{ .node = r.first_child_id };
+    }
+    switch (value) {
+        .object => |o| try renderJsonObject(o, sub_rule, schema, w),
+        .array => |a| try renderJsonArray(a, sub_rule, schema, w),
+        .string => |s| try renderJsonString(s, sub_rule, schema, w),
+        .number_string => |ns| try renderJsonNumberString(ns, sub_rule, schema, w),
+        .float => |f| try renderJsonFloat(f, sub_rule, schema, w),
+        .integer => |i| try renderJsonInteger(i, sub_rule, schema, w),
+        .bool => |b| try renderJsonBool(b, sub_rule, schema, w),
+        .null => {
+            const rule_src = schema.nodes[r.first_child_id].loc.src(schema.code);
+            std.debug.print("error: type mismatch, expected '{s}', found 'null'\n", .{
+                rule_src,
+            });
+            std.process.exit(1);
+        },
+    }
+}
+
+fn renderJsonObject(
+    obj: json.ObjectMap,
+    rule: ziggy.schema.Schema.Rule,
+    schema: ziggy.schema.Schema,
+    w: *Writer,
+) !void {
+    const r = schema.nodes[rule.node];
+    const rule_src = r.loc.src(schema.code);
+    const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
+    switch (r.tag) {
+        .optional => unreachable,
+        .map, .any => {
+            try w.writeAll("{");
+            for (obj.keys(), obj.values()) |k, v| {
+                try w.print("\"{}\":", .{std.zig.fmtEscapes(k)});
+                try renderJsonValue(v, .{ .node = child_rule_id }, schema, w);
+                try w.writeAll(",");
+            }
+            try w.writeAll("}");
+        },
+        .identifier => {
+            const struct_rule = schema.structs.get(rule_src).?; // must be present
+
+            try w.writeAll("{");
+            for (obj.keys(), obj.values()) |k, v| {
+                const field = struct_rule.fields.get(k) orelse {
+                    std.debug.print("error: unknown field '{s}'\n", .{k});
+                    std.process.exit(1);
+                };
+                try w.print(".{} = ", .{std.zig.fmtId(k)});
+                try renderJsonValue(v, field.rule, schema, w);
+                try w.writeAll(",");
+            }
+
+            // ensure all missing keys are optional
+            for (struct_rule.fields.keys(), struct_rule.fields.values()) |k, v| {
+                if (obj.contains(k)) continue;
+                if (schema.nodes[v.rule.node].tag != .optional) {
+                    std.debug.print("error: missing field '{s}'\n", .{k});
+                    std.process.exit(1);
+                }
+            }
+            try w.writeAll("}");
+        },
+        .struct_union => @panic("TODO: struct union for json objects"),
+        else => {
+            std.debug.print("error: type mismatch, expected '{s}', found 'object'\n", .{
+                rule_src,
+            });
+            std.process.exit(1);
+        },
+    }
+}
+
+fn renderJsonArray(
+    array: json.Array,
+    rule: ziggy.schema.Schema.Rule,
+    schema: ziggy.schema.Schema,
+    w: *Writer,
+) !void {
+    const r = schema.nodes[rule.node];
+    const rule_src = r.loc.src(schema.code);
+    const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
+    switch (r.tag) {
+        .optional => unreachable,
+        .array, .any => {
+            try w.writeAll("[");
+            for (array.items) |v| {
+                try renderJsonValue(v, .{ .node = child_rule_id }, schema, w);
+            }
+            try w.writeAll("]");
+        },
+        else => {
+            std.debug.print("error: type mismatch, expected '{s}', found 'array'\n", .{
+                rule_src,
+            });
+            std.process.exit(1);
+        },
+    }
+}
+
+fn renderJsonString(
+    str: []const u8,
+    rule: ziggy.schema.Schema.Rule,
+    schema: ziggy.schema.Schema,
+    w: *Writer,
+) !void {
+    const r = schema.nodes[rule.node];
+    const rule_src = r.loc.src(schema.code);
+    switch (r.tag) {
+        .optional => unreachable,
+        .bytes, .any => {
+            try w.print("\"{}\"", .{std.zig.fmtEscapes(str)});
+        },
+        else => {
+            std.debug.print("error: type mismatch, expected '{s}', found 'string'\n", .{
+                rule_src,
+            });
+            std.process.exit(1);
+        },
+    }
+}
+
+fn renderJsonNumberString(
+    ns: []const u8,
+    rule: ziggy.schema.Schema.Rule,
+    schema: ziggy.schema.Schema,
+    w: *Writer,
+) !void {
+    const r = schema.nodes[rule.node];
+    const rule_src = r.loc.src(schema.code);
+    switch (r.tag) {
+        .optional => unreachable,
+        .int, .float, .any => {
+            try w.print("{s}", .{ns});
+        },
+        else => {
+            std.debug.print("error: type mismatch, expected '{s}', found 'number_string'\n", .{
+                rule_src,
+            });
+            std.process.exit(1);
+        },
+    }
+}
+
+fn renderJsonFloat(
+    num: f64,
+    rule: ziggy.schema.Schema.Rule,
+    schema: ziggy.schema.Schema,
+    w: *Writer,
+) !void {
+    const r = schema.nodes[rule.node];
+    const rule_src = r.loc.src(schema.code);
+    switch (r.tag) {
+        .optional => unreachable,
+        .float, .any => {
+            try w.print("{}", .{num});
+        },
+        else => {
+            std.debug.print("error: type mismatch, expected '{s}', found 'float'\n", .{
+                rule_src,
+            });
+            std.process.exit(1);
+        },
+    }
+}
+
+fn renderJsonInteger(
+    num: i64,
+    rule: ziggy.schema.Schema.Rule,
+    schema: ziggy.schema.Schema,
+    w: *Writer,
+) !void {
+    const r = schema.nodes[rule.node];
+    const rule_src = r.loc.src(schema.code);
+    switch (r.tag) {
+        .optional => unreachable,
+        .int, .float, .any => {
+            try w.print("{}", .{num});
+        },
+        else => {
+            std.debug.print("error: type mismatch, expected '{s}', found 'integer'\n", .{
+                rule_src,
+            });
+            std.process.exit(1);
+        },
+    }
+}
+
+fn renderJsonBool(
+    b: bool,
+    rule: ziggy.schema.Schema.Rule,
+    schema: ziggy.schema.Schema,
+    w: *Writer,
+) !void {
+    const r = schema.nodes[rule.node];
+    const rule_src = r.loc.src(schema.code);
+    switch (r.tag) {
+        .optional => unreachable,
+        .bool, .any => {
+            try w.print("{}", .{b});
+        },
+        else => {
+            std.debug.print("error: type mismatch, expected '{s}', found 'bool'\n", .{
+                rule_src,
+            });
+            std.process.exit(1);
+        },
+    }
+}

@@ -12,6 +12,10 @@
             .url = "git+https://github.com/zigtools/lsp-kit#c46ac866dda11ab58e4ba71ed0d8ba21f43e81db",
             .hash = "lsp_kit-0.1.0-bi_PL98yCgBfW3T4iLkfV5VOXc__pOpOsQsX1tRmpqAG",
         },
+        // .yaml = .{
+        //     .url = "git+https://github.com/dotcarmen/zig-yaml.git?ref=0.16-io-interface#695e62bb080028fdd0b33145a1dd6d1d7879ac42",
+        //     .hash = "zig_yaml-0.2.0-C1161jirAgAUjfuDVZPH4SvzvXYu0FlvakDifJzAsEF2",
+        // },
     },
     .paths = .{
         "build.zig",

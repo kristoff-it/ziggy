@@ -36,6 +36,10 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     }).module("lsp");
+    // const yaml = b.dependency("yaml", .{
+    //     .target = target,
+    //     .optimize = optimize,
+    // }).module("yaml");
 
     const cli_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -46,6 +50,7 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "ziggy", .module = ziggy_module },
             .{ .name = "known-folders", .module = folders },
             .{ .name = "lsp", .module = lsp },
+            // .{ .name = "yaml", .module = yaml },
         },
     });
     cli_module.addOptions("options", options);
@@ -424,7 +429,7 @@ fn getGitVersion(b: *std.Build) Version {
             b.build_root.path.?, "describe",
             "--match",           "*.*.*",
             "--tags",
-        }, &out, .Ignore) catch return .unknown,
+        }, &out, .ignore) catch return .unknown,
         " \n\r",
     );
 

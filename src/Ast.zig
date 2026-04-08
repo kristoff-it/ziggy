@@ -760,7 +760,9 @@ pub const Iterator = struct {
                 };
 
                 if (it.nodes.len == enter.next_idx) {
-                    it.state = .{ .done = if (no_exit) from_node.parent_idx else enter.from_idx };
+                    it.state = .{
+                        .done = if (no_exit) from_node.parent_idx else enter.from_idx,
+                    };
                     continue :next it.state;
                 }
 

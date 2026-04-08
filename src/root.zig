@@ -24,6 +24,7 @@ pub const deserializeLeaky = Deserializer.deserializeLeaky;
 
 /// A Zig type capable of deserializing from, and serializing to, any Zig Document.
 pub const Dynamic = @import("dynamic.zig").Dynamic;
+pub const Dictionary = @import("dynamic.zig").Dictionary;
 
 /// Ziggy Schemas can be used to validate the structure of Ziggy Documents.
 pub const schema = @import("schema.zig");
@@ -37,5 +38,6 @@ test {
     _ = Serializer;
     _ = Deserializer;
     _ = Dynamic;
+    _ = Dictionary;
     _ = schema;
 }
