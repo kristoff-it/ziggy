@@ -294,19 +294,15 @@ fn stringifyUnion(writer: *Writer, un: anytype, indent_level: usize, depth: usiz
             switch (@typeInfo(field.type)) {
                 .@"struct" => try stringifyInner(@field(un, field.name), opts_, indent_level, depth, writer),
                 else => {
-                    const value_field: std.builtin.Type.StructField = .{
-                        .name = "value",
-                        .type = field.type,
-                        .default_value_ptr = null,
-                        .is_comptime = false,
-                        .alignment = @alignOf(field.type),
-                    };
-                    const St = @Type(.{ .@"struct" = .{
-                        .layout = .auto,
-                        .fields = &.{value_field},
-                        .decls = &.{},
-                        .is_tuple = false,
-                    } });
+                    // const value_field: std.builtin.Type.StructField = .{
+                    //     .name = "value",
+                    //     .type = field.type,
+                    //     .default_value_ptr = null,
+                    //     .is_comptime = false,
+                    //     .alignment = @alignOf(field.type),
+                    // };
+                    const St = @Struct(.auto, null, &.{"value"}, &.{field.type}, &.{.{}});
+
                     const v: St = .{ .value = @field(un, field.name) };
                     try stringifyInner(v, opts_, indent_level, depth, writer);
                 },

@@ -484,7 +484,7 @@ fn parseArray(self: *Parser, comptime T: type, lsb: Token) !T {
     try self.must(lsb, .lsb);
 
     var tok = self.next();
-    var list: std.ArrayListUnmanaged(info.child) = .{};
+    var list: std.ArrayListUnmanaged(info.child) = .empty;
     errdefer list.deinit(self.gpa);
 
     while (true) {

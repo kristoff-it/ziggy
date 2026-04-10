@@ -13,12 +13,12 @@ pub const known_folders_config: folders.KnownFolderConfig = .{
     .xdg_on_mac = true,
 };
 
-pub const std_options: std.Options = .{
-    .logFn = logging.logFn,
-};
+// pub const std_options: std.Options = .{
+//     .logFn = logging.logFn,
+// };
 
 var lsp_mode = false;
-pub fn panic(
+pub fn panic1(
     msg: []const u8,
     trace: ?*std.builtin.StackTrace,
     ret_addr: ?usize,
@@ -29,22 +29,16 @@ pub fn panic(
         std.debug.print("{s}\n\n{?f}", .{ msg, trace });
     }
     blk: {
-        const out = if (!lsp_mode) std.fs.File.stderr() else logging.log_file orelse break :blk;
-        var writer = out.writer(&.{});
-        const w = &writer.interface;
+        const w = &logging.writer.interface;
 
         if (builtin.strip_debug_info) {
             w.print("Unable to dump stack trace: debug info stripped\n", .{}) catch return;
             break :blk;
         }
-        const debug_info = std.debug.getSelfDebugInfo() catch |err| {
-            w.print(
-                "Unable to dump stack trace: Unable to open debug info: {t}\n",
-                .{err},
-            ) catch break :blk;
-            break :blk;
-        };
-        std.debug.writeCurrentStackTrace(w, debug_info, .no_color, ret_addr) catch |err| {
+        std.debug.writeCurrentStackTrace(.{ .first_address = ret_addr }, .{
+            .writer = w,
+            .mode = .no_color,
+        }) catch |err| {
             w.print("Unable to dump stack trace: {t}\n", .{err}) catch break :blk;
             break :blk;
         };
@@ -55,14 +49,13 @@ pub fn panic(
 
 pub const Command = enum { lsp, query, fmt, check, convert, help };
 
-pub fn main() !void {
-    var gpa_impl: std.heap.GeneralPurposeAllocator(.{}) = .{};
-    const gpa = gpa_impl.allocator();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const gpa = init.gpa;
 
-    logging.setup(gpa);
+    // logging.setup(io, gpa, init.environ_map.*);
 
-    const args = std.process.argsAlloc(gpa) catch fatal("oom\n", .{});
-    defer std.process.argsFree(gpa, args);
+    const args = init.minimal.args.toSlice(init.arena.allocator()) catch fatal("oom\n", .{});
 
     if (args.len < 2) fatalHelp();
 
@@ -71,13 +64,13 @@ pub fn main() !void {
         fatalHelp();
     };
 
-    if (cmd == .lsp) lsp_mode = true;
+    // if (cmd == .lsp) lsp_mode = true;
 
     _ = switch (cmd) {
-        .lsp => lsp_exe.run(gpa, args[2..]),
-        .fmt => fmt_exe.run(gpa, args[2..]),
-        .check => check_exe.run(gpa, args[2..]),
-        .convert => convert_exe.run(gpa, args[2..]),
+        // .lsp => lsp_exe.run(gpa, args[2..]),
+        .fmt => fmt_exe.run(io, gpa, args[2..]),
+        // .check => check_exe.run(gpa, args[2..]),
+        // .convert => convert_exe.run(gpa, args[2..]),
         .help => fatalHelp(),
         else => std.debug.panic("TODO cmd={s}", .{@tagName(cmd)}),
     } catch |err| fatal("unexpected error: {s}\n", .{@errorName(err)});

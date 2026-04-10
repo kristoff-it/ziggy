@@ -5,7 +5,7 @@ code: [:0]const u8,
 tokenizer: Tokenizer,
 diagnostic: ?*Diagnostic,
 fuel: u32,
-events: std.ArrayList(Event) = .{},
+events: std.ArrayList(Event) = .empty,
 
 const std = @import("std");
 const mem = std.mem;
@@ -23,7 +23,7 @@ const Writer = std.Io.Writer;
 
 pub const Tree = struct {
     tag: Tree.Tag,
-    children: std.ArrayList(Child) = .{},
+    children: std.ArrayList(Child) = .empty,
     suggestions: []const Suggestion = &.{},
     hovers: []const Hover = &.{},
 

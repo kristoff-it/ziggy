@@ -1,20 +1,18 @@
 const std = @import("std");
+const Io = std.Io;
 const ziggy = @import("ziggy");
 const test_type = @import("test_type");
 const CaseType = test_type.Case;
 
-pub fn main() !void {
-    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    var arena_state = std.heap.ArenaAllocator.init(gpa_state.allocator());
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
 
-    const args = try std.process.argsAlloc(arena);
-    const case = try std.fs.cwd().readFileAllocOptions(
-        arena,
+    const args = try init.minimal.args.toSlice(arena);
+    const case = try Io.Dir.cwd().readFileAllocOptions(
+        init.io,
         args[1],
-        ziggy.max_size,
-        null,
+        arena,
+        .limited(ziggy.max_size),
         .of(u8),
         0,
     );

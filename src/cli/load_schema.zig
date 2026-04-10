@@ -1,16 +1,17 @@
 const std = @import("std");
+const Io = std.Io;
 const ziggy = @import("ziggy");
 
-pub fn loadSchema(gpa: std.mem.Allocator, path: ?[]const u8) ziggy.schema.Schema {
+pub fn loadSchema(io: Io, gpa: std.mem.Allocator, path: ?[]const u8) ziggy.schema.Schema {
     const p = path orelse return defaultSchema();
 
     var diag: ziggy.schema.Diagnostic = .{ .lsp = false, .path = p };
 
-    const schema_file = std.fs.cwd().readFileAllocOptions(
-        gpa,
+    const schema_file = Io.Dir.cwd().readFileAllocOptions(
+        io,
         p,
-        ziggy.max_size,
-        null,
+        gpa,
+        .limited(ziggy.max_size),
         .of(u8),
         0,
     ) catch |err| {

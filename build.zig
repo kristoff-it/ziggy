@@ -145,7 +145,7 @@ pub fn setupTests(
     git_add.setName("git add tests/");
     diff.step.dependOn(&git_add.step);
 
-    b.build_root.handle.access("tests/ziggy", .{}) catch {
+    b.build_root.handle.access(b.graph.io, "tests/ziggy", .{}) catch {
         const fail = b.addFail("snapshot test folder is missing, can't run tests (note: snapshot tests are not included in the ziggy manifest)");
         git_add.step.dependOn(&fail.step);
         return;
@@ -154,13 +154,13 @@ pub fn setupTests(
     // errors - ast
     {
         const base_path = b.pathJoin(&.{ "tests", "ziggy", "ast", "errors" });
-        var tests_dir = try b.build_root.handle.openDir(base_path, .{
+        var tests_dir = try b.build_root.handle.openDir(b.graph.io, base_path, .{
             .iterate = true,
         });
-        defer tests_dir.close();
+        defer tests_dir.close(b.graph.io);
 
         var it = tests_dir.iterateAssumeFirstIteration();
-        while (try it.next()) |entry| {
+        while (try it.next(b.graph.io)) |entry| {
             if (entry.kind == .directory) continue;
             if (entry.name[0] == '.') continue;
             const ext = std.fs.path.extension(entry.name);
@@ -173,7 +173,7 @@ pub fn setupTests(
             run_cli.addFileInput(b.path(base_path).path(b, entry.name));
             run_cli.expectExitCode(1);
 
-            const out = run_cli.captureStdErr();
+            const out = run_cli.captureStdErr(.{});
             const snap_name = b.fmt("{s}_snap.txt", .{
                 std.fs.path.stem(entry.name),
             });
@@ -191,12 +191,12 @@ pub fn setupTests(
     // errors - type driven
     {
         const base_path = b.pathJoin(&.{ "tests", "ziggy", "type-driven", "errors" });
-        const tests_dir = try b.build_root.handle.openDir(base_path, .{
+        const tests_dir = try b.build_root.handle.openDir(b.graph.io, base_path, .{
             .iterate = true,
         });
 
         var it = tests_dir.iterateAssumeFirstIteration();
-        while (try it.next()) |entry| {
+        while (try it.next(b.graph.io)) |entry| {
             if (entry.kind == .directory) continue;
             if (entry.name[0] == '.') continue;
             const ext = std.fs.path.extension(entry.name);
@@ -227,7 +227,7 @@ pub fn setupTests(
             run_cli.addFileArg(b.path(b.pathJoin(&.{ base_path, entry.name })));
             run_cli.expectExitCode(1);
 
-            const out = run_cli.captureStdErr();
+            const out = run_cli.captureStdErr(.{});
             const snap_name = b.fmt("{s}_snap.txt", .{
                 std.fs.path.stem(entry.name),
             });

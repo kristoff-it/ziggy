@@ -85,7 +85,7 @@ const Parser = struct {
     code: [:0]const u8,
     tokenizer: Tokenizer,
     diagnostic: ?*Diagnostic,
-    nodes: std.ArrayListUnmanaged(Node) = .{},
+    nodes: std.ArrayListUnmanaged(Node) = .empty,
     node: *Node = undefined,
     token: Token = undefined,
 

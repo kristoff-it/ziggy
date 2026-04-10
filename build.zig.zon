@@ -5,12 +5,12 @@
     .minimum_zig_version = "0.15.0",
     .dependencies = .{
         .known_folders = .{
-            .url = "git+https://github.com/ziglibs/known-folders#aa24df42183ad415d10bc0a33e6238c437fc0f59",
-            .hash = "known_folders-0.0.0-Fy-PJtLDAADGDOwYwMkVydMSTp_aN-nfjCZw6qPQ2ECL",
+            .url = "git+https://github.com/ziglibs/known-folders#175f5596b3d2ee3c658282bb07885580895a0e73",
+            .hash = "known_folders-0.0.0-Fy-PJk7KAAC41mQXzmFyGa0Q7tvmQjatENkREa6Gc4zu",
         },
         .lsp_kit = .{
-            .url = "git+https://github.com/kristoff-it/lsp-kit?ref=zig-0.15#01c14e592d25dc57dfebba27b8bd2b4aa91c1140",
-            .hash = "lsp_kit-0.1.0-bi_PL5YyCgA2QFEza6llr2Uy08QUQsWBu2wKvtr8tbLx",
+            .url = "git+https://github.com/zigtools/lsp-kit#ec325a3c33d1da7708cf513355208f74d9560580",
+            .hash = "lsp_kit-0.1.0-bi_PL_kyDACVTEhLaMq2-PJx0MocqRyjXDAN0ybMUyQQ",
         },
     },
     .paths = .{

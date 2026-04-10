@@ -10,7 +10,7 @@ const Writer = std.Io.Writer;
 /// This field should be set as needed by users.
 path: ?[]const u8,
 
-errors: std.ArrayListUnmanaged(Error) = .{},
+errors: std.ArrayListUnmanaged(Error) = .empty,
 
 pub const Error = union(enum) {
     overflow,
@@ -146,14 +146,14 @@ pub const Error = union(enum) {
                 for (1..sel.start.line) |_| _ = it.next().?;
 
                 const line = it.next().?;
-                const line_trim_left = std.mem.trimLeft(u8, line, &std.ascii.whitespace);
+                const line_trim_left = std.mem.trimStart(u8, line, &std.ascii.whitespace);
                 // const start_trim_left = line_off.start + line_off.line.len - line_trim_left.len;
 
                 const caret_len = if (sel.start.line == sel.end.line) sel.end.col - sel.start.col else line_trim_left.len;
 
                 const caret_spaces_len = sel.start.col - 1;
 
-                const line_trim = std.mem.trimRight(u8, line_trim_left, &std.ascii.whitespace);
+                const line_trim = std.mem.trimEnd(u8, line_trim_left, &std.ascii.whitespace);
 
                 var hl_buf: [1024]u8 = undefined;
 

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const ziggy = @import("ziggy");
 const loadSchema = @import("load_schema.zig").loadSchema;
 const Diagnostic = ziggy.Diagnostic;
@@ -6,39 +7,42 @@ const Ast = ziggy.Ast;
 
 const FileType = enum { ziggy, ziggy_schema };
 
-pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
+pub fn run(io: Io, gpa: std.mem.Allocator, args: []const []const u8) !void {
     const cmd = Command.parse(args);
-    const schema = loadSchema(gpa, cmd.schema);
+    const schema = loadSchema(io, gpa, cmd.schema);
     var any_error = false;
     switch (cmd.mode) {
         .stdin => {
-            var fr = std.fs.File.stdin().reader(&.{});
+            var fr = Io.File.stdin().reader(io, &.{});
             var aw: std.Io.Writer.Allocating = .init(gpa);
             _ = try fr.interface.streamRemaining(&aw.writer);
             const in_bytes = try aw.toOwnedSliceSentinel(0);
 
             const out_bytes = try fmtZiggy(gpa, null, in_bytes, schema);
+            _ = out_bytes;
 
-            try std.fs.File.stdout().writeAll(out_bytes);
+            // try std.fs.File.stdout().writeAll(out_bytes);
         },
         .stdin_schema => {
-            var fr = std.fs.File.stdin().reader(&.{});
+            var fr = Io.File.stdin().reader(io, &.{});
             var aw: std.Io.Writer.Allocating = .init(gpa);
             _ = try fr.interface.streamRemaining(&aw.writer);
             const in_bytes = try aw.toOwnedSliceSentinel(0);
 
             const out_bytes = try fmtSchema(gpa, null, in_bytes);
+            _ = out_bytes;
 
-            try std.fs.File.stdout().writeAll(out_bytes);
+            // try std.fs.File.stdout().writeAll(out_bytes);
         },
         .paths => |paths| {
             // checkFile will reset the arena at the end of each call
             var arena_impl = std.heap.ArenaAllocator.init(gpa);
             for (paths) |path| {
                 formatFile(
+                    io,
                     &arena_impl,
                     cmd.check,
-                    std.fs.cwd(),
+                    Io.Dir.cwd(),
                     path,
                     path,
                     schema,
@@ -46,6 +50,7 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
                 ) catch |err| switch (err) {
                     error.IsDir, error.AccessDenied => {
                         formatDir(
+                            io,
                             gpa,
                             &arena_impl,
                             cmd.check,
@@ -77,6 +82,7 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !void {
 }
 
 fn formatDir(
+    io: Io,
     gpa: std.mem.Allocator,
     arena_impl: *std.heap.ArenaAllocator,
     check: bool,
@@ -84,14 +90,15 @@ fn formatDir(
     schema: ziggy.schema.Schema,
     any_error: *bool,
 ) !void {
-    var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
-    defer dir.close();
+    var dir = try Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
+    defer dir.close(io);
     var walker = dir.walk(gpa) catch oom();
     defer walker.deinit();
-    while (try walker.next()) |item| {
+    while (try walker.next(io)) |item| {
         switch (item.kind) {
             .file => {
                 try formatFile(
+                    io,
                     arena_impl,
                     check,
                     item.dir,
@@ -107,9 +114,10 @@ fn formatDir(
 }
 
 fn formatFile(
+    io: Io,
     arena_impl: *std.heap.ArenaAllocator,
     check: bool,
-    base_dir: std.fs.Dir,
+    base_dir: Io.Dir,
     sub_path: []const u8,
     full_path: []const u8,
     schema: ziggy.schema.Schema,
@@ -119,10 +127,10 @@ fn formatFile(
     const arena = arena_impl.allocator();
 
     const in_bytes = try base_dir.readFileAllocOptions(
-        arena,
+        io,
         sub_path,
-        ziggy.max_size,
-        null,
+        arena,
+        .limited(ziggy.max_size),
         .of(u8),
         0,
     );
@@ -159,7 +167,7 @@ fn formatFile(
 
     if (std.mem.eql(u8, out_bytes, in_bytes)) return;
 
-    var stdout_writer = std.fs.File.stdout().writer(&.{});
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &.{});
     const stdout = &stdout_writer.interface;
 
     if (check) {
@@ -168,11 +176,11 @@ fn formatFile(
         return;
     }
 
-    var af = try base_dir.atomicFile(sub_path, .{ .write_buffer = &.{} });
-    defer af.deinit();
+    // var af = try base_dir.atomicFile(sub_path, .{ .write_buffer = &.{} });
+    // defer af.deinit();
 
-    try af.file_writer.interface.writeAll(out_bytes);
-    try af.finish();
+    // try af.file_writer.interface.writeAll(out_bytes);
+    // try af.finish();
     try stdout.print("{s}\n", .{full_path});
 }
 
