@@ -1,261 +1,93 @@
+const builtin = @import("builtin");
 const std = @import("std");
-const Io = std.Io;
 const assert = std.debug.assert;
-const yaml = @import("yaml");
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const ziggy = @import("ziggy");
-const json = @import("convert/json.zig");
-const loadSchema = @import("load_schema.zig").loadSchema;
-// const Diagnostic = ziggy.Diagnostic;
+const yaml = @import("convert/yaml.zig");
+// const json = @import("convert/json.zig");
 const Ast = ziggy.Ast;
 const Writer = std.Io.Writer;
 
-pub fn run(io: Io, gpa: std.mem.Allocator, args: []const []const u8) !void {
-    if (true) @panic("TODO");
-    _ = io;
-    const cmd = try Command.parse(gpa, args);
-    const schema = loadSchema(gpa, cmd.schema);
+pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
+    var cmd = try Command.parse(gpa, args);
+    if (cmd.schema) |*schema| {
+        const src = Io.Dir.cwd().readFileAllocOptions(
+            io,
+            schema.path,
+            gpa,
+            .limited(ziggy.max_size),
+            .of(u8),
+            0,
+        ) catch |err| fatal("unable to read '{s}': {t}", .{ schema.path, err });
+
+        const ast = ziggy.schema.Ast.init(gpa, src) catch oom();
+        if (ast.errors.len > 0) {
+            for (ast.errors) |err| {
+                const sel = err.main_location.getSelection(src);
+                std.debug.print("{s}:{}:{} {f}\n", .{
+                    schema.path,
+                    sel.start.line,
+                    sel.start.col,
+                    err.tag,
+                });
+            }
+            fatal("provided schema file contains parsing errors", .{});
+        }
+        schema.src = src;
+        schema.ast = ast;
+    }
+
     switch (cmd.mode) {
         .stdin => |lang| {
-            const in = std.fs.File.stdin();
-            const out = std.fs.File.stdout();
-
+            var fr = Io.File.stdin().reader(io, &.{});
+            var aw: Io.Writer.Allocating = .init(gpa);
+            _ = try fr.interface.streamRemaining(&aw.writer);
+            const in_bytes = try aw.toOwnedSliceSentinel(0);
             switch (lang) {
-                .json => {
-                    const bytes = try convertToZiggy(
-                        gpa,
-                        .json,
-                        null,
-                        schema,
-                        in,
-                    );
-
-                    try out.writeAll(bytes);
+                .yaml => {
+                    const out_bytes = try yaml.convert(gpa, in_bytes, cmd.schema);
+                    try Io.File.stdout().writeStreamingAll(io, out_bytes);
                 },
                 else => @panic("TODO https://github.com/kristoff-it/ziggy/issues/17"),
             }
         },
         .paths => |paths| {
-            // checkFile will reset the arena at the end of each call
-            var arena_impl = std.heap.ArenaAllocator.init(gpa);
-
-            for (paths.json) |path| {
-                convertFile(
-                    &arena_impl,
-                    .json,
-                    cmd.to,
-                    cmd.force,
-                    std.fs.cwd(),
-                    path,
-                    path,
-                    schema,
-                ) catch |err| switch (err) {
-                    error.IsDir, error.AccessDenied => {
-                        convertDir(
-                            gpa,
-                            &arena_impl,
-                            .json,
-                            cmd.to,
-                            cmd.force,
-                            path,
-                            schema,
-                        ) catch |dir_err| {
-                            std.debug.print("Error walking dir '{s}': {s}\n", .{
-                                path,
-                                @errorName(dir_err),
-                            });
-                            std.process.exit(1);
-                        };
-                    },
-                    else => {
-                        std.debug.print("Error while accessing '{s}': {s}\n", .{
-                            path, @errorName(err),
-                        });
-                        std.process.exit(1);
-                    },
-                };
-            }
-
-            if (paths.yaml.len > 0) {
-                @panic("YAML support not yet implemented, see https://github.com/kristoff-it/ziggy/issues/17");
-            }
-            if (paths.toml.len > 0) {
-                @panic("TOML support not yet implemented, see https://github.com/kristoff-it/ziggy/issues/17");
-            }
-            if (paths.ziggy.len > 0) {
-                @panic("Conversion from Ziggy not yet implemented, see https://github.com/kristoff-it/ziggy/issues/17");
-            }
+            _ = paths;
         },
     }
-}
 
-fn convertDir(
-    gpa: std.mem.Allocator,
-    arena_impl: *std.heap.ArenaAllocator,
-    format: Command.Lang,
-    to: Command.Lang,
-    force: bool,
-    path: []const u8,
-    schema: ziggy.schema.Schema,
-) !void {
-    var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
-    defer dir.close();
-    var walker = dir.walk(gpa) catch oom();
-    defer walker.deinit();
-    while (try walker.next()) |item| {
-        switch (item.kind) {
-            .file => {
-                const ext = std.fs.path.extension(item.basename);
-                if (ext.len == 0) continue;
-
-                if (std.mem.eql(u8, ext[1..], @tagName(format))) {
-                    try convertFile(
-                        arena_impl,
-                        format,
-                        to,
-                        force,
-                        item.dir,
-                        item.basename,
-                        item.path,
-                        schema,
-                    );
-                }
-            },
-            else => {},
-        }
-    }
-}
-
-fn convertFile(
-    arena_impl: *std.heap.ArenaAllocator,
-    format: Command.Lang,
-    to: Command.Lang,
-    force: bool,
-    base_dir: std.fs.Dir,
-    sub_path: []const u8,
-    full_path: []const u8,
-    schema: ziggy.schema.Schema,
-) !void {
-    defer _ = arena_impl.reset(.retain_capacity);
-    const arena = arena_impl.allocator();
-
-    const in = try base_dir.openFile(sub_path, .{});
-    defer in.close();
-
-    const stat = try in.stat();
-    if (stat.kind == .directory)
-        return error.IsDir;
-
-    const bytes = switch (to) {
-        .ziggy => try convertToZiggy(
-            arena,
-            format,
-            full_path,
-            schema,
-            in,
-        ),
-        else => @panic("TODO"),
-    };
-
-    // if the file has an expected file extension, we remove it before appending
-    // the new extension
-    const extensionless = blk: {
-        const ext = std.fs.path.extension(sub_path);
-        if (std.mem.eql(u8, ext, ".json") or
-            std.mem.eql(u8, ext, ".yaml") or
-            std.mem.eql(u8, ext, ".toml") or
-            std.mem.eql(u8, ext, ".ziggy"))
-        {
-            break :blk sub_path[0 .. sub_path.len - ext.len];
-        }
-        break :blk sub_path;
-    };
-
-    const out_path = try std.fmt.allocPrint(arena, "{s}.{t}", .{
-        extensionless,
-        to,
-    });
-
-    const out = base_dir.createFile(out_path, .{ .exclusive = !force }) catch |err| {
-        std.debug.print("Error while creating '{s}': {t}\n", .{
-            out_path, err,
-        });
-        std.process.exit(1);
-    };
-    defer out.close();
-
-    try out.writeAll(bytes);
-}
-
-fn convertToZiggy(
-    gpa: std.mem.Allocator,
-    format: Command.Lang,
-    file_path: ?[]const u8,
-    schema: ziggy.schema.Schema,
-    file: std.fs.File,
-) ![]const u8 {
-    // var diag: ziggy.Diagnostic = .{ .path = file_path };
-
-    _ = file_path;
-    switch (format) {
-        else => {
-            @panic("TODO: support more file formats");
-        },
-        .json => {
-            const bytes = json.toZiggy(gpa, schema, file) catch {
-                // std.debug.print("{} arstasr\n", .{diag});
-                std.process.exit(1);
-            };
-
-            return bytes;
-        },
-    }
-}
-
-fn fatalDiag(diag: anytype) noreturn {
-    std.debug.print("{}\n", .{diag});
-    std.process.exit(1);
-}
-
-fn oom() noreturn {
-    std.debug.print("Out of memory\n", .{});
-    std.process.exit(1);
+    std.process.cleanExit(io);
 }
 
 pub const Command = struct {
-    to: Lang,
-    schema: ?[]const u8,
-    replace: bool,
-    dry_run: bool,
-    force: bool,
-    ignore_schema_errors: bool,
     mode: Mode,
+    schema: ?Schema,
+    replace: bool,
+    stdout: bool,
+    force: bool,
+    lenient: bool,
 
+    pub const Lang = enum { json, yaml, toml, ziggy, zon };
     pub const Mode = union(enum) {
         stdin: Lang,
-        paths: Paths,
+        paths: []const []const u8,
     };
-
-    pub const Lang = enum { json, yaml, toml, ziggy };
-    pub const Paths = struct {
-        json: []const []const u8,
-        yaml: []const []const u8,
-        toml: []const []const u8,
-        ziggy: []const []const u8,
+    pub const Schema = struct {
+        path: []const u8,
+        ast: ziggy.schema.Ast = undefined,
+        src: [:0]const u8 = undefined,
     };
 
     fn parse(gpa: std.mem.Allocator, args: []const []const u8) !Command {
         var stdin: ?Lang = null;
-        var json_paths: std.ArrayList([]const u8) = .empty;
-        var yaml_paths: std.ArrayList([]const u8) = .empty;
-        var toml_paths: std.ArrayList([]const u8) = .empty;
-        var ziggy_paths: std.ArrayList([]const u8) = .empty;
+        var paths: std.ArrayList([]const u8) = .empty;
 
-        var to: ?Lang = null;
         var schema: ?[]const u8 = null;
         var replace: ?bool = null;
-        var dry_run: ?bool = null;
+        var stdout: ?bool = null;
         var force: ?bool = null;
-        var ignore_schema_errors: ?bool = null;
+        var lenient: ?bool = null;
 
         var idx: usize = 0;
         while (idx < args.len) : (idx += 1) {
@@ -266,109 +98,36 @@ pub const Command = struct {
                 fatalHelp();
             }
 
-            if (std.mem.eql(u8, arg, "--json") or
-                std.mem.eql(u8, arg, "--yaml") or
-                std.mem.eql(u8, arg, "--toml") or
-                std.mem.eql(u8, arg, "--ziggy"))
-            {
-                if (stdin != null) {
-                    std.debug.print("error: --stdin and path-based flags are mutually exclusive\n\n", .{});
-                    std.process.exit(1);
-                }
-
-                idx += 1;
-                if (idx == args.len) {
-                    std.debug.print("error: missing '{s}' option value\n\n", .{arg});
-                    std.process.exit(1);
-                }
-
-                switch (arg[2]) {
-                    else => unreachable,
-                    'j' => try json_paths.append(gpa, args[idx]),
-                    'y' => try yaml_paths.append(gpa, args[idx]),
-                    't' => try toml_paths.append(gpa, args[idx]),
-                    'z' => try ziggy_paths.append(gpa, args[idx]),
-                }
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "--to")) {
-                if (to != null) {
-                    std.debug.print("error: duplicate '--to' flag\n\n", .{});
-                    std.process.exit(1);
-                }
-
-                idx += 1;
-                if (idx == args.len) {
-                    std.debug.print("error: missing '--to' option value\n\n", .{});
-                    std.process.exit(1);
-                }
-
-                to = std.meta.stringToEnum(Lang, args[idx]) orelse {
-                    std.debug.print(
-                        "error: invalid '--to' option value: '{s}'\n\n",
-                        .{args[idx]},
-                    );
-                    std.process.exit(1);
-                };
-
-                continue;
-            }
-
             if (std.mem.eql(u8, arg, "--schema")) {
-                if (schema != null) {
-                    std.debug.print("error: duplicate '--schema' flag\n\n", .{});
-                    std.process.exit(1);
-                }
-
+                if (schema != null) fatal("duplicate '--schema' flag", .{});
                 idx += 1;
-                if (idx == args.len) {
-                    std.debug.print("error: missing '--to' option value\n\n", .{});
-                    std.process.exit(1);
-                }
-
+                if (idx == args.len) fatal("missing '--schema' option value", .{});
                 schema = args[idx];
                 continue;
             }
 
             if (std.mem.eql(u8, arg, "--replace")) {
-                if (replace != null) {
-                    std.debug.print("error: duplicate '--replace' flag\n\n", .{});
-                    std.process.exit(1);
-                }
-
+                if (replace != null) fatal("duplicate '--replace' flag", .{});
                 replace = true;
                 continue;
             }
 
-            if (std.mem.eql(u8, arg, "--dry-run")) {
-                if (dry_run != null) {
-                    std.debug.print("error: duplicate '--dry-run' flag\n\n", .{});
-                    std.process.exit(1);
-                }
-
-                dry_run = true;
+            if (std.mem.eql(u8, arg, "--stdout")) {
+                if (stdout != null) fatal("duplicate '--dry-run' flag", .{});
+                stdout = true;
                 continue;
             }
 
-            if (std.mem.eql(u8, arg, "--ignore-schema-errors")) {
-                if (ignore_schema_errors != null) {
-                    std.debug.print("error: duplicate '--ignore-schema-errors' flag\n\n", .{});
-                    std.process.exit(1);
-                }
-
-                ignore_schema_errors = true;
+            if (std.mem.eql(u8, arg, "--lenient")) {
+                if (lenient != null) fatal("duplicate '--lenient' flag", .{});
+                lenient = true;
                 continue;
             }
 
             if (std.mem.eql(u8, arg, "--force") or
                 std.mem.eql(u8, arg, "-f"))
             {
-                if (force != null) {
-                    std.debug.print("error: duplicate '--force' flag\n\n", .{});
-                    std.process.exit(1);
-                }
-
+                if (force != null) fatal("duplicate '--force' flag", .{});
                 force = true;
                 continue;
             }
@@ -376,131 +135,62 @@ pub const Command = struct {
             if (std.mem.eql(u8, arg, "--stdin") or
                 std.mem.eql(u8, arg, "-"))
             {
-                if (json_paths.items.len > 0 or
-                    yaml_paths.items.len > 0 or
-                    toml_paths.items.len > 0 or
-                    ziggy_paths.items.len > 0)
-                {
-                    std.debug.print("error: --stdin and path-based flags are mutually exclusive\n\n", .{});
-                    std.process.exit(1);
-                }
-
+                if (stdin != null) fatal("duplicate --stdin flag", .{});
                 idx += 1;
-                if (idx == args.len) {
-                    std.debug.print("error: missing '--to' option value\n\n", .{});
-                    std.process.exit(1);
-                }
-
-                if (stdin != null) {
-                    std.debug.print("error: duplicate --stdin flag\n\n", .{});
-                    std.process.exit(1);
-                }
-
+                if (idx == args.len) fatal("missing '--to' option value", .{});
                 stdin = std.meta.stringToEnum(Lang, args[idx]) orelse {
-                    std.debug.print(
-                        "error: invalid '--stdin' option value: '{s}'\n\n",
-                        .{args[idx]},
-                    );
-                    std.process.exit(1);
+                    fatal("invalid '--stdin' option value: '{s}'", .{args[idx]});
                 };
-
                 continue;
             }
 
-            std.debug.print("unexpected argument: '{s}'\n", .{arg});
-            std.process.exit(1);
+            try paths.append(gpa, arg);
         }
 
-        if (ziggy_paths.items.len > 0 or stdin == .ziggy) {
-            if (json_paths.items.len > 0 or
-                yaml_paths.items.len > 0 or
-                toml_paths.items.len > 0)
-            {
-                std.debug.print("error: if converting from ziggy, then no other input file formats can be used\n", .{});
-                std.process.exit(1);
-            }
-
-            const t = to orelse {
-                std.debug.print("error: when converting from 'ziggy', then '--to' must be specified\n", .{});
-                std.process.exit(1);
-            };
-
-            if (t == .ziggy) {
-                std.debug.print("error: when converting from 'ziggy', then '--to' must be a defined and set to a different file format\n", .{});
-                std.process.exit(1);
-            }
-
-            if (schema != null) {
-                std.debug.print("error: '--schema' is only allowed when converting to 'ziggy'\n", .{});
-                std.process.exit(1);
-            }
-        } else {
-            if (to) |t| {
-                if (t != .ziggy) {
-                    std.debug.print("error: when converting from other file formats, then the destination format must be 'ziggy'\n", .{});
-                    std.process.exit(1);
-                }
-            }
-        }
-
-        if (json_paths.items.len == 0 and
-            yaml_paths.items.len == 0 and
-            toml_paths.items.len == 0 and
-            ziggy_paths.items.len == 0 and
-            stdin == null)
-        {
-            std.debug.print("error: either --stdin or one of the path-based flags must be present\n\n", .{});
-            std.process.exit(1);
+        if (stdin != null and paths.items.len > 0) {
+            fatal("'--stdin' and DOC_PATH arguments are mutually exclusive", .{});
         }
 
         const mode: Mode = if (stdin) |s| .{
             .stdin = s,
         } else .{
-            .paths = .{
-                .json = try json_paths.toOwnedSlice(gpa),
-                .yaml = try yaml_paths.toOwnedSlice(gpa),
-                .toml = try toml_paths.toOwnedSlice(gpa),
-                .ziggy = try ziggy_paths.toOwnedSlice(gpa),
-            },
+            .paths = try paths.toOwnedSlice(gpa),
         };
 
         return .{
-            .to = to orelse .ziggy,
-            .schema = schema,
-            .replace = replace orelse false,
-            .dry_run = dry_run orelse false,
-            .force = force orelse false,
-            .ignore_schema_errors = ignore_schema_errors orelse false,
             .mode = mode,
+            .schema = if (schema) |path| .{ .path = path } else null,
+            .replace = replace orelse false,
+            .stdout = stdout orelse false,
+            .force = force orelse false,
+            .lenient = lenient orelse false,
         };
     }
 
     // TODO: consider adding --json=file.foo etc
     fn fatalHelp() noreturn {
         std.debug.print(
-            \\Usage: ziggy convert [--stdin LANG | --LANG PATH] [OPTIONS]
+            \\Usage: ziggy convert DOC_PATH [DOC_PATH...] [OPTIONS] 
             \\
-            \\     Converts files between JSON / TOML / YAML and Ziggy.
+            \\     Converts files from JSON / TOML / YAML / ZON to Ziggy.
             \\     Converted files will be placed next to their original.
             \\
-            \\     LANG can be one of 'json', 'yaml', 'toml', 'ziggy'.
-            \\     Ziggy must be either the origin xor the desination format.
+            \\     Detected file extensions:     
+            \\          JSON       .json   
+            \\          YAML       .yaml, .yml
+            \\          TOML       .toml,
+            \\          Ziggy      .ziggy  
+            \\          ZON        .zon  
             \\
+            \\     Only paths to documents are supported, if you need to
+            \\     convert an entire directory, use glob pattern expasion
+            \\     features from your shell.
+            \\     
             \\Options:
             \\--stdin LANG     Format bytes from stdin, ouptut to stdout, 
             \\                 LANG defines the input file format. Mutually
-            \\                 exclusive with --LANG arguments.
-            \\
-            \\--json PATH      Convert --LANG files from PATH to the desination
-            \\--yaml PATH      file format. If PATH is a directory, it will be 
-            \\--toml PATH      scanned recursively for --LANG files. When PATH
-            \\--ziggy PATH     is a file, the flag will override file extension
-            \\                 format detection. Each flag can be passed 
-            \\                 multiple times and can also be mixed with the
-            \\                 main restriction that conversion must happen
-            \\                 exclusively either *from* or *to* Ziggy.  
-            \\
-            \\--to LANG        The destination file format. Defaults to 'ziggy'.
+            \\                 exclusive with DOC_PATH arguments. LANG can be
+            \\                 one of 'json', 'yaml', 'toml', 'zon'.
             \\
             \\--schema PATH    Path to a Ziggy Schema, used when 'ziggy' is the 
             \\                 destination file format to produce a better typed
@@ -512,12 +202,13 @@ pub const Command = struct {
             \\                 with the converted version (but with the new file
             \\                 extension).
             \\
-            \\--dry-run        Output the converted file(s) to stdout.
+            \\--stdout         Output the converted file(s) to stdout. In case
+            \\                 that more than one DOC_PATH was specified, dashes
+            \\                 (---) will be used as a document separator. 
             \\
             \\--force, -f      Override existing destination files. 
             \\
-            \\--ignore-schema-errors
-            \\                 When a Ziggy schema is specified and a file fails
+            \\--lenient        When a Ziggy schema is specified and a file fails
             \\                 to convert because of it, continue processing
             \\                 other files anyway. Errors will still be printed
             \\                 to stderr and the application will still have a 
@@ -534,226 +225,12 @@ pub const Command = struct {
     }
 };
 
-fn renderJsonValue(
-    value: json.Value,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) anyerror!void {
-    var sub_rule = rule;
-    const r = schema.nodes[rule.node];
-    if (r.tag == .optional) {
-        if (value == null) {
-            try w.writeAll("null");
-            return;
-        }
-        sub_rule = .{ .node = r.first_child_id };
-    }
-    switch (value) {
-        .object => |o| try renderJsonObject(o, sub_rule, schema, w),
-        .array => |a| try renderJsonArray(a, sub_rule, schema, w),
-        .string => |s| try renderJsonString(s, sub_rule, schema, w),
-        .number_string => |ns| try renderJsonNumberString(ns, sub_rule, schema, w),
-        .float => |f| try renderJsonFloat(f, sub_rule, schema, w),
-        .integer => |i| try renderJsonInteger(i, sub_rule, schema, w),
-        .bool => |b| try renderJsonBool(b, sub_rule, schema, w),
-        .null => {
-            const rule_src = schema.nodes[r.first_child_id].loc.src(schema.code);
-            std.debug.print("error: type mismatch, expected '{s}', found 'null'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
+fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
+    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
+    if (builtin.mode == .Debug) @breakpoint();
+    std.process.exit(1);
 }
 
-fn renderJsonObject(
-    obj: json.ObjectMap,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
-    switch (r.tag) {
-        .optional => unreachable,
-        .map, .any => {
-            try w.writeAll("{");
-            for (obj.keys(), obj.values()) |k, v| {
-                try w.print("\"{}\":", .{std.zig.fmtEscapes(k)});
-                try renderJsonValue(v, .{ .node = child_rule_id }, schema, w);
-                try w.writeAll(",");
-            }
-            try w.writeAll("}");
-        },
-        .identifier => {
-            const struct_rule = schema.structs.get(rule_src).?; // must be present
-
-            try w.writeAll("{");
-            for (obj.keys(), obj.values()) |k, v| {
-                const field = struct_rule.fields.get(k) orelse {
-                    std.debug.print("error: unknown field '{s}'\n", .{k});
-                    std.process.exit(1);
-                };
-                try w.print(".{} = ", .{std.zig.fmtId(k)});
-                try renderJsonValue(v, field.rule, schema, w);
-                try w.writeAll(",");
-            }
-
-            // ensure all missing keys are optional
-            for (struct_rule.fields.keys(), struct_rule.fields.values()) |k, v| {
-                if (obj.contains(k)) continue;
-                if (schema.nodes[v.rule.node].tag != .optional) {
-                    std.debug.print("error: missing field '{s}'\n", .{k});
-                    std.process.exit(1);
-                }
-            }
-            try w.writeAll("}");
-        },
-        .struct_union => @panic("TODO: struct union for json objects"),
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'object'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonArray(
-    array: json.Array,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
-    switch (r.tag) {
-        .optional => unreachable,
-        .array, .any => {
-            try w.writeAll("[");
-            for (array.items) |v| {
-                try renderJsonValue(v, .{ .node = child_rule_id }, schema, w);
-            }
-            try w.writeAll("]");
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'array'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonString(
-    str: []const u8,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    switch (r.tag) {
-        .optional => unreachable,
-        .bytes, .any => {
-            try w.print("\"{}\"", .{std.zig.fmtEscapes(str)});
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'string'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonNumberString(
-    ns: []const u8,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    switch (r.tag) {
-        .optional => unreachable,
-        .int, .float, .any => {
-            try w.print("{s}", .{ns});
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'number_string'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonFloat(
-    num: f64,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    switch (r.tag) {
-        .optional => unreachable,
-        .float, .any => {
-            try w.print("{}", .{num});
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'float'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonInteger(
-    num: i64,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    switch (r.tag) {
-        .optional => unreachable,
-        .int, .float, .any => {
-            try w.print("{}", .{num});
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'integer'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonBool(
-    b: bool,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    switch (r.tag) {
-        .optional => unreachable,
-        .bool, .any => {
-            try w.print("{}", .{b});
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'bool'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
+fn oom() noreturn {
+    fatal("out of memory", .{});
 }

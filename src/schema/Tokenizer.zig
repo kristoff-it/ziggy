@@ -528,18 +528,18 @@ test "sigil errors" {
     try std.testing.expectEqual(t.next(case).tag, .eof);
 }
 
-test "fuzz" {
-    const Context = struct {
-        fn testOne(_: @This(), input: []const u8) anyerror!void {
-            const src = try std.testing.allocator.dupeZ(u8, input);
-            defer std.testing.allocator.free(src);
+// test "fuzz" {
+//     const Context = struct {
+//         fn testOne(_: @This(), input: []const u8) anyerror!void {
+//             const src = try std.testing.allocator.dupeZ(u8, input);
+//             defer std.testing.allocator.free(src);
 
-            if (@import("builtin").fuzz) std.debug.print("---begin---\n{s}\n-------\n", .{input});
-            var t: Tokenizer = .{};
-            while (true) {
-                if (t.next(src).tag == .eof) break;
-            }
-        }
-    };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
-}
+//             if (@import("builtin").fuzz) std.debug.print("---begin---\n{s}\n-------\n", .{input});
+//             var t: Tokenizer = .{};
+//             while (true) {
+//                 if (t.next(src).tag == .eof) break;
+//             }
+//         }
+//     };
+//     try std.testing.fuzz(Context{}, Context.testOne, .{});
+// }

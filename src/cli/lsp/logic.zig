@@ -59,9 +59,10 @@ pub fn loadFile(
                 }
 
                 try self.transport.writeNotification(
+                    self.io,
                     self.gpa,
                     "textDocument/publishDiagnostics",
-                    lsp.types.PublishDiagnosticsParams,
+                    lsp.types.publish_diagnostics.Params,
                     .{ .uri = uri, .diagnostics = diags },
                     .{ .emit_null_optional_fields = false },
                 );
@@ -104,9 +105,10 @@ pub fn loadFile(
                     }
 
                     try self.transport.writeNotification(
+                        self.io,
                         self.gpa,
                         "textDocument/publishDiagnostics",
-                        lsp.types.PublishDiagnosticsParams,
+                        lsp.types.publish_diagnostics.Params,
                         .{ .uri = doc_uri, .diagnostics = diags },
                         .{ .emit_null_optional_fields = false },
                     );
@@ -114,7 +116,7 @@ pub fn loadFile(
             }
         },
         .ziggy, .supermd => {
-            var doc = try Document.init(self.gpa, language, new_text);
+            const doc = try Document.init(self.gpa, language, new_text);
             const gop = try self.docs.getOrPut(self.gpa, uri);
             if (gop.found_existing) {
                 gop.value_ptr.deinit(self.gpa);
@@ -188,9 +190,10 @@ pub fn loadFile(
             }
 
             try self.transport.writeNotification(
+                self.io,
                 self.gpa,
                 "textDocument/publishDiagnostics",
-                lsp.types.PublishDiagnosticsParams,
+                lsp.types.publish_diagnostics.Params,
                 .{ .uri = uri, .diagnostics = diags },
                 .{ .emit_null_optional_fields = false },
             );
@@ -217,6 +220,7 @@ pub fn schemaForZiggy(
         };
 
         const src = self.dir.readFileAllocOptions(
+            self.io,
             path,
             self.gpa,
             .limited(ziggy.max_size),
@@ -267,6 +271,7 @@ pub fn schemaForZiggy(
             else => dot_schema_path,
         };
         const schema_src = self.dir.readFileAllocOptions(
+            self.io,
             path,
             self.gpa,
             .limited(ziggy.max_size),

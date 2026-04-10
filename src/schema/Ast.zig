@@ -1710,7 +1710,7 @@ const Fmt = struct {
         while (true) {
             const tok = t.next(docs_src);
             if (tok.tag != .doc_comment_line) return;
-            const line = std.mem.trimRight(u8, tok.loc.slice(docs_src), " \t\r");
+            const line = std.mem.trimEnd(u8, tok.loc.slice(docs_src), " \t\r");
             try w.splatByteAll(' ', indent * 4);
             try w.print("{s}\n", .{line});
         }
@@ -1756,7 +1756,8 @@ pub const ValidationError = struct {
                 },
                 .mismatch => |sm| {
                     try w.print("schema: expected {s} found {s}", .{
-                        sm.expected, switch (sm.found) {
+                        sm.expected,
+                        switch (sm.found) {
                             .root, .missing_value => unreachable,
                             .braceless_struct => "braceless struct",
                             .struct_h, .struct_v, .struct_v_fixup, .struct_field => "struct",

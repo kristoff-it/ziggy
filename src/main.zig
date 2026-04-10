@@ -30,11 +30,11 @@ pub fn panic(
         std.debug.print("{s}\n", .{msg});
     }
     blk: {
-        const out = if (!lsp_mode) std.fs.File.stderr() else logging.log_file orelse break :blk;
-        var writer = out.writerStreaming(&.{});
-        const w = &writer.interface;
-
-        std.debug.writeCurrentStackTrace(.{ .first_address = ret_addr }, w, .no_color) catch |err| {
+        const w = &logging.log_writer.interface;
+        std.debug.writeCurrentStackTrace(.{ .first_address = ret_addr }, .{
+            .writer = w,
+            .mode = .no_color,
+        }) catch |err| {
             w.print("Unable to dump stack trace: {t}\n", .{err}) catch break :blk;
             break :blk;
         };
@@ -45,29 +45,15 @@ pub fn panic(
 
 pub const Command = enum { lsp, query, fmt, check, convert, help };
 
-pub fn main() !void {
-    const gpa = blk: {
-        if (builtin.single_threaded) {
-            const Gpa = struct {
-                var impl: std.heap.GeneralPurposeAllocator(.{}) = .{};
-            };
-            break :blk Gpa.impl.allocator();
-        } else break :blk std.heap.smp_allocator;
-    };
-
+pub fn main(init: std.process.Init) !void {
     // Note: The Io impl must be `Threaded` because we use threadlocals
     //       for storing arena allocators in the various subcommands.
-    var threaded: Io.Threaded = if (builtin.single_threaded)
-        .init_single_threaded
-    else
-        .init(gpa);
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = init.io;
+    const gpa = init.gpa;
 
-    logging.setup(io, gpa);
+    logging.setup(io, gpa, init.environ_map.*);
 
-    const args = std.process.argsAlloc(gpa) catch fatal("oom\n", .{});
-    defer std.process.argsFree(gpa, args);
+    const args = init.minimal.args.toSlice(init.arena.allocator()) catch fatal("oom\n", .{});
 
     if (args.len < 2) fatalHelp();
 
@@ -82,7 +68,7 @@ pub fn main() !void {
         .lsp => {
             // threaded.async_limit = .limited(1);
             // threaded.concurrent_limit = .limited(1);
-            lsp_exe.run(io, gpa, std.fs.cwd(), args[2..]) catch @panic("err");
+            lsp_exe.run(io, gpa, Io.Dir.cwd(), args[2..]) catch @panic("err");
         },
         .fmt => fmt_exe.run(io, gpa, args[2..]),
         .check => check_exe.run(io, gpa, args[2..]),

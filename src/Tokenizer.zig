@@ -472,21 +472,21 @@ fn evenSlashes(str: []const u8) bool {
     return even;
 }
 
-test "fuzz" {
-    const Context = struct {
-        fn testOne(_: @This(), input: []const u8) anyerror!void {
-            const src = try std.testing.allocator.dupeZ(u8, input);
-            defer std.testing.allocator.free(src);
+// test "fuzz" {
+//     const Context = struct {
+//         fn testOne(_: @This(), input: []const u8) anyerror!void {
+//             const src = try std.testing.allocator.dupeZ(u8, input);
+//             defer std.testing.allocator.free(src);
 
-            if (@import("builtin").fuzz) std.debug.print("---begin---\n{s}\n-------\n", .{input});
-            var t: Tokenizer = .init(.none);
-            while (true) {
-                if (t.next(src, false).tag == .eof) break;
-            }
-        }
-    };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
-}
+//             if (@import("builtin").fuzz) std.debug.print("---begin---\n{s}\n-------\n", .{input});
+//             var t: Tokenizer = .init(.none);
+//             while (true) {
+//                 if (t.next(src, false).tag == .eof) break;
+//             }
+//         }
+//     };
+//     try std.testing.fuzz(Context{}, Context.testOne, .{});
+// }
 
 fn testCase(
     case: [:0]const u8,

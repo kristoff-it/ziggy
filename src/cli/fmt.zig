@@ -31,7 +31,8 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
 
             const out_bytes = try fmtZiggy(gpa, null, in_bytes);
 
-            try std.fs.File.stdout().writeAll(out_bytes);
+            var file_writer = Io.File.stdout().writerStreaming(io, &.{});
+            try file_writer.interface.writeAll(out_bytes);
         },
         .stdin_supermd => {
             var fr = Io.File.stdin().reader(io, &.{});
@@ -41,7 +42,8 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
 
             const out_bytes = try fmtSuperMD(gpa, null, in_bytes);
 
-            try std.fs.File.stdout().writeAll(out_bytes);
+            var file_writer = Io.File.stdout().writerStreaming(io, &.{});
+            try file_writer.interface.writeAll(out_bytes);
         },
         .stdin_schema => {
             var fr = Io.File.stdin().reader(io, &.{});
@@ -51,7 +53,8 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
 
             const out_bytes = try fmtSchema(gpa, null, in_bytes);
 
-            try std.fs.File.stdout().writeAll(out_bytes);
+            var file_writer = Io.File.stdout().writerStreaming(io, &.{});
+            try file_writer.interface.writeAll(out_bytes);
         },
         .paths => |paths| {
             for (paths) |path| {
@@ -64,7 +67,7 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
                             );
                             continue;
                         };
-                        formatFile(gpa, cmd.check, try gpa.dupe(u8, path), ft, &any_error);
+                        formatFile(io, gpa, cmd.check, try gpa.dupe(u8, path), ft, &any_error);
                     },
                     else => fatal("unable to open '{s}' as directory: {t}", .{ path, err }),
                 };
@@ -84,20 +87,21 @@ fn formatDir(
     path: []const u8,
     any_error: *std.atomic.Value(bool),
 ) !void {
-    var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
-    defer dir.close();
+    var dir = try Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
+    defer dir.close(io);
     var walker = dir.walk(gpa) catch oom();
     defer walker.deinit();
 
     var g: Io.Group = .init;
     defer g.cancel(io);
 
-    while (try walker.next()) |item| {
+    while (try walker.next(io)) |item| {
         switch (item.kind) {
             .file => {
                 const ft = FileType.detect(item.basename) orelse continue;
                 const file_path = try std.fs.path.join(gpa, &.{ path, item.path });
                 g.async(io, formatFile, .{
+                    io,
                     gpa,
                     check,
                     file_path,
@@ -109,10 +113,11 @@ fn formatDir(
         }
     }
 
-    g.wait(io);
+    try g.await(io);
 }
 
 fn formatFile(
+    io: Io,
     gpa: Allocator,
     check: bool,
     full_path: []const u8,
@@ -120,7 +125,7 @@ fn formatFile(
     any_error: *std.atomic.Value(bool),
 ) void {
     defer gpa.free(full_path);
-    formatFileFallible(check, full_path, ft, any_error) catch |err| switch (err) {
+    formatFileFallible(io, check, full_path, ft, any_error) catch |err| switch (err) {
         error.OutOfMemory => oom(),
         error.Syntax => any_error.store(true, .unordered),
         else => fatal("unable to access '{s}': {t}", .{
@@ -141,6 +146,7 @@ threadlocal var format_arena: std.heap.ArenaAllocator = if (!builtin.single_thre
 
 /// Don't call this, call `formatFile`
 fn formatFileFallible(
+    io: Io,
     check: bool,
     full_path: []const u8,
     ft: FileType,
@@ -149,7 +155,8 @@ fn formatFileFallible(
     defer _ = format_arena.reset(.retain_capacity);
     const arena = format_arena.allocator();
 
-    const in_bytes = try std.fs.cwd().readFileAllocOptions(
+    const in_bytes = try Io.Dir.cwd().readFileAllocOptions(
+        io,
         full_path,
         arena,
         .limited(ziggy.max_size),
@@ -177,18 +184,20 @@ fn formatFileFallible(
 
     if (std.mem.eql(u8, out_bytes, in_bytes)) return;
 
-    var stdout_writer = std.fs.File.stdout().writer(&.{});
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &.{});
     const stdout = &stdout_writer.interface;
 
     if (check) any_error.store(true, .unordered) else {
-        var af = try std.fs.cwd().atomicFile(full_path, .{ .write_buffer = &.{} });
-        defer af.deinit();
-        try af.file_writer.interface.writeAll(out_bytes);
-        try af.finish();
+        var af = try Io.Dir.cwd().createFileAtomic(io, full_path, .{});
+        defer af.deinit(io);
+
+        var writer = af.file.writer(io, &.{});
+        try writer.interface.writeAll(out_bytes);
+        try af.link(io);
     }
 
-    std.debug.lockStdErr();
-    defer std.debug.unlockStdErr();
+    _ = std.debug.lockStderr(&.{});
+    defer std.debug.unlockStderr();
     try stdout.print("{s}\n", .{full_path});
 }
 
@@ -212,7 +221,7 @@ pub fn fmtSuperMD(
     defer ast.deinit(gpa);
 
     if (ast.errors.len > 0) {
-        std.debug.lockStdErr();
+        _ = std.debug.lockStderr(&.{});
         for (ast.errors) |err| {
             const sel = err.main_location.getSelection(src);
             std.debug.print("{s}:{}:{} {f}\n", .{
@@ -222,7 +231,7 @@ pub fn fmtSuperMD(
                 err.tag,
             });
         }
-        std.debug.unlockStdErr();
+        std.debug.unlockStderr();
     }
 
     if (ast.has_syntax_errors) return error.Syntax;
@@ -239,7 +248,7 @@ pub fn fmtZiggy(
     defer ast.deinit(gpa);
 
     if (ast.errors.len > 0) {
-        std.debug.lockStdErr();
+        _ = std.debug.lockStderr(&.{});
         for (ast.errors) |err| {
             const sel = err.main_location.getSelection(src);
             std.debug.print("{s}:{}:{} {f}\n", .{
@@ -249,7 +258,7 @@ pub fn fmtZiggy(
                 err.tag,
             });
         }
-        std.debug.unlockStdErr();
+        std.debug.unlockStderr();
     }
 
     if (ast.has_syntax_errors) return error.Syntax;
@@ -266,7 +275,7 @@ fn fmtSchema(
     defer ast.deinit(gpa);
 
     if (ast.errors.len > 0) {
-        std.debug.lockStdErr();
+        _ = std.debug.lockStderr(&.{});
         for (ast.errors) |err| {
             const sel = err.main_location.getSelection(src);
             std.debug.print("{s}:{}:{} {f}\n", .{
@@ -276,7 +285,7 @@ fn fmtSchema(
                 err.tag,
             });
         }
-        std.debug.unlockStdErr();
+        std.debug.unlockStderr();
     }
 
     if (ast.has_syntax_errors) return error.Syntax;

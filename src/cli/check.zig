@@ -13,7 +13,8 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
     switch (cmd.strategy) {
         .search => {},
         .provided => |*p| {
-            const src = std.fs.cwd().readFileAllocOptions(
+            const src = Io.Dir.cwd().readFileAllocOptions(
+                io,
                 p.path,
                 gpa,
                 .limited(ziggy.max_size),
@@ -56,7 +57,7 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
     }
 
     if (any_error.load(.monotonic)) std.process.exit(1);
-    std.process.cleanExit();
+    std.process.cleanExit(io);
 }
 
 fn checkDir(
@@ -66,15 +67,15 @@ fn checkDir(
     cmd: *Command,
     path: []const u8,
 ) !void {
-    var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
-    defer dir.close();
+    var dir = try Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
+    defer dir.close(io);
     var walker = dir.walk(gpa) catch oom();
     defer walker.deinit();
 
     var g: Io.Group = .init;
     defer g.cancel(io);
 
-    while (try walker.next()) |item| {
+    while (try walker.next(io)) |item| {
         switch (item.kind) {
             .file => {
                 if (std.mem.endsWith(u8, item.basename, ".ziggy")) {
@@ -90,7 +91,7 @@ fn checkDir(
         }
     }
 
-    g.wait(io);
+    try g.await(io);
 }
 
 threadlocal var check_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
@@ -125,7 +126,8 @@ fn checkFileFallible(
     defer _ = check_arena.reset(.retain_capacity);
     const arena = check_arena.allocator();
 
-    const src = try std.fs.cwd().readFileAllocOptions(
+    const src = try Io.Dir.cwd().readFileAllocOptions(
+        io,
         path,
         arena,
         .limited(ziggy.max_size),
@@ -135,7 +137,7 @@ fn checkFileFallible(
 
     const ast = try ziggy.Ast.init(arena, src, .{});
     if (ast.errors.len > 0) {
-        std.debug.lockStdErr();
+        _ = std.debug.lockStderr(&.{});
         for (ast.errors) |err| {
             const sel = err.main_location.getSelection(src);
             std.debug.print("{s}:{}:{} {f}\n", .{
@@ -145,7 +147,7 @@ fn checkFileFallible(
                 err.tag,
             });
         }
-        std.debug.unlockStdErr();
+        std.debug.unlockStderr();
         return error.ZiggyInvalid;
     }
 
@@ -154,7 +156,8 @@ fn checkFileFallible(
         .search => |*map| blk: {
             // Same name
             const schema_path = try std.fmt.allocPrint(arena, "{s}-schema", .{path});
-            const schema_src = std.fs.cwd().readFileAllocOptions(
+            const schema_src = Io.Dir.cwd().readFileAllocOptions(
+                io,
                 schema_path,
                 arena,
                 .limited(ziggy.max_size),
@@ -188,7 +191,7 @@ fn checkFileFallible(
 
     const errors = try schema_ast.validate(arena, schema_src, ast, src);
     if (errors.len > 0) {
-        std.debug.lockStdErr();
+        _ = std.debug.lockStderr(&.{});
         for (errors) |err| {
             const sel = err.main_location.getSelection(src);
             std.debug.print("{s}:{}:{} {f}\n", .{
@@ -198,7 +201,7 @@ fn checkFileFallible(
                 err.tag,
             });
         }
-        std.debug.unlockStdErr();
+        std.debug.unlockStderr();
         return error.ZiggyInvalid;
     }
 }
@@ -234,7 +237,8 @@ fn checkSmdFileFallible(
     defer _ = check_arena.reset(.retain_capacity);
     const arena = check_arena.allocator();
 
-    const src = try std.fs.cwd().readFileAllocOptions(
+    const src = try Io.Dir.cwd().readFileAllocOptions(
+        io,
         path,
         arena,
         .limited(ziggy.max_size),
@@ -256,7 +260,7 @@ fn checkSmdFileFallible(
     });
 
     if (ast.errors.len > 0) {
-        std.debug.lockStdErr();
+        _ = std.debug.lockStderr(&.{});
         for (ast.errors) |err| {
             const sel = err.main_location.getSelection(src);
             std.debug.print("{s}:{}:{} {f}\n", .{
@@ -266,7 +270,7 @@ fn checkSmdFileFallible(
                 err.tag,
             });
         }
-        std.debug.unlockStdErr();
+        std.debug.unlockStderr();
         return error.ZiggyInvalid;
     }
 
@@ -275,7 +279,8 @@ fn checkSmdFileFallible(
         .search => |*map| blk: {
             // Same name
             const schema_path = try std.fmt.allocPrint(arena, "{s}.ziggy-schema", .{path});
-            const schema_src = std.fs.cwd().readFileAllocOptions(
+            const schema_src = Io.Dir.cwd().readFileAllocOptions(
+                io,
                 schema_path,
                 arena,
                 .limited(ziggy.max_size),
@@ -309,7 +314,7 @@ fn checkSmdFileFallible(
 
     const errors = try schema_ast.validate(arena, schema_src, ast, src);
     if (errors.len > 0) {
-        std.debug.lockStdErr();
+        _ = std.debug.lockStderr(&.{});
         for (errors) |err| {
             const sel = err.main_location.getSelection(src);
             std.debug.print("{s}:{}:{} {f}\n", .{
@@ -319,7 +324,7 @@ fn checkSmdFileFallible(
                 err.tag,
             });
         }
-        std.debug.unlockStdErr();
+        std.debug.unlockStderr();
         return error.ZiggyInvalid;
     }
 }
@@ -352,7 +357,8 @@ fn searchDotSchema(
         const path_schema = try std.fs.path.join(arena, &.{ path_dir, ".ziggy-schema" });
         defer arena.free(path_schema);
 
-        const schema_src = std.fs.cwd().readFileAllocOptions(
+        const schema_src = Io.Dir.cwd().readFileAllocOptions(
+            io,
             path_schema,
             gpa,
             .limited(ziggy.max_size),

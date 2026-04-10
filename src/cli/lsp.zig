@@ -11,19 +11,19 @@ const logic = @import("lsp/logic.zig");
 
 const log = std.log.scoped(.ziggy_lsp);
 
-pub fn run(io: Io, gpa: std.mem.Allocator, dir: std.fs.Dir, args: []const []const u8) !void {
+pub fn run(io: Io, gpa: std.mem.Allocator, dir: Io.Dir, args: []const []const u8) !void {
     _ = args;
     log.debug("Ziggy LSP started!", .{});
 
     var buf: [4096]u8 = undefined;
     var stdio: lsp.Transport.Stdio = .init(
-        io,
         &buf,
         Io.File.stdin(),
-        std.fs.File.stdout(),
+        Io.File.stdout(),
     );
 
     var handler: Handler = .{
+        .io = io,
         .gpa = gpa,
         .transport = &stdio.transport,
         .dir = dir,
@@ -31,6 +31,7 @@ pub fn run(io: Io, gpa: std.mem.Allocator, dir: std.fs.Dir, args: []const []cons
     defer handler.deinit();
 
     try lsp.basic_server.run(
+        io,
         gpa,
         &stdio.transport,
         &handler,
@@ -40,9 +41,10 @@ pub fn run(io: Io, gpa: std.mem.Allocator, dir: std.fs.Dir, args: []const []cons
 
 pub const Handler = @This();
 
+io: Io,
 gpa: std.mem.Allocator,
 transport: *lsp.Transport,
-dir: std.fs.Dir,
+dir: Io.Dir,
 docs: std.StringArrayHashMapUnmanaged(Document) = .{},
 schemas: std.StringHashMapUnmanaged(Schema) = .{},
 
@@ -95,7 +97,7 @@ pub fn initialize(
             .@"utf-32" => .@"utf-32",
         },
         .textDocumentSync = .{
-            .TextDocumentSyncOptions = .{
+            .text_document_sync_options = .{
                 .openClose = true,
                 .change = .Full,
             },
@@ -124,17 +126,27 @@ pub fn initialize(
 pub fn @"textDocument/didOpen"(
     self: *Handler,
     arena: std.mem.Allocator,
-    notification: types.DidOpenTextDocumentParams,
+    notification: types.TextDocument.DidOpenParams,
 ) !void {
     const new_text = try self.gpa.dupeZ(u8, notification.textDocument.text); // We informed the client that we only do full document syncs
     errdefer self.gpa.free(new_text);
 
-    std.log.debug("didopen! {s} {s}", .{
+    std.log.debug("didopen! {t} {s}", .{
         notification.textDocument.languageId,
         notification.textDocument.uri,
     });
 
-    const language_id = notification.textDocument.languageId;
+    const language_id = switch (notification.textDocument.languageId) {
+        .custom_value => |bytes| bytes,
+        else => |tag| {
+            log.debug(
+                "unrecognized language id: '{t}' (must be one of {{supermd, ziggy, ziggy_schema}}",
+                .{tag},
+            );
+            return;
+        },
+    };
+
     const language = std.meta.stringToEnum(logic.Language, language_id) orelse {
         log.debug(
             "unrecognized language id: '{s}' (must be one of {{supermd, ziggy, ziggy_schema}}",
@@ -155,12 +167,12 @@ pub fn @"textDocument/didOpen"(
 pub fn @"textDocument/didChange"(
     self: *Handler,
     arena: std.mem.Allocator,
-    notification: types.DidChangeTextDocumentParams,
+    notification: types.TextDocument.DidChangeParams,
 ) !void {
     if (notification.contentChanges.len == 0) return;
     const new_text = try self.gpa.dupeZ(
         u8,
-        notification.contentChanges[notification.contentChanges.len - 1].literal_1.text,
+        notification.contentChanges[notification.contentChanges.len - 1].text_document_content_change_whole_document.text,
     ); // We informed the client that we only do full document syncs
     errdefer self.gpa.free(new_text);
 
@@ -181,7 +193,7 @@ pub fn @"textDocument/didChange"(
 pub fn @"textDocument/didClose"(
     self: *Handler,
     _: std.mem.Allocator,
-    notification: types.DidCloseTextDocumentParams,
+    notification: types.TextDocument.DidCloseParams,
 ) void {
     if (self.docs.fetchSwapRemove(notification.textDocument.uri)) |kv| {
         if (kv.value.schema_uri) |schema_path| {
@@ -216,7 +228,7 @@ pub fn @"textDocument/didClose"(
 pub fn @"textDocument/completion"(
     self: *Handler,
     arena: std.mem.Allocator,
-    request: types.CompletionParams,
+    request: types.completion.Params,
 ) error{OutOfMemory}!lsp.ResultType("textDocument/completion") {
     if (true) return null;
     const file = self.files.get(request.textDocument.uri) orelse return .{
@@ -290,7 +302,7 @@ pub fn @"textDocument/completion"(
 pub fn @"textDocument/definition"(
     self: *Handler,
     arena: std.mem.Allocator,
-    request: types.DefinitionParams,
+    request: types.Definition.Params,
 ) error{OutOfMemory}!lsp.ResultType("textDocument/definition") {
     _ = arena;
     const doc = self.docs.get(request.textDocument.uri) orelse return null;
@@ -313,8 +325,8 @@ pub fn @"textDocument/definition"(
 
     const node = schema.ast.nodes[node_idx];
     return .{
-        .Definition = types.Definition{
-            .Location = .{
+        .definition = types.Definition{
+            .location = .{
                 .uri = schema_path,
                 .range = .{
                     .start = lsp.offsets.indexToPosition(schema.src, node.loc.start, self.offset_encoding),
@@ -328,7 +340,7 @@ pub fn @"textDocument/definition"(
 pub fn @"textDocument/hover"(
     self: *Handler,
     arena: std.mem.Allocator,
-    request: types.HoverParams,
+    request: types.Hover.Params,
 ) error{OutOfMemory}!lsp.ResultType("textDocument/hover") {
     const doc = self.docs.get(request.textDocument.uri) orelse return null;
     const schema_path = doc.schema_uri orelse return null;
@@ -368,7 +380,7 @@ pub fn @"textDocument/hover"(
 
     return .{
         .contents = .{
-            .MarkupContent = .{
+            .markup_content = .{
                 .kind = .markdown,
                 .value = out.items,
             },
@@ -379,7 +391,7 @@ pub fn @"textDocument/hover"(
 pub fn @"textDocument/formatting"(
     self: *Handler,
     arena: std.mem.Allocator,
-    request: types.DocumentFormattingParams,
+    request: types.document_formatting.Params,
 ) !?[]const types.TextEdit {
     if (self.docs.get(request.textDocument.uri)) |doc| {
         if (doc.ast.has_syntax_errors) return null;

@@ -5,13 +5,17 @@
     .minimum_zig_version = "0.16.0-dev.1236+26db54d69",
     .dependencies = .{
         .known_folders = .{
-            .url = "git+https://github.com/ziglibs/known-folders#bafef170a73c064dc706fcfbdc2e406a35681a9c",
-            .hash = "known_folders-0.0.0-Fy-PJovNAAAtqbaXgBhV6G-Z4-WNo7P0Rov-x-npZq21",
+            .url = "git+https://github.com/ziglibs/known-folders#175f5596b3d2ee3c658282bb07885580895a0e73",
+            .hash = "known_folders-0.0.0-Fy-PJk7KAAC41mQXzmFyGa0Q7tvmQjatENkREa6Gc4zu",
         },
         .lsp_kit = .{
-            .url = "git+https://github.com/zigtools/lsp-kit#c46ac866dda11ab58e4ba71ed0d8ba21f43e81db",
-            .hash = "lsp_kit-0.1.0-bi_PL98yCgBfW3T4iLkfV5VOXc__pOpOsQsX1tRmpqAG",
+            .url = "git+https://github.com/zigtools/lsp-kit#ec325a3c33d1da7708cf513355208f74d9560580",
+            .hash = "lsp_kit-0.1.0-bi_PL_kyDACVTEhLaMq2-PJx0MocqRyjXDAN0ybMUyQQ",
         },
+        // .yaml = .{
+        //     .url = "git+https://github.com/dotcarmen/zig-yaml.git?ref=0.16-io-interface#695e62bb080028fdd0b33145a1dd6d1d7879ac42",
+        //     .hash = "zig_yaml-0.2.0-C1161jirAgAUjfuDVZPH4SvzvXYu0FlvakDifJzAsEF2",
+        // },
     },
     .paths = .{
         "build.zig",
