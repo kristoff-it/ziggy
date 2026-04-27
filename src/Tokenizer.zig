@@ -61,6 +61,9 @@ pub const Token = struct {
         bytes_line,
         integer,
         float,
+        nan,
+        pos_inf,
+        neg_inf,
         null,
         true,
         false,
@@ -251,6 +254,11 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                     tok.loc.end = t.idx + 3;
                     t.idx = @intCast(src.len);
                     return tok;
+                } else if (std.mem.startsWith(u8, src[t.idx..], "-inf")) {
+                    tok.tag = .neg_inf;
+                    tok.loc.end = t.idx + 4;
+                    t.idx += 4;
+                    return tok;
                 }
 
                 continue :state .number;
@@ -299,6 +307,10 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                     tok.tag = .false;
                 } else if (std.mem.eql(u8, slice, "null")) {
                     tok.tag = .null;
+                } else if (std.mem.eql(u8, slice, "nan")) {
+                    tok.tag = .nan;
+                } else if (std.mem.eql(u8, slice, "inf")) {
+                    tok.tag = .pos_inf;
                 } else tok.tag = .invalid;
 
                 return tok;
@@ -654,4 +666,19 @@ test "comment in array" {
     }, false, .none);
     // zig fmt: on
 
+}
+
+test "special float values" {
+    // zig fmt: off
+    try testCase(
+        \\.pos_inf1 = inf,
+        \\.neg_inf = -inf,
+        \\.nan = nan
+    , &.{
+        .identifier, .eql, .pos_inf, .comma,
+        .identifier, .eql, .neg_inf, .comma,
+        .identifier, .eql, .nan,
+        .eof,
+    }, false, .none);
+    // zig fmt: on
 }

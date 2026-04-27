@@ -469,6 +469,11 @@ const Parser = struct {
                 p.cur().loc.end = p.tok.loc.end;
                 p.up();
             },
+            .pos_inf, .neg_inf, .nan => {
+                try p.addChild(.float);
+                p.cur().loc.end = p.tok.loc.end;
+                p.up();
+            },
             .true, .false => {
                 try p.addChild(.bool);
                 p.cur().loc.end = p.tok.loc.end;
