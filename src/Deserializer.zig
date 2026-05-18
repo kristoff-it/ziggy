@@ -284,6 +284,8 @@ pub fn deserialize(
 ) Deserializer.Error!Value(T) {
     var result: Value(T) = undefined;
     result.arena_state = .init(gpa);
+    errdefer result.deinit();
+
     result.value = try deserializeLeaky(T, result.arena_state.allocator(), src, meta, opts);
     return result;
 }
