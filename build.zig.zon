@@ -2,7 +2,7 @@
     .name = .ziggy,
     .version = "0.1.0",
     .fingerprint = 0x7d935ea7bf3c3891,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0-dev.607+456b2ec07",
     .dependencies = .{
         .known_folders = .{
             .url = "git+https://github.com/ziglibs/known-folders#207c34a16e4365edc20d92c7892f962b3bed46e8",
