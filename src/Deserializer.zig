@@ -447,7 +447,7 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                 return T.ziggy_options.deserialize(d, first, top_lvl);
             }
 
-            var seen: std.StaticBitSet(info.fields.len) = .initEmpty();
+            var seen: std.StaticBitSet(info.fields.len) = .empty;
             var result: T = undefined;
 
             var field_token = if (top_lvl and first.tag == .identifier)
