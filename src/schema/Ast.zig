@@ -1947,7 +1947,8 @@ pub fn validate(
                                     .opt_identifier => container_name[1..], // skip '?'
                                     else => unreachable,
                                 };
-                                var current_scope = scope;
+
+                                var current_scope = scope.?;
                                 const container_idx = while (true) {
                                     break schema_ast.scopes.get(current_scope).?.types.get(
                                         search_name,
@@ -2024,7 +2025,8 @@ pub fn validate(
                                     .opt_identifier => container_name[1..], // skip '?'
                                     else => unreachable,
                                 };
-                                var current_scope = scope;
+
+                                var current_scope = scope.?;
                                 const container_idx = while (true) {
                                     break schema_ast.scopes.get(current_scope).?.types.get(
                                         search_name,
@@ -2146,7 +2148,7 @@ pub fn validate(
                                     .opt_identifier => container_name[1..], // skip '?'
                                     else => unreachable,
                                 };
-                                var current_scope = scope;
+                                var current_scope = scope.?;
                                 const container_idx = while (true) {
                                     break schema_ast.scopes.get(current_scope).?.types.get(
                                         search_name,
@@ -2214,7 +2216,7 @@ pub fn validate(
                         switch (seen.*) {
                             .@"struct" => |*bits| {
                                 assert(expr.tag != .any_kw);
-                                const scope = schema_ast.scopes.get(scopes_stack.getLast()).?;
+                                const scope = schema_ast.scopes.get(scopes_stack.getLast().?).?;
                                 const field_slot = scope.fields.getIndex(name) orelse {
                                     try errors.append(gpa, .{
                                         .tag = .unknown_field,

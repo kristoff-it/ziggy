@@ -128,7 +128,7 @@ pub fn @"textDocument/didOpen"(
     arena: std.mem.Allocator,
     notification: types.TextDocument.DidOpenParams,
 ) !void {
-    const new_text = try self.gpa.dupeZ(u8, notification.textDocument.text); // We informed the client that we only do full document syncs
+    const new_text = try self.gpa.dupeSentinel(u8, notification.textDocument.text, 0); // We informed the client that we only do full document syncs
     errdefer self.gpa.free(new_text);
 
     std.log.debug("didopen! {t} {s}", .{
@@ -170,9 +170,10 @@ pub fn @"textDocument/didChange"(
     notification: types.TextDocument.DidChangeParams,
 ) !void {
     if (notification.contentChanges.len == 0) return;
-    const new_text = try self.gpa.dupeZ(
+    const new_text = try self.gpa.dupeSentinel(
         u8,
         notification.contentChanges[notification.contentChanges.len - 1].text_document_content_change_whole_document.text,
+        0,
     ); // We informed the client that we only do full document syncs
     errdefer self.gpa.free(new_text);
 

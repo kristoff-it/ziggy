@@ -34,7 +34,7 @@ pub fn setup(io: Io, gpa: Allocator, environ_map: std.process.Environ.Map) void 
 
 fn setupInternal(io: Io, gpa: Allocator, environ_map: std.process.Environ.Map) !void {
     const log_name = "ziggy.log";
-    var cache_base = try folders.open(io, gpa, environ_map, .cache, .{}) orelse return error.Failure;
+    var cache_base = try folders.open(io, gpa, &environ_map, .cache, .{}) orelse return error.Failure;
     defer cache_base.close(io);
 
     const f: Io.File = try cache_base.createFile(io, log_name, .{ .truncate = false });

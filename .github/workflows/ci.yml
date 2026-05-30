@@ -10,7 +10,8 @@ jobs:
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
+        with:
+          version: master
 
       - name: Build
-        run: zig build test 
-          
+        run: zig build test

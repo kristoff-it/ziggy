@@ -62,7 +62,8 @@ pub fn build(b: *std.Build) !void {
     b.installArtifact(cli_exe);
 
     const run_exe = b.addRunArtifact(cli_exe);
-    if (b.args) |args| run_exe.addArgs(args);
+    run_exe.addPassthruArgs();
+
     const run_exe_step = b.step("run", "Run the Ziggy tool");
     run_exe_step.dependOn(&run_exe.step);
 
@@ -276,14 +277,14 @@ pub fn setupTests(
     cli_exe: *std.Build.Step.Compile,
 ) !void {
     const test_step = b.step("test", "Run unit & snapshot tests");
+    const filters = b.option([]const []const u8, "filters", "unit test filters");
 
     const unit_tests = b.addTest(.{
         .root_module = ziggy_module,
-        .filters = b.args orelse &.{},
+        .filters = filters orelse &.{},
     });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
-    // if (b.args) |args| run_unit_tests.addArgs(args);
     test_step.dependOn(&run_unit_tests.step);
 
     if (true) return;
@@ -420,14 +421,14 @@ const Version = union(Kind) {
     }
 };
 fn getGitVersion(b: *std.Build) Version {
-    const git_path = b.findProgram(&.{"git"}, &.{}) catch return .unknown;
+    const git_path = b.findProgram(.{ .names = &.{"git"} }) orelse return .unknown;
     var out: u8 = undefined;
     const git_describe = std.mem.trim(
         u8,
         b.runAllowFail(&[_][]const u8{
-            git_path,            "-C",
-            b.build_root.path.?, "describe",
-            "--match",           "*.*.*",
+            git_path,               "-C",
+            b.root.root_dir.path.?, "describe",
+            "--match",              "*.*.*",
             "--tags",
         }, &out, .ignore) catch return .unknown,
         " \n\r",
