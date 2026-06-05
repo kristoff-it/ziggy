@@ -42,7 +42,7 @@ pub fn build(b: *Build) !void {
     b.installArtifact(cli_exe);
 
     const run_exe = b.addRunArtifact(cli_exe);
-    if (b.args) |args| run_exe.addArgs(args);
+    run_exe.addPassthruArgs();
     const run_exe_step = b.step("run", "Run the Ziggy tool");
     run_exe_step.dependOn(&run_exe.step);
 
@@ -124,7 +124,7 @@ pub fn setupTests(
     });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
-    if (b.args) |args| run_unit_tests.addArgs(args);
+    run_unit_tests.addPassthruArgs();
     test_step.dependOn(&run_unit_tests.step);
 
     const diff = b.addSystemCommand(&.{
@@ -145,7 +145,7 @@ pub fn setupTests(
     git_add.setName("git add tests/");
     diff.step.dependOn(&git_add.step);
 
-    b.build_root.handle.access(b.graph.io, "tests/ziggy", .{}) catch {
+    b.root.root_dir.handle.access(b.graph.io, "tests/ziggy", .{}) catch {
         const fail = b.addFail("snapshot test folder is missing, can't run tests (note: snapshot tests are not included in the ziggy manifest)");
         git_add.step.dependOn(&fail.step);
         return;
@@ -154,7 +154,7 @@ pub fn setupTests(
     // errors - ast
     {
         const base_path = b.pathJoin(&.{ "tests", "ziggy", "ast", "errors" });
-        var tests_dir = try b.build_root.handle.openDir(b.graph.io, base_path, .{
+        var tests_dir = try b.root.root_dir.handle.openDir(b.graph.io, base_path, .{
             .iterate = true,
         });
         defer tests_dir.close(b.graph.io);
@@ -191,7 +191,7 @@ pub fn setupTests(
     // errors - type driven
     {
         const base_path = b.pathJoin(&.{ "tests", "ziggy", "type-driven", "errors" });
-        const tests_dir = try b.build_root.handle.openDir(b.graph.io, base_path, .{
+        const tests_dir = try b.root.root_dir.handle.openDir(b.graph.io, base_path, .{
             .iterate = true,
         });
 

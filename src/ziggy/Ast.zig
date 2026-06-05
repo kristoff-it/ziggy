@@ -184,7 +184,7 @@ pub fn init(
     p.node = root_node;
     try p.next();
     while (true) {
-        log.debug("entering '{s}'", .{@tagName(p.node.tag)});
+        // log.debug("entering '{s}'", .{@tagName(p.node.tag)});
         switch (p.node.tag) {
             .comment, .multiline_string, .top_comment_line, .line_string => unreachable,
             .root => switch (p.token.tag) {
@@ -310,9 +310,9 @@ pub fn init(
 
             .struct_field => {
                 const last_child = p.nodes.items[p.node.last_child_id];
-                log.debug("last: '{s}'", .{
-                    @tagName(last_child.tag),
-                });
+                // log.debug("last: '{s}'", .{
+                //     @tagName(last_child.tag),
+                // });
                 switch (last_child.tag) {
                     .root => {
                         // first time entering, struct has no children

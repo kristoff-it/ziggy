@@ -195,7 +195,7 @@ fn stringifyStructInner(
     const has_skip_fields: bool = @hasDecl(StructType, "ziggy_options") and @hasDecl(StructType.ziggy_options, "skip_fields");
     const field_count = blk: {
         var c: usize = 0;
-        outer: inline for (T.fields, 0..) |field, idx| {
+        outer: inline for (T.field_names, T.field_types, 0..) |field_name, field_type, idx| {
             if (has_skip_fields) {
                 @setEvalBranchQuota(1000);
                 const e: FE = @enumFromInt(idx);
@@ -203,8 +203,8 @@ fn stringifyStructInner(
                     if (sf == e) continue :outer;
                 }
             }
-            switch (@typeInfo(field.type)) {
-                .optional => if (opts.emit_null_fields or @field(strct, field.name) != null) {
+            switch (@typeInfo(field_type)) {
+                .optional => if (opts.emit_null_fields or @field(strct, field_name) != null) {
                     c += 1;
                 },
                 else => c += 1,
@@ -212,7 +212,7 @@ fn stringifyStructInner(
         }
         break :blk c;
     };
-    if (T.fields.len > 0) {
+    if (T.field_names.len > 0) {
         var print_idx: usize = 1;
         blk: {
             if (has_skip_fields) {
@@ -222,27 +222,27 @@ fn stringifyStructInner(
                     if (sf == z) break :blk;
                 }
             }
-            switch (@typeInfo(T.fields[0].type)) {
+            switch (@typeInfo(T.field_types[0])) {
                 .optional => if (!opts.emit_null_fields and @field(strct, T.fields[0].name) == null) break :blk,
                 else => {},
             }
 
             if (indent_level != 0) try indent(opts.whitespace, indent_level, writer);
 
-            try writer.print(".{s}", .{T.fields[0].name});
+            try writer.print(".{s}", .{T.field_names[0]});
             if (opts.whitespace == .minified) {
                 try writer.writeAll("=");
             } else {
                 try writer.writeAll(" = ");
             }
-            try stringifyInner(@field(strct, T.fields[0].name), opts, indent_level, depth + 1, writer);
+            try stringifyInner(@field(strct, T.field_names[0]), opts, indent_level, depth + 1, writer);
             if (opts.whitespace != .minified or 1 != field_count) {
                 try writer.writeAll(",");
             }
             print_idx += 1;
         }
 
-        outer: inline for (T.fields[1..], 2..) |field, idx| {
+        outer: inline for (T.field_names[1..], T.field_types[1..], 2..) |field_name, field_type, idx| {
             // Skip fields mentioned under 'ziggy_options.skip_fields'
             if (has_skip_fields) {
                 const skip_fields = StructType.ziggy_options.skip_fields;
@@ -256,9 +256,9 @@ fn stringifyStructInner(
                 }
             }
 
-            const name = field.name;
-            const skip = switch (@typeInfo(field.type)) {
-                .optional => if (@field(strct, field.name) == null) !opts.emit_null_fields else false,
+            const name = field_name;
+            const skip = switch (@typeInfo(field_type)) {
+                .optional => if (@field(strct, field_name) == null) !opts.emit_null_fields else false,
                 else => false,
             };
 
@@ -289,10 +289,10 @@ fn stringifyUnion(writer: *Writer, un: anytype, indent_level: usize, depth: usiz
     const at = std.meta.activeTag(un);
     try writer.print("{s}", .{@tagName(at)});
     if (opts.whitespace != .minified) try writer.writeAll(" ");
-    inline for (T.fields) |field| {
-        if (std.mem.eql(u8, field.name, @tagName(at))) {
-            switch (@typeInfo(field.type)) {
-                .@"struct" => try stringifyInner(@field(un, field.name), opts_, indent_level, depth, writer),
+    inline for (T.field_names, T.field_types) |field_name, field_type| {
+        if (std.mem.eql(u8, field_name, @tagName(at))) {
+            switch (@typeInfo(field_type)) {
+                .@"struct" => try stringifyInner(@field(un, field_name), opts_, indent_level, depth, writer),
                 else => {
                     // const value_field: std.builtin.Type.StructField = .{
                     //     .name = "value",
@@ -301,9 +301,9 @@ fn stringifyUnion(writer: *Writer, un: anytype, indent_level: usize, depth: usiz
                     //     .is_comptime = false,
                     //     .alignment = @alignOf(field.type),
                     // };
-                    const St = @Struct(.auto, null, &.{"value"}, &.{field.type}, &.{.{}});
+                    const St = @Struct(.auto, null, &.{"value"}, &.{field_type}, &.{.{}});
 
-                    const v: St = .{ .value = @field(un, field.name) };
+                    const v: St = .{ .value = @field(un, field_name) };
                     try stringifyInner(v, opts_, indent_level, depth, writer);
                 },
             }

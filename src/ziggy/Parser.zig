@@ -233,8 +233,8 @@ fn parseUnion(
             @compileError("union '" ++ @typeName(T) ++ "' must be tagged");
         }
 
-        for (info.fields) |f| {
-            switch (@typeInfo(f.type)) {
+        for (info.field_types) |ftype| {
+            switch (@typeInfo(ftype)) {
                 .@"struct" => {},
                 else => {
                     @compileError("all the cases of union '" ++ @typeName(T) ++ "' must be of struct type");
@@ -247,12 +247,12 @@ fn parseUnion(
     try self.must(first_tok, .identifier);
     const case_name = first_tok.loc.src(self.code);
 
-    inline for (info.fields) |f| {
-        if (std.mem.eql(u8, f.name, case_name)) {
+    inline for (info.field_names, info.field_types) |f_name, f_type| {
+        if (std.mem.eql(u8, f_name, case_name)) {
             return @unionInit(
                 T,
-                f.name,
-                try self.parseStruct(f.type, self.next()),
+                f_name,
+                try self.parseStruct(f_type, self.next()),
             );
         }
     }
@@ -286,7 +286,7 @@ fn parseStruct(
 
     // TODO: optimization: turn this into an array of bools when
     //       diagnocstics are disabled
-    var fields_seen = [_]?Token.Loc{null} ** info.fields.len;
+    var fields_seen: [info.field_names.len]?Token.Loc = @splat(null);
     var val: T = undefined;
     while (true) {
         if (need_closing_rb) {
@@ -340,7 +340,7 @@ fn parseStruct(
             });
         }
 
-        outer: inline for (info.fields, 0..) |f, idx| {
+        outer: inline for (info.field_names, info.field_types, 0..) |f_name, f_type, idx| {
             if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "skip_fields")) {
                 const skip_fields = T.ziggy_options.skip_fields;
                 if (@TypeOf(skip_fields) != []const std.meta.FieldEnum(T)) {
@@ -354,7 +354,7 @@ fn parseStruct(
                 }
             }
 
-            if (std.mem.eql(u8, f.name, field_name)) {
+            if (std.mem.eql(u8, f_name, field_name)) {
                 if (fields_seen[idx]) |first_loc| {
                     return self.addError(.{
                         .duplicate_field = .{
@@ -365,7 +365,7 @@ fn parseStruct(
                     });
                 }
                 fields_seen[idx] = ident.loc;
-                @field(val, f.name) = try self.parseValue(f.type, self.next());
+                @field(val, f_name) = try self.parseValue(f_type, self.next());
                 break;
             }
         } else {
@@ -401,15 +401,15 @@ fn finalizeStruct(
     fields_seen: []const ?Token.Loc,
     struct_end: Token,
 ) Error!void {
-    inline for (info.fields, 0..) |field, idx| {
+    inline for (info.field_names, info.field_types, info.field_attrs, 0..) |name, f_type, attrs, idx| {
         if (fields_seen[idx] == null) {
-            if (field.default_value_ptr) |ptr| {
-                const dv_ptr: *const field.type = @ptrCast(@alignCast(ptr));
-                @field(val, field.name) = dv_ptr.*;
+            if (attrs.default_value_ptr) |ptr| {
+                const dv_ptr: *const f_type = @ptrCast(@alignCast(ptr));
+                @field(val, name) = dv_ptr.*;
             } else {
                 return self.addError(.{
                     .missing_field = .{
-                        .name = field.name,
+                        .name = name,
                         .sel = struct_end.loc.getSelection(self.code),
                     },
                 });

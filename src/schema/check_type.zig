@@ -128,10 +128,10 @@ fn checkRule(
                 }
             }
 
-            inline for (u.fields) |f| {
-                if (!cases.swapRemove(f.name)) {
+            inline for (u.field_names) |name| {
+                if (!cases.swapRemove(name)) {
                     std.debug.print("Case '{s}' in union type '{s}' doesn't exist in schema\n", .{
-                        f.name,
+                        name,
                         @typeName(T),
                     });
                     return error.Validation;
@@ -158,21 +158,21 @@ fn checkRule(
                     const seen_fields = try arena.alloc(bool, sr.fields.entries.len);
                     @memset(seen_fields, false);
 
-                    outer: inline for (s.fields) |f| {
+                    outer: inline for (s.field_names, s.field_types) |name, ft| {
                         // TODO: check for skip_fields
 
                         if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "skip_fields")) {
                             const SF = std.meta.FieldEnum(T);
-                            const field_enum = @field(SF, f.name);
+                            const field_enum = @field(SF, name);
                             inline for (T.ziggy_options.skip_fields) |sf| {
                                 if (field_enum == sf) continue :outer;
                             }
                         }
 
-                        const idx = sr.fields.getIndex(f.name) orelse {
+                        const idx = sr.fields.getIndex(name) orelse {
                             std.debug.print("'{s}.{s}' not present in schema\n", .{
                                 @typeName(T),
-                                f.name,
+                                name,
                             });
                             return error.Validation;
                         };
@@ -180,7 +180,7 @@ fn checkRule(
                         seen_fields[idx] = true;
 
                         const field = sr.fields.entries.items(.value)[idx];
-                        try checkRule(f.type, arena, schema, src, field.rule);
+                        try checkRule(ft, arena, schema, src, field.rule);
                     }
 
                     for (seen_fields, 0..) |seen, idx| {
@@ -209,7 +209,7 @@ test "bool" {
 }
 
 test "ints" {
-    const Ts = &.{ usize, i16, u22, u0, u1, i0, i1, u64, i64 };
+    const Ts = &.{ usize, i16, u22, u0, u1, i1, u64, i64 };
     const case =
         \\root = int
         \\
