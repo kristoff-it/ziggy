@@ -62,7 +62,7 @@ pub fn build(b: *std.Build) !void {
     b.installArtifact(cli_exe);
 
     const run_exe = b.addRunArtifact(cli_exe);
-    if (b.args) |args| run_exe.addArgs(args);
+    run_exe.addPassthruArgs();
     const run_exe_step = b.step("run", "Run the Ziggy tool");
     run_exe_step.dependOn(&run_exe.step);
 
@@ -279,11 +279,9 @@ pub fn setupTests(
 
     const unit_tests = b.addTest(.{
         .root_module = ziggy_module,
-        .filters = b.args orelse &.{},
     });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
-    // if (b.args) |args| run_unit_tests.addArgs(args);
     test_step.dependOn(&run_unit_tests.step);
 
     if (true) return;
@@ -306,7 +304,7 @@ pub fn setupTests(
     git_add.setName("git add tests/");
     diff.step.dependOn(&git_add.step);
 
-    b.build_root.handle.access("tests/ziggy", .{}) catch {
+    b.root.root_dir.handle.access("tests/ziggy", .{}) catch {
         const fail = b.addFail("snapshot test folder is missing, can't run tests (note: snapshot tests are not included in the ziggy manifest)");
         git_add.step.dependOn(&fail.step);
         return;
@@ -315,7 +313,7 @@ pub fn setupTests(
     // errors - ast
     {
         const base_path = b.pathJoin(&.{ "tests", "ziggy", "ast", "errors" });
-        var tests_dir = try b.build_root.handle.openDir(base_path, .{
+        var tests_dir = try b.root.root_dir.handle.openDir(base_path, .{
             .iterate = true,
         });
         defer tests_dir.close();
@@ -352,7 +350,7 @@ pub fn setupTests(
     // errors - type driven
     {
         const base_path = b.pathJoin(&.{ "tests", "ziggy", "type-driven", "errors" });
-        const tests_dir = try b.build_root.handle.openDir(base_path, .{
+        const tests_dir = try b.root.root_dir.handle.openDir(base_path, .{
             .iterate = true,
         });
 
@@ -420,14 +418,14 @@ const Version = union(Kind) {
     }
 };
 fn getGitVersion(b: *std.Build) Version {
-    const git_path = b.findProgram(&.{"git"}, &.{}) catch return .unknown;
+    const git_path = b.findProgram(.{ .names = &.{"git"} }) orelse return .unknown;
     var out: u8 = undefined;
     const git_describe = std.mem.trim(
         u8,
         b.runAllowFail(&[_][]const u8{
-            git_path,            "-C",
-            b.build_root.path.?, "describe",
-            "--match",           "*.*.*",
+            git_path,               "-C",
+            b.root.root_dir.path.?, "describe",
+            "--match",              "*.*.*",
             "--tags",
         }, &out, .ignore) catch return .unknown,
         " \n\r",

@@ -23,7 +23,7 @@ pub fn logFn(
     w.flush() catch return;
 }
 
-pub fn setup(io: Io, gpa: Allocator, environ_map: std.process.Environ.Map) void {
+pub fn setup(io: Io, gpa: Allocator, environ_map: *std.process.Environ.Map) void {
     _ = std.debug.lockStderr(&.{});
     defer std.debug.unlockStderr();
 
@@ -32,7 +32,7 @@ pub fn setup(io: Io, gpa: Allocator, environ_map: std.process.Environ.Map) void 
     };
 }
 
-fn setupInternal(io: Io, gpa: Allocator, environ_map: std.process.Environ.Map) !void {
+fn setupInternal(io: Io, gpa: Allocator, environ_map: *std.process.Environ.Map) !void {
     const log_name = "ziggy.log";
     var cache_base = try folders.open(io, gpa, environ_map, .cache, .{}) orelse return error.Failure;
     defer cache_base.close(io);

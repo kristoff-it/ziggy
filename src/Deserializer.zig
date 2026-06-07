@@ -322,6 +322,7 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
         .frame,
         .@"anyframe",
         .enum_literal,
+        .spirv,
         => @compileError("cannot deserialize " ++ @tagName(@typeInfo(T))),
 
         .bool => switch (first.tag) {
@@ -368,10 +369,10 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
             switch (first.tag) {
                 .identifier => {
                     const tag = first.loc.slice(d.src)[1..]; // skip '.'
-                    inline for (info.fields) |f| {
-                        if (std.mem.eql(u8, f.name, tag)) {
-                            if (f.type != void) return d.unexpected(first);
-                            return @unionInit(T, f.name, {});
+                    inline for (info.field_names, info.field_types) |f_name, f_type| {
+                        if (std.mem.eql(u8, f_name, tag)) {
+                            if (f_type != void) return d.unexpected(first);
+                            return @unionInit(T, f_name, {});
                         }
                     } else return d.unknownField(first);
                 },
@@ -386,14 +387,14 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                         break :blk raw[0 .. raw.len - 1]; // skip '('
                     };
 
-                    inline for (info.fields) |f| {
-                        if (std.mem.eql(u8, f.name, tag)) {
-                            if (f.type == void) return d.unexpected(first);
+                    inline for (info.field_names, info.field_types) |f_name, f_type| {
+                        if (std.mem.eql(u8, f_name, tag)) {
+                            if (f_type == void) return d.unexpected(first);
                             const value = @unionInit(
                                 T,
-                                f.name,
+                                f_name,
                                 try d.deserializeOne(
-                                    f.type,
+                                    f_type,
                                     d.next(),
                                     top_lvl,
                                 ),
@@ -447,7 +448,7 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                 return T.ziggy_options.deserialize(d, first, top_lvl);
             }
 
-            var seen: std.StaticBitSet(info.fields.len) = .initEmpty();
+            var seen: std.StaticBitSet(info.field_names.len) = .empty;
             var result: T = undefined;
 
             var field_token = if (top_lvl and first.tag == .identifier)
@@ -493,9 +494,9 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                     else => return d.unexpected(field_token),
                 }
                 const name = field_token.loc.slice(d.src)[1..]; // skip '.'
-                inline for (info.fields, 0..) |f, idx| {
+                inline for (info.field_names, info.field_types, 0..) |f_name, f_type, idx| {
                     // We skip seen fields to optimize the happy path
-                    if (!seen.isSet(idx) and std.mem.eql(u8, f.name, name)) {
+                    if (!seen.isSet(idx) and std.mem.eql(u8, f_name, name)) {
                         const eql = d.next();
                         if (eql.tag != .eql) return d.unexpected(eql);
 
@@ -522,10 +523,10 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                         if (@hasDecl(T, "ziggy_options") and
                             @hasDecl(T.ziggy_options, "deserializeField"))
                         {
-                            T.ziggy_options.deserializeField(d, &result, f.name, field_token);
+                            T.ziggy_options.deserializeField(d, &result, f_name, field_token);
                         } else {
-                            @field(result, f.name) = try d.deserializeOne(
-                                f.type,
+                            @field(result, f_name) = try d.deserializeOne(
+                                f_type,
                                 d.next(),
                                 false,
                             );
@@ -538,8 +539,8 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                     }
                 } else {
                     // unhappy path, either an unknown field or a duplicate field
-                    inline for (info.fields, 0..) |f, idx| {
-                        if (std.mem.eql(u8, f.name, name)) {
+                    inline for (info.field_names, 0..) |f_name, idx| {
+                        if (std.mem.eql(u8, f_name, name)) {
                             // duplicate
                             assert(seen.isSet(idx));
                             return d.duplicateField(field_token);
@@ -609,12 +610,12 @@ inline fn finalizeStruct(
     seen: anytype,
     last: Token,
 ) Error!void {
-    inline for (info.fields, 0..) |f, idx| {
+    inline for (info.field_names, info.field_attrs, 0..) |f_name, f_attrs, idx| {
         if (!seen.isSet(idx)) {
-            if (f.default_value_ptr != null) {
-                @field(result, f.name) = f.defaultValue().?;
+            if (f_attrs.default_value_ptr != null) {
+                @field(result, f_name) = f_attrs.defaultValue().?;
             } else {
-                return d.missingField(last, f.name);
+                return d.missingField(last, f_name);
             }
         }
     }
@@ -646,18 +647,18 @@ inline fn deserializeDict(
             break :blk raw[0 .. raw.len - 1]; // skip second '"'
         };
 
-        inline for (info.fields, 0..) |f, idx| {
+        inline for (info.field_names, info.field_types, 0..) |f_name, f_type, idx| {
             // We skip seen fields to optimize the happy path
-            if (!seen.isSet(idx) and std.mem.eql(u8, f.name, name)) {
+            if (!seen.isSet(idx) and std.mem.eql(u8, f_name, name)) {
                 const colon = d.next();
                 if (colon.tag != .colon) return d.unexpected(colon);
                 if (@hasDecl(T, "ziggy_options") and
                     @hasDecl(T.ziggy_options, "deserializeField"))
                 {
-                    T.ziggy_options.deserializeField(d, result, f.name, field_token);
+                    T.ziggy_options.deserializeField(d, result, f_name, field_token);
                 } else {
-                    @field(result, f.name) = try d.deserializeOne(
-                        f.type,
+                    @field(result, f_name) = try d.deserializeOne(
+                        f_type,
                         d.next(),
                         false,
                     );
@@ -670,8 +671,8 @@ inline fn deserializeDict(
             }
         } else {
             // unhappy path, either an unknown field or a duplicate field
-            inline for (info.fields, 0..) |f, idx| {
-                if (std.mem.eql(u8, f.name, name)) {
+            inline for (info.field_names, 0..) |f_name, idx| {
+                if (std.mem.eql(u8, f_name, name)) {
                     // duplicate
                     assert(seen.isSet(idx));
                     return d.duplicateField(field_token);
