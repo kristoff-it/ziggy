@@ -472,7 +472,7 @@ pub const Command = struct {
             \\You can optionally specify a Ziggy Schema that will be
             \\used for all found documents, or leave it unspecified
             \\to have the tool detect schemas automatically using the
-            \\following logic: 
+            \\following logic:
             \\
             \\  1. Schema file with the same name as the document
             \\     placed next to it, for example:
@@ -488,13 +488,13 @@ pub const Command = struct {
             \\Options:
             \\--schema PATH    Override schema detection and use the
             \\                 same schema for all documents. Must be
-            \\                 the first agument if present (mutually
+            \\                 the first argument if present (mutually
             \\                 exclusive with '--lenient').
             \\--lenient        Ignore Ziggy Documents for which there
             \\                 is no matching Ziggy Schema instead of
-            \\                 reporting an error (a warning line 
-            \\                 will still be printed). Must be the  
-            \\                 first argument if present (mutually 
+            \\                 reporting an error (a warning line
+            \\                 will still be printed). Must be the
+            \\                 first argument if present (mutually
             \\                 exclusive with '--schema').
             \\--help, -h       Print this help and exit.
             \\

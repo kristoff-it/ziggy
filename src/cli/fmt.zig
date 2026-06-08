@@ -411,19 +411,19 @@ pub const Command = struct {
             \\
             \\Formats input paths inplace. If PATH is a directory, it will
             \\be searched recursively for Ziggy and Ziggy Schema files.
-            \\     
-            \\Detected extensions:     
-            \\     Ziggy         .ziggy  
-            \\     Ziggy Schema  .ziggy-schema 
-            \\     SuperMD       .supermd  
+            \\
+            \\Detected extensions:
+            \\     Ziggy         .ziggy
+            \\     Ziggy Schema  .ziggy-schema
+            \\     SuperMD       .supermd
             \\
             \\NOTE: SuperMD support is temporary until a dedicated
             \\      CLI tool is created.
             \\
             \\Options:
             \\
-            \\--stdin            Format bytes from stdin and ouptut to stdout. 
-            \\                   Mutually exclusive with other input aguments.    
+            \\--stdin            Format bytes from stdin and output to stdout.
+            \\                   Mutually exclusive with other input arguments.
             \\
             \\--stdin-schema     Same as --stdin but for Ziggy Schema files.
             \\
