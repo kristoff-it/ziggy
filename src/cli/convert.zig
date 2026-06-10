@@ -170,31 +170,31 @@ pub const Command = struct {
     // TODO: consider adding --json=file.foo etc
     fn fatalHelp() noreturn {
         std.debug.print(
-            \\Usage: ziggy convert DOC_PATH [DOC_PATH...] [OPTIONS] 
+            \\Usage: ziggy convert DOC_PATH [DOC_PATH...] [OPTIONS]
             \\
             \\     Converts files from JSON / TOML / YAML / ZON to Ziggy.
             \\     Converted files will be placed next to their original.
             \\
-            \\     Detected file extensions:     
-            \\          JSON       .json   
+            \\     Detected file extensions:
+            \\          JSON       .json
             \\          YAML       .yaml, .yml
             \\          TOML       .toml,
-            \\          Ziggy      .ziggy  
-            \\          ZON        .zon  
+            \\          Ziggy      .ziggy
+            \\          ZON        .zon
             \\
             \\     Only paths to documents are supported, if you need to
-            \\     convert an entire directory, use glob pattern expasion
+            \\     convert an entire directory, use glob pattern expansion
             \\     features from your shell.
-            \\     
+            \\
             \\Options:
-            \\--stdin LANG     Format bytes from stdin, ouptut to stdout, 
+            \\--stdin LANG     Format bytes from stdin, output to stdout,
             \\                 LANG defines the input file format. Mutually
             \\                 exclusive with DOC_PATH arguments. LANG can be
             \\                 one of 'json', 'yaml', 'toml', 'zon'.
             \\
-            \\--schema PATH    Path to a Ziggy Schema, used when 'ziggy' is the 
+            \\--schema PATH    Path to a Ziggy Schema, used when 'ziggy' is the
             \\                 destination file format to produce a better typed
-            \\                 output file. Will cause the process to error out 
+            \\                 output file. Will cause the process to error out
             \\                 if no reasonable origin file to schema mapping
             \\                 can be inferred.
             \\
@@ -204,16 +204,16 @@ pub const Command = struct {
             \\
             \\--stdout         Output the converted file(s) to stdout. In case
             \\                 that more than one DOC_PATH was specified, dashes
-            \\                 (---) will be used as a document separator. 
+            \\                 (---) will be used as a document separator.
             \\
-            \\--force, -f      Override existing destination files. 
+            \\--force, -f      Override existing destination files.
             \\
             \\--lenient        When a Ziggy schema is specified and a file fails
             \\                 to convert because of it, continue processing
             \\                 other files anyway. Errors will still be printed
-            \\                 to stderr and the application will still have a 
+            \\                 to stderr and the application will still have a
             \\                 non-zero exit status. Non-schema errors (eg I/O
-            \\                 errors) will stll cause the process to exit 
+            \\                 errors) will stll cause the process to exit
             \\                 immediately.
             \\
             \\--help, -h       Print this help and exit.
