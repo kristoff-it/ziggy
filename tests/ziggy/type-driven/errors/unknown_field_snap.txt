@@ -1,4 +1,1 @@
-line: 3 col: 2:
-    .baz = "oops",
-     ^^^
-unknown field 'baz'
+unknown_field.ziggy:3:1 unknown field 'baz'

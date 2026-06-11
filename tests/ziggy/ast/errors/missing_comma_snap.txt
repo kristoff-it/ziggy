@@ -1,5 +1,1 @@
-missing_comma.ziggy:2:1:
-    .bar = false,
-    ^
-unexpected '.', expected: '}' or 'EOF'
-
+missing_comma.ziggy:1:8 missing token: ',' after field value

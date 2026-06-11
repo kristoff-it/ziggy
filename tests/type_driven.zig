@@ -3,28 +3,37 @@ const ziggy = @import("ziggy");
 const test_type = @import("test_type");
 const CaseType = test_type.Case;
 
-pub fn main() !void {
-    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    var arena_state = std.heap.ArenaAllocator.init(gpa_state.allocator());
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
 
-    const args = try std.process.argsAlloc(arena);
-    const case = try std.fs.cwd().readFileAllocOptions(
-        arena,
+    const args = try init.minimal.args.toSlice(arena);
+    const case = try std.Io.Dir.cwd().readFileAllocOptions(
+        io,
         args[1],
-        ziggy.max_size,
-        null,
+        arena,
+        .limited(ziggy.max_size),
         .of(u8),
         0,
     );
 
-    var diag: ziggy.Diagnostic = .{ .path = null };
-    _ = ziggy.parseLeaky(CaseType, arena, case, .{
-        .diagnostic = &diag,
-    }) catch |err| {
-        if (err != error.Syntax) @panic("wrong error!");
-        std.debug.print("{f}", .{diag.fmt(case)});
+    var meta: ziggy.Deserializer.Meta = .init;
+    _ = ziggy.deserializeLeaky(
+        CaseType,
+        arena,
+        case,
+        &meta,
+        .{},
+    ) catch |err| {
+        std.debug.print("{f}", .{
+            meta.reportErrorsFmt(
+                arena,
+                .{},
+                std.fs.path.basename(args[1]),
+                case,
+                err,
+            ),
+        });
         std.process.exit(1);
     };
 

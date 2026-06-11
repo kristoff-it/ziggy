@@ -1,5 +1,4 @@
-struct.ziggy:2:8:
-    .bar = .false,
-           ^
-unexpected '.', expected: '(value)'
-
+struct.ziggy:2:8 unexpected token
+struct.ziggy:2:8 missing token: ',' after field value
+struct.ziggy:2:9 missing token: '=' after struct field name
+struct.ziggy:2:9 missing following value

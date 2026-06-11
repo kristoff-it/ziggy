@@ -193,7 +193,7 @@ fn formatFileFallible(
 
         var writer = af.file.writer(io, &.{});
         try writer.interface.writeAll(out_bytes);
-        try af.link(io);
+        try af.replace(io);
     }
 
     _ = std.debug.lockStderr(&.{});

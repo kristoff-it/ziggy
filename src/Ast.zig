@@ -232,6 +232,10 @@ const Parser = struct {
                     },
                     .eof, .eod => {
                         if (p.tok.tag == .comma) p.consume();
+                        try p.err(.{
+                            .tag = .{ .missing_token = "'}'" },
+                            .main_location = p.tok.loc,
+                        });
                         return p.finalize();
                     },
                     .identifier, .bytes => true,
@@ -416,7 +420,7 @@ const Parser = struct {
         };
 
         p.consume();
-        log.debug("found field delimiter, parsing value from {any}", .{p.tok});
+        // log.debug("found field delimiter, parsing value from {any}", .{p.tok});
         try p.beginValue();
         return;
     }
@@ -566,7 +570,7 @@ const Parser = struct {
                 .eof, .eod => return,
                 else => {
                     p.cur().loc.end = p.tok.loc.start;
-                    log.debug("cur = {any}", .{p.cur().*});
+                    // log.debug("cur = {any}", .{p.cur().*});
                     p.up();
                     continue :discard .array_v;
                 },
@@ -606,7 +610,7 @@ const Parser = struct {
         assert(p.tok.tag != .eod);
         p.prev_loc = p.tok.loc;
         p.tok = p.tokenizer.next(p.src, true);
-        log.debug("new tok: {any}", .{p.tok});
+        // log.debug("new tok: {any}", .{p.tok});
     }
 
     fn consumeAllowTopLevelComment(p: *Parser) void {
@@ -614,7 +618,7 @@ const Parser = struct {
         assert(p.tok.tag != .eod);
         p.prev_loc = p.tok.loc;
         p.tok = p.tokenizer.next(p.src);
-        log.debug("new tok: {any}", .{p.tok});
+        // log.debug("new tok: {any}", .{p.tok});
     }
 
     fn peek(p: *Parser) Token.Tag {
@@ -642,14 +646,14 @@ const Parser = struct {
 
     fn up(p: *Parser) void {
         const current = p.cur();
-        std.log.debug("up cur {any} tok {any}", .{ p.cur().*, p.tok });
+        // std.log.debug("up cur {any} tok {any}", .{ p.cur().*, p.tok });
         assert(current.loc.end >= current.loc.start);
         assert(current.loc.end <= p.src.len);
         p.node_idx = p.cur().parent_idx;
     }
 
     fn err(p: *Parser, e: Error) !void {
-        log.debug("err: {any}", .{e});
+        // log.debug("err: {any}", .{e});
         switch (e.tag) {
             .wrong_field_separator,
             .wrong_field_style,
