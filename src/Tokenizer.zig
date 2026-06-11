@@ -380,6 +380,11 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 t.idx += 1;
                 continue :state .bytes_line;
             },
+            0 => {
+                tok.tag = .invalid;
+                tok.loc.end = t.idx;
+                return tok;
+            },
             else => {
                 t.idx += 1;
                 continue :state .invalid;
@@ -406,6 +411,11 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
 
         .comment_start => switch (src[t.idx]) {
             '/' => continue :state .comment,
+            0 => {
+                tok.tag = .invalid;
+                tok.loc.end = t.idx;
+                return tok;
+            },
             else => {
                 t.idx += 1;
                 continue :state .invalid;
@@ -447,8 +457,8 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 continue :state .invalid;
             },
             else => {
+                if (src[t.idx] != 0) t.idx += 1;
                 tok.loc.end = t.idx;
-
                 tok.tag = .invalid;
                 return tok;
             },
@@ -465,12 +475,20 @@ fn finishNumber(t: Tokenizer, tok: *Token, src: [:0]const u8) void {
     if (minus_minus.slice(src)[0] == '-') {
         minus_minus.start += 1;
     }
-    const check = std.zig.parseNumberLiteral(minus_minus.slice(src));
-    tok.tag = switch (check) {
-        .failure => .invalid,
-        .int, .big_int => .integer,
-        .float => .float,
+
+    const n = minus_minus.slice(src);
+
+    _ = std.fmt.parseInt(u64, n, 10) catch {
+        _ = std.fmt.parseFloat(f32, n) catch {
+            tok.tag = .invalid;
+            return;
+        };
+
+        tok.tag = .float;
+        return;
     };
+
+    tok.tag = .integer;
 }
 
 fn evenSlashes(str: []const u8) bool {

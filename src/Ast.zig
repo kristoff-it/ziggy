@@ -13,6 +13,7 @@ const log = std.log.scoped(.ziggy_ast);
 nodes: []const Node,
 errors: []const Error,
 has_syntax_errors: bool,
+delimiter: Tokenizer.Delimiter,
 
 pub const FieldKind = enum { @"struct", dict };
 pub const Error = struct {
@@ -272,41 +273,85 @@ const Parser = struct {
                 }
             },
             .struct_field, .dict_field => if (p.curIsEmpty()) {
-                var skip_separator = false;
-                switch (p.cur().tag) {
-                    .struct_field => if (p.tok.tag == .bytes) {
-                        const peek_tok = p.peek();
-                        try p.err(.{
-                            .tag = if (peek_tok == .colon) .wrong_field_style else .unexpected_token,
+                switch (p.tok.tag) {
+                    .identifier => {},
+                    .bytes => {
+                        if (p.tok.loc.end - p.tok.loc.start < 3) try p.err(.{
+                            .tag = .empty_dict_key,
                             .main_location = p.tok.loc,
                         });
-                        p.nodes.items[p.cur().parent_idx].tag = .struct_v_fixup;
-                        skip_separator = true;
                     },
-                    .dict_field => if (p.tok.tag == .identifier) {
-                        const peek_tok = p.peek();
-                        try p.err(.{
-                            .tag = if (peek_tok == .eql) .wrong_field_style else .unexpected_token,
-                            .main_location = p.tok.loc,
-                        });
-                        skip_separator = true;
+                    .eof, .eod => {
+                        // we should not be able to get here without errors
+                        assert(p.errors.items.len > 0);
+                        return p.finalize();
                     },
-                    else => unreachable,
+                    else => {
+                        // we should not be able to get here without errors
+                        assert(p.errors.items.len > 0);
+                    },
                 }
 
-                if (p.tok.tag == .bytes) {
-                    if (p.tok.loc.end - p.tok.loc.start < 3) try p.err(.{
-                        .tag = .empty_dict_key,
+                const style_mismatch = switch (p.cur().tag) {
+                    .struct_field => p.tok.tag == .bytes,
+                    .dict_field => p.tok.tag == .identifier,
+                    else => unreachable,
+                };
+
+                if (style_mismatch) {
+                    try p.err(.{
+                        .tag = .wrong_field_style,
                         .main_location = p.tok.loc,
                     });
+
+                    if (p.cur().tag == .struct_field) {
+                        p.nodes.items[p.cur().parent_idx].tag = .struct_v_fixup;
+                    }
                 }
 
                 p.consume();
-                try p.beginField(skip_separator, switch (p.cur().tag) {
-                    .struct_field => .@"struct",
-                    .dict_field => .dict,
-                    else => unreachable,
-                });
+                switch (p.tok.tag) {
+                    .colon, .eql => if (!style_mismatch) {
+                        if ((p.cur().tag == .struct_field and p.tok.tag == .colon) or
+                            (p.cur().tag == .dict_field and p.tok.tag == .eql))
+                        {
+                            try p.err(.{
+                                .tag = .unexpected_token,
+                                .main_location = p.tok.loc,
+                            });
+                        }
+                    },
+                    .eod, .eof => {
+                        try p.err(.{
+                            .tag = .{
+                                .missing_token = switch (p.cur().tag) {
+                                    .struct_field => "'=' after struct field name",
+                                    .dict_field => "':' after dict field name",
+                                    else => unreachable,
+                                },
+                            },
+                            .main_location = p.prev_loc,
+                        });
+                        return p.finalize();
+                    },
+                    else => {
+                        try p.err(.{
+                            .tag = .{
+                                .missing_token = switch (p.cur().tag) {
+                                    .struct_field => "'=' after struct field name",
+                                    .dict_field => "':' after dict field name",
+                                    else => unreachable,
+                                },
+                            },
+                            .main_location = p.prev_loc,
+                        });
+                        try p.discardUntilRestart();
+                        continue :parse p.cur().tag;
+                    },
+                }
+
+                p.consume();
+                try p.beginValue();
                 continue :parse p.cur().tag;
             } else {
                 // missing commas are handled by the container
@@ -334,8 +379,8 @@ const Parser = struct {
                             .tag = .{ .missing_token = "']' after last array element" },
                             .main_location = p.prev_loc,
                         });
-                        p.cur().loc.end = p.tok.loc.start;
-                        p.up();
+                        // p.cur().loc.end = p.tok.loc.start;
+                        // p.up();
                         return p.finalize();
                     },
                     else => {},
@@ -388,41 +433,6 @@ const Parser = struct {
         }
 
         comptime unreachable;
-    }
-
-    fn beginField(p: *Parser, skip_separator: bool, kind: FieldKind) !void {
-        if (!skip_separator) switch (p.tok.tag) {
-            .eql => {
-                if (kind == .dict) try p.err(.{
-                    .tag = .{ .wrong_field_separator = kind },
-                    .main_location = p.tok.loc,
-                });
-            },
-            .colon => {
-                if (kind != .dict) try p.err(.{
-                    .tag = .{ .wrong_field_separator = kind },
-                    .main_location = p.tok.loc,
-                });
-            },
-            else => {
-                try p.err(.{
-                    .tag = .{
-                        .missing_token = switch (kind) {
-                            .@"struct" => "'=' after struct field name",
-                            .dict => "':' after dict field name",
-                        },
-                    },
-                    .main_location = p.prev_loc,
-                });
-                try p.beginValue();
-                return;
-            },
-        };
-
-        p.consume();
-        // log.debug("found field delimiter, parsing value from {any}", .{p.tok});
-        try p.beginValue();
-        return;
     }
 
     fn beginValue(p: *Parser) !void {
@@ -610,7 +620,7 @@ const Parser = struct {
         assert(p.tok.tag != .eod);
         p.prev_loc = p.tok.loc;
         p.tok = p.tokenizer.next(p.src, true);
-        // log.debug("new tok: {any}", .{p.tok});
+        // log.debug("new tok: [{t}] '{s}'", .{ p.tok.tag, p.tok.loc.slice(p.src) });
     }
 
     fn consumeAllowTopLevelComment(p: *Parser) void {
@@ -618,7 +628,7 @@ const Parser = struct {
         assert(p.tok.tag != .eod);
         p.prev_loc = p.tok.loc;
         p.tok = p.tokenizer.next(p.src);
-        // log.debug("new tok: {any}", .{p.tok});
+        // log.debug("[tlc] new tok: [{t}] '{s}'", .{ p.tok.tag, p.tok.loc.slice(p.src) });
     }
 
     fn peek(p: *Parser) Token.Tag {
@@ -678,14 +688,15 @@ const Parser = struct {
 
         while (true) {
             p.cur().loc.end = p.tok.loc.start;
-            p.up();
             if (p.node_idx == 0) break;
+            p.up();
         }
 
         return .{
             .nodes = try p.nodes.toOwnedSlice(p.gpa),
             .errors = try p.errors.toOwnedSlice(p.gpa),
             .has_syntax_errors = p.has_syntax_errors,
+            .delimiter = p.options.delimiter,
         };
     }
 };
@@ -888,7 +899,13 @@ fn fixupApplies(f: ?Fixup, offset: u32) bool {
     return false;
 }
 
+/// Formats the Ast and applies fixups. An Ast can have errors and still be
+/// formatted but none of the errors can be a syntax error.
+///
+/// Asserts that `ast.has_syntax_errors` is false.
 pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
+    assert(!ast.has_syntax_errors);
+
     const nodes = ast.nodes;
 
     if (ast.nodes[0].loc.start != 0) {
@@ -976,14 +993,9 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                             at_newline = false;
                             try renderComments(&at_newline, indent, field_name.loc.end, src, w);
                             if (at_newline) try w.splatByteAll(' ', indent * 4);
-                            assert(field_separator.tag == switch (parent_tag) {
-                                .braceless_struct,
-                                .struct_h,
-                                .struct_v,
-                                .struct_v_fixup,
-                                => Token.Tag.colon,
-                                .dict_v, .dict_h => Token.Tag.eql,
-                                else => unreachable,
+                            assert(switch (field_separator.tag) {
+                                .colon, .eql => true,
+                                else => false,
                             });
 
                             next_fixup = ast.nextFixup(next_fixup.?.idx);
@@ -1001,10 +1013,9 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                             at_newline = false;
                             try renderComments(&at_newline, indent, field_name.loc.end, src, w);
                             if (at_newline) try w.splatByteAll(' ', indent * 4);
-                            assert(field_separator.tag == switch (parent_tag) {
-                                .braceless_struct, .struct_h, .struct_v, .struct_v_fixup => Token.Tag.eql,
-                                .dict_v, .dict_h => Token.Tag.colon,
-                                else => unreachable,
+                            assert(switch (field_separator.tag) {
+                                .colon, .eql => true,
+                                else => false,
                             });
                         }
 
@@ -1079,6 +1090,7 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                     }
                     try w.writeAll("}");
                     at_newline = false;
+                    try renderComments(&at_newline, indent, node.loc.end, src, w);
                 },
                 .struct_v, .struct_v_fixup, .dict_v => {
                     indent -= 1;
@@ -1102,12 +1114,27 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                     try renderComments(&at_newline, indent, node.loc.end, src, w);
                 },
                 .struct_field, .dict_field, .array_element => {
-                    if (src[node.loc.end - 1] == ',' or nodes[node.parent_idx].tag == .struct_v_fixup) {
+                    // Roundabout way to check if there is a comma at the
+                    // end of our field. We cannot check for a literal
+                    // comma because it might be the final char of a
+                    // multiline string.
+                    const has_comma = blk: {
+                        const node_idx = node - ast.nodes.ptr;
+                        assert(ast.nodes.len > node_idx + 1);
+                        assert(ast.nodes[node_idx + 1].parent_idx == node_idx);
+                        const child = ast.nodes[node_idx + 1];
+                        break :blk (child.loc.end != node.loc.end);
+                    };
+
+                    if (has_comma or nodes[node.parent_idx].tag == .struct_v_fixup) {
                         if (at_newline) try w.splatByteAll(' ', indent * 4);
                         try w.writeAll(",");
                         at_newline = false;
                     }
-                    try renderComments(&at_newline, indent, node.loc.end, src, w);
+
+                    if (has_comma) {
+                        try renderComments(&at_newline, indent, node.loc.end, src, w);
+                    }
                 },
                 .@"union" => {
                     try w.writeAll(")");
@@ -1129,7 +1156,9 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
             },
             .done => {
                 try w.writeAll("\n");
-                try w.writeAll(src[ast.nodes[0].loc.end..]);
+                if (ast.delimiter != .none) {
+                    try w.writeAll(src[ast.nodes[0].loc.end..]);
+                }
                 return;
             },
         }

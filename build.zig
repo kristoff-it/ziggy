@@ -1,5 +1,6 @@
 const std = @import("std");
 const zon = @import("build.zig.zon");
+const afl = @import("afl_kit");
 
 /// The full Ziggy parsing functionality is available at build time.
 pub const ziggy = @import("src/root.zig");
@@ -23,8 +24,6 @@ pub fn build(b: *std.Build) !void {
 
     const ziggy_module = b.addModule("ziggy", .{
         .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
         .strip = false,
     });
 
@@ -68,7 +67,8 @@ pub fn build(b: *std.Build) !void {
     const check = b.step("check", "Check if the project compiles");
     check.dependOn(&ziggy_check.step);
 
-    try setupTests(b, target, optimize, ziggy_module, cli_exe);
+    const test_step = try setupTestStep(b, target, optimize, cli_exe);
+    setupFuzzStep(b, target, test_step, ziggy_module);
     setupWasmStep(b, optimize, options, ziggy_module, lsp);
 
     const release = b.step("release", "Create release builds of Ziggy");
@@ -262,14 +262,19 @@ pub fn setupReleaseStep(
     }
 }
 
-pub fn setupTests(
+pub fn setupTestStep(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    ziggy_module: *std.Build.Module,
     cli_exe: *std.Build.Step.Compile,
-) !void {
+) !*std.Build.Step {
     const test_step = b.step("test", "Run unit & snapshot tests");
+
+    const ziggy_module = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     const unit_tests = b.addTest(.{
         .root_module = ziggy_module,
@@ -299,7 +304,7 @@ pub fn setupTests(
     b.root.root_dir.handle.access(b.graph.io, "tests/ziggy", .{}) catch {
         const fail = b.addFail("snapshot test folder is missing, can't run tests (note: snapshot tests are not included in the ziggy manifest)");
         git_add.step.dependOn(&fail.step);
-        return;
+        return test_step;
     };
 
     // errors - ast
@@ -392,8 +397,58 @@ pub fn setupTests(
             git_add.step.dependOn(&update_snap.step);
         }
     }
+
+    return test_step;
 }
 
+pub fn setupFuzzStep(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    test_step: *std.Build.Step,
+    ziggy_module: *std.Build.Module,
+) void {
+    if (!(b.option(bool, "fuzz", "enable fuzzing") orelse false)) {
+        return;
+    }
+
+    const afl_obj = b.addObject(.{
+        .name = "fuzz",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/fuzz/afl.zig"),
+            .target = target,
+            .optimize = .ReleaseSafe,
+            .single_threaded = true,
+        }),
+    });
+
+    afl_obj.root_module.addImport("ziggy", ziggy_module);
+
+    // Required options:
+    afl_obj.root_module.stack_check = false; // not linking with compiler-rt
+    afl_obj.root_module.link_libc = true; // afl runtime depends on libc
+    afl_obj.root_module.fuzz = true;
+    afl_obj.sanitize_coverage_trace_pc_guard = true;
+
+    // Generate an instrumented executable:
+    const afl_fuzz = afl.addInstrumentedExe(b, target, .ReleaseSafe, null, true, afl_obj, &.{});
+
+    // Install it
+    test_step.dependOn(&b.addInstallBinFile(afl_fuzz orelse return, "fuzz").step);
+
+    const repro = b.addExecutable(.{
+        .name = "fuzz-repro",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/fuzz/afl-repro.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .single_threaded = true,
+        }),
+    });
+
+    repro.root_module.addImport("ziggy", ziggy_module);
+
+    test_step.dependOn(&b.addInstallArtifact(repro, .{}).step);
+}
 const Version = union(Kind) {
     tag: []const u8,
     commit: []const u8,
