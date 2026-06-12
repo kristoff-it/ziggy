@@ -147,7 +147,8 @@ pub fn @"textDocument/didOpen"(
         },
     };
 
-    const language = std.meta.stringToEnum(logic.Language, language_id) orelse {
+    const language = std.meta.stringToEnum(logic.Language, language_id) orelse blk: {
+        if (std.mem.eql(u8, language_id, "ziggy-schema")) break :blk .ziggy_schema;
         log.debug(
             "unrecognized language id: '{s}' (must be one of {{supermd, ziggy, ziggy_schema}}",
             .{language_id},

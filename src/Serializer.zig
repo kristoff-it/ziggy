@@ -23,7 +23,7 @@ pub const Options = struct {
 };
 
 /// Turn a Zig value into a Ziggy Document.
-pub fn serialize(value: anytype, opts: Serializer.Options, writer: *Io.Writer) !void {
+pub fn serialize(value: anytype, opts: Serializer.Options, writer: *Io.Writer) Io.Writer.Error!void {
     var serializer: Serializer = .{ .opts = opts, .writer = writer };
     try serializer.serializeOne(value, 0, 0);
 }

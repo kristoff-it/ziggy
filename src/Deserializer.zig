@@ -123,12 +123,16 @@ pub const Meta = struct {
                 var tok_slice = meta.error_loc.slice(src);
                 if (tok_slice.len == 0) {
                     tok_slice = "EOF";
-                } else if (e != error.UnexpectedValue) {
-                    tok_slice = switch (tok_slice[0]) {
+                } else switch (e) {
+                    error.DuplicateField,
+                    error.UnknownField,
+                    => tok_slice = switch (tok_slice[0]) {
                         '.' => tok_slice[1..],
                         '"' => tok_slice[1 .. tok_slice.len - 1],
                         else => unreachable,
-                    };
+                    },
+                    error.UnexpectedValue, error.UnexpectedToken => {},
+                    else => unreachable,
                 }
                 try w.print(" '{s}'", .{tok_slice});
             },
@@ -384,7 +388,13 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
             else => return d.unexpectedValue(first),
         },
         .comptime_float, .float => switch (first.tag) {
-            .integer, .float => {
+            .integer => {
+                return @floatFromInt(std.fmt.parseInt(i64, first.loc.slice(d.src), 0) catch {
+                    // The token was already validated and parsing floats cannot overflow.
+                    unreachable;
+                });
+            },
+            .float => {
                 return std.fmt.parseFloat(T, first.loc.slice(d.src)) catch {
                     // The token was already validated and parsing floats cannot overflow.
                     unreachable;
@@ -622,7 +632,12 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                 return ptr;
             },
             .slice => switch (info.child) {
-                u8 => return d.parseBytes(T, first),
+                u8 => {
+                    switch (first.tag) {
+                        .bytes, .bytes_line => return d.parseBytes(T, first),
+                        else => return d.unexpectedValue(first),
+                    }
+                },
                 else => {
                     if (first.tag != .lsb) return d.unexpected(first);
 
@@ -671,10 +686,15 @@ inline fn finalizeStruct(
     seen: anytype,
     last: Token,
 ) Error!void {
-    inline for (info.field_names, info.field_attrs, 0..) |f_name, f_attrs, idx| {
+    inline for (
+        info.field_names,
+        info.field_types,
+        info.field_attrs,
+        0..,
+    ) |f_name, f_type, f_attrs, idx| {
         if (!seen.isSet(idx)) {
             if (f_attrs.default_value_ptr != null) {
-                @field(result, f_name) = f_attrs.defaultValue().?;
+                @field(result, f_name) = f_attrs.defaultValue(f_type).?;
             } else {
                 return d.missingField(last, f_name);
             }
@@ -760,9 +780,10 @@ fn parseBytes(
     switch (first_token.tag) {
         .bytes => {
             // TODO: avoid unnecessary copies
+            const str = first_token.loc.slice(d.src);
             const bytes = std.zig.string_literal.parseAlloc(
                 d.gpa,
-                first_token.loc.slice(d.src),
+                str,
             ) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 error.InvalidLiteral => unreachable,

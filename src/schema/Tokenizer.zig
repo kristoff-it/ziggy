@@ -263,7 +263,7 @@ pub fn next(t: *Tokenizer, src: [:0]const u8) Token {
                 return tok;
             },
             '{' => {
-                if (std.mem.eql(u8, src[t.idx .. t.idx + 3], "{:}")) {
+                if (std.mem.startsWith(u8, src[t.idx..], "{:}")) {
                     t.idx += 3;
                     tok.tag = .opt_dict_sigil;
                     tok.loc.end = t.idx;

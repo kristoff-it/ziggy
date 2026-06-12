@@ -250,6 +250,7 @@ pub fn fmtZiggy(
     if (ast.errors.len > 0) {
         _ = std.debug.lockStderr(&.{});
         for (ast.errors) |err| {
+            if (err.tag == .wrong_field_style) continue;
             const sel = err.main_location.getSelection(src);
             std.debug.print("{s}:{}:{} {f}\n", .{
                 path orelse "<stdin>",

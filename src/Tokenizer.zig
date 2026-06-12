@@ -361,10 +361,23 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             },
 
             '"' => {
-                const slice = src[0..t.idx];
-                t.idx += 1;
-                if (!evenSlashes(slice)) continue :state .bytes;
-                tok.tag = .bytes;
+                {
+                    const slice = src[0..t.idx];
+                    t.idx += 1;
+                    if (!evenSlashes(slice)) continue :state .bytes;
+                }
+
+                const slice = src[tok.loc.start..t.idx];
+                var discard: std.Io.Writer.Discarding = .init(&.{});
+                const tag: Token.Tag = switch (std.zig.string_literal.parseWrite(
+                    &discard.writer,
+                    slice,
+                ) catch std.zig.string_literal.Result{ .failure = .empty_char_literal }) {
+                    .success => .bytes,
+                    .failure => .invalid,
+                };
+
+                tok.tag = tag;
                 tok.loc.end = t.idx;
                 return tok;
             },
@@ -470,15 +483,9 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
 
 fn finishNumber(t: Tokenizer, tok: *Token, src: [:0]const u8) void {
     tok.loc.end = t.idx;
-    // TODO: implement this natively
-    var minus_minus = tok.loc;
-    if (minus_minus.slice(src)[0] == '-') {
-        minus_minus.start += 1;
-    }
+    const n = tok.loc.slice(src);
 
-    const n = minus_minus.slice(src);
-
-    _ = std.fmt.parseInt(u64, n, 10) catch {
+    _ = std.fmt.parseInt(i64, n, 0) catch {
         _ = std.fmt.parseFloat(f32, n) catch {
             tok.tag = .invalid;
             return;

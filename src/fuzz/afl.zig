@@ -22,6 +22,47 @@ pub export fn zig_fuzz_test(buf: [*:0]const u8, len: isize) void {
     const end = std.mem.indexOfScalar(u8, buf[0..@intCast(len)], 0) orelse return;
     const src = buf[0..end :0];
 
+    // testAst(gpa, src);
+    testDeserializer(gpa, src);
+
+    // testSchemaAst(gpa, src);
+
+}
+
+fn testSchemaAst(gpa: std.mem.Allocator, src: [:0]const u8) void {
+    const schema_ast = ziggy.schema.Ast.init(gpa, src) catch unreachable;
+    defer schema_ast.deinit(gpa);
+
+    if (!schema_ast.has_syntax_errors) {
+        var r1_buf: Io.Writer.Allocating = .init(gpa);
+        defer r1_buf.deinit();
+
+        r1_buf.writer.print("{f}", .{schema_ast.fmt(src)}) catch unreachable;
+        const round1 = r1_buf.toOwnedSliceSentinel(0) catch unreachable;
+
+        eqlIgnoreWhitespace(src, round1);
+        if (true) return;
+
+        var r2_buf: Io.Writer.Allocating = .init(gpa);
+        defer r2_buf.deinit();
+
+        const ast2 = ziggy.Ast.init(gpa, round1, .{}) catch unreachable;
+        defer ast2.deinit(gpa);
+        ast2.render(round1, &r2_buf.writer) catch unreachable;
+        const round2 = r2_buf.toOwnedSliceSentinel(0) catch unreachable;
+
+        const ok = std.mem.eql(u8, round1, round2);
+        if (!ok) {
+            std.debug.panic("---- orig ----\n{s}[end]\n\n---- round1 ---\n{s}[end]\n---- round2 ----\n{s}[end]\n", .{
+                src,
+                round1,
+                round2,
+            });
+        }
+    }
+}
+
+fn testAst(gpa: std.mem.Allocator, src: []const u8) void {
     const ast = ziggy.Ast.init(gpa, src, .{}) catch unreachable;
     defer ast.deinit(gpa);
 
@@ -55,38 +96,6 @@ pub export fn zig_fuzz_test(buf: [*:0]const u8, len: isize) void {
             });
         }
     }
-
-    // if (html_ast.errors.len == 0) {
-    //     const super_ast = super.Ast.init(gpa, html_ast, src) catch unreachable;
-    //     defer super_ast.deinit(gpa);
-    // }
-
-    // if (html_ast.errors.len == 0) {
-    //     var out: std.Io.Writer.Allocating = .init(gpa);
-    //     defer out.deinit();
-
-    //     html_ast.render(src, &out.writer) catch unreachable;
-
-    //     eqlIgnoreWhitespace(src, out.written());
-
-    //     var full_circle: std.Io.Writer.Allocating = .init(gpa);
-    //     defer full_circle.deinit();
-
-    //     const html_ast1 = super.html.Ast.init(gpa, out.written(), .superhtml, false) catch unreachable;
-    //     defer html_ast1.deinit(gpa);
-
-    //     if (html_ast1.errors.len > 0) {
-    //         std.debug.panic("---- orig ----\n{s}[end]\n\n---- round1 ---\n{s}[end]\n", .{
-    //             src,
-    //             out.written(),
-    //         });
-    //     }
-
-    //     html_ast1.render(out.written(), &full_circle.writer) catch unreachable;
-
-    //     const super_ast = super.Ast.init(gpa, html_ast, src) catch unreachable;
-    //     defer super_ast.deinit(gpa);
-    // }
 }
 
 fn eqlIgnoreWhitespace(a: [:0]const u8, b: [:0]const u8) void {
@@ -100,7 +109,7 @@ fn eqlIgnoreWhitespace(a: [:0]const u8, b: [:0]const u8) void {
             const b_byte = b[j];
             if (std.ascii.isWhitespace(b_byte)) continue;
 
-            if (std.ascii.toUpper(a_byte) != std.ascii.toUpper(b_byte)) {
+            if (a_byte != b_byte) {
                 // std.debug.print("---- orig ---\n{f}\n---- round1 ----\n{f}\n", .{
                 //     std.zig.fmtString(a),
                 //     std.zig.fmtString(b),
@@ -122,4 +131,91 @@ fn eqlIgnoreWhitespace(a: [:0]const u8, b: [:0]const u8) void {
             continue :outer;
         }
     }
+}
+
+fn testDeserializer(gpa: std.mem.Allocator, src: [:0]const u8) void {
+    const types = .{
+        f32,                    i32,    bool,
+        []f32,                  []bool, ?f32,
+        ?bool,                  []?f32, []?i32,
+        []?bool,                bool,   []const u8,
+        struct { a: i32 },
+        struct {
+            a: i32,
+            b: bool,
+        },
+        struct {
+            a: i32,
+            b: bool,
+            c: []const u8,
+        },
+        struct {
+            a: i32 = 0,
+            b: bool = true,
+            c: []const u8 = "banana",
+        },
+        union(enum) { a: i32 },
+        union(enum) {
+            a: i32,
+            b: bool,
+        },
+        union(enum) {
+            a: i32,
+            b: bool,
+            c: []const u8,
+        },
+        union(enum) {
+            a: i32,
+            b: bool,
+            c: []const u8,
+        },
+    };
+
+    inline for (types) |T| testDeserializeType(T, gpa, src);
+}
+
+fn testDeserializeType(T: type, gpa: std.mem.Allocator, src: [:0]const u8) void {
+    var meta: ziggy.Deserializer.Meta = .init;
+    const res = ziggy.deserializeLeaky(T, gpa, src, &meta, .{}) catch |err| {
+        std.debug.assert(err != error.OutOfMemory);
+        std.debug.print("{f}", .{
+            meta.reportErrorsFmt(gpa, .{}, null, src, err),
+        });
+        return;
+    };
+
+    var aw: Io.Writer.Allocating = .init(gpa);
+    const w = &aw.writer;
+
+    ziggy.serialize(res, .{}, w) catch unreachable;
+
+    const round1 = aw.toOwnedSliceSentinel(0) catch unreachable;
+
+    meta = .init;
+    const res1 = ziggy.deserializeLeaky(T, gpa, round1, &meta, .{}) catch |err| {
+        std.debug.print("---- orig ----\n{s}\n---- round1 ----\n{s}[end]\n", .{
+            src,
+            round1,
+        });
+
+        std.debug.assert(err != error.OutOfMemory);
+        std.debug.print("{f}", .{
+            meta.reportErrorsFmt(gpa, .{}, null, src, err),
+        });
+
+        unreachable;
+    };
+
+    // switch (@typeInfo(T)) {
+    //     .@"union" => res1.a += 1,
+    //     else => {},
+    // }
+
+    std.testing.expectEqualDeep(res, res1) catch {
+        std.debug.print("---- orig ----\n{s}\n---- round1 ----\n{s}[end]\n", .{
+            src,
+            round1,
+        });
+        unreachable;
+    };
 }
