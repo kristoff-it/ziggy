@@ -10,20 +10,20 @@ const Language = @import("logic.zig").Language;
 
 const log = std.log.scoped(.lsp_document);
 
-src: [:0]const u8,
+src: [:0]u8,
 ast: ziggy.Ast,
 schema_uri: ?[]const u8 = null,
 language: Language,
 
-pub fn deinit(doc: *const Document, gpa: Allocator) void {
+pub fn deinit(doc: *const Document, gpa: Allocator, refresh: bool) void {
     doc.ast.deinit(gpa);
-    gpa.free(doc.src);
+    if (!refresh) gpa.free(doc.src);
 }
 
 pub fn init(
     gpa: Allocator,
     language: Language,
-    src: [:0]const u8,
+    src: [:0]u8,
 ) error{OutOfMemory}!Document {
     return .{
         .src = src,

@@ -38,5 +38,7 @@ fn setupInternal(io: Io, gpa: Allocator, environ_map: *std.process.Environ.Map) 
     defer cache_base.close(io);
 
     const f: Io.File = try cache_base.createFile(io, log_name, .{ .truncate = false });
-    log_writer = f.writerStreaming(io, &buf);
+    log_writer = f.writer(io, &buf);
+    const end = try f.length(io);
+    log_writer.seekTo(end) catch {};
 }

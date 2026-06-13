@@ -23,10 +23,8 @@ pub export fn zig_fuzz_test(buf: [*:0]const u8, len: isize) void {
     const src = buf[0..end :0];
 
     // testAst(gpa, src);
-    testDeserializer(gpa, src);
-
-    // testSchemaAst(gpa, src);
-
+    // testDeserializer(gpa, src);
+    testSchemaAst(gpa, src);
 }
 
 fn testSchemaAst(gpa: std.mem.Allocator, src: [:0]const u8) void {
@@ -41,24 +39,18 @@ fn testSchemaAst(gpa: std.mem.Allocator, src: [:0]const u8) void {
         const round1 = r1_buf.toOwnedSliceSentinel(0) catch unreachable;
 
         eqlIgnoreWhitespace(src, round1);
-        if (true) return;
 
         var r2_buf: Io.Writer.Allocating = .init(gpa);
         defer r2_buf.deinit();
 
-        const ast2 = ziggy.Ast.init(gpa, round1, .{}) catch unreachable;
-        defer ast2.deinit(gpa);
-        ast2.render(round1, &r2_buf.writer) catch unreachable;
+        const schema_ast2 = ziggy.schema.Ast.init(gpa, round1) catch unreachable;
+        defer schema_ast2.deinit(gpa);
+        r2_buf.writer.print("{f}", .{schema_ast2.fmt(round1)}) catch unreachable;
         const round2 = r2_buf.toOwnedSliceSentinel(0) catch unreachable;
 
-        const ok = std.mem.eql(u8, round1, round2);
-        if (!ok) {
-            std.debug.panic("---- orig ----\n{s}[end]\n\n---- round1 ---\n{s}[end]\n---- round2 ----\n{s}[end]\n", .{
-                src,
-                round1,
-                round2,
-            });
-        }
+        std.testing.expectEqualStrings(round1, round2) catch {
+            std.debug.panic("---- orig ----\n{s}[end]\n", .{src});
+        };
     }
 }
 

@@ -131,7 +131,7 @@ pub fn @"textDocument/didOpen"(
     const new_text = try self.gpa.dupeSentinel(u8, notification.textDocument.text, 0); // We informed the client that we only do full document syncs
     errdefer self.gpa.free(new_text);
 
-    std.log.debug("didopen! {t} {s}", .{
+    std.log.debug("didopen! {any} [{s}]", .{
         notification.textDocument.languageId,
         notification.textDocument.uri,
     });
@@ -171,11 +171,34 @@ pub fn @"textDocument/didChange"(
     notification: types.TextDocument.DidChangeParams,
 ) !void {
     if (notification.contentChanges.len == 0) return;
-    const new_text = try self.gpa.dupeSentinel(
-        u8,
-        notification.contentChanges[notification.contentChanges.len - 1].text_document_content_change_whole_document.text,
-        0,
-    ); // We informed the client that we only do full document syncs
+
+    const orig_txt: [:0]u8, const lang = if (self.docs.getPtr(notification.textDocument.uri)) |doc| .{
+        doc.src,
+        doc.language,
+    } else if (self.schemas.getPtr(notification.textDocument.uri)) |schema| .{
+        schema.src,
+        .ziggy_schema,
+    } else {
+        log.err("changeDocument failed: unknown doc: [{s}]", .{notification.textDocument.uri});
+        return error.InvalidParams;
+    };
+
+    var buffer: std.ArrayList(u8) = .fromOwnedSliceSentinel(0, orig_txt);
+    errdefer buffer.deinit(self.gpa);
+
+    for (notification.contentChanges) |content_change| {
+        switch (content_change) {
+            .text_document_content_change_whole_document => |change| {
+                buffer.clearRetainingCapacity();
+                try buffer.appendSlice(self.gpa, change.text);
+            },
+            .text_document_content_change_partial => |change| {
+                const loc = offsets.rangeToLoc(buffer.items, change.range, self.offset_encoding);
+                try buffer.replaceRange(self.gpa, loc.start, loc.end - loc.start, change.text);
+            },
+        }
+    }
+    const new_text = try buffer.toOwnedSliceSentinel(self.gpa, 0);
     errdefer self.gpa.free(new_text);
 
     try logic.loadFile(
@@ -183,12 +206,7 @@ pub fn @"textDocument/didChange"(
         arena,
         new_text,
         notification.textDocument.uri,
-        if (self.docs.get(notification.textDocument.uri)) |doc|
-            doc.language
-        else if (self.schemas.contains(notification.textDocument.uri))
-            .ziggy_schema
-        else
-            return,
+        lang,
     );
 }
 
@@ -204,13 +222,13 @@ pub fn @"textDocument/didClose"(
             if (schema.refs == 0 and !schema.open) {
                 const schema_kv = self.schemas.fetchRemove(schema_path).?;
                 self.gpa.free(schema_kv.key);
-                schema_kv.value.deinit(self.gpa);
+                schema_kv.value.deinit(self.gpa, false);
                 return;
             }
         }
 
         self.gpa.free(kv.key);
-        kv.value.deinit(self.gpa);
+        kv.value.deinit(self.gpa, false);
         return;
     }
 
@@ -222,7 +240,7 @@ pub fn @"textDocument/didClose"(
 
         const kv = self.schemas.fetchRemove(notification.textDocument.uri).?;
         self.gpa.free(kv.key);
-        kv.value.deinit(self.gpa);
+        kv.value.deinit(self.gpa, false);
         return;
     }
 }
@@ -232,18 +250,8 @@ pub fn @"textDocument/completion"(
     arena: std.mem.Allocator,
     request: types.completion.Params,
 ) error{OutOfMemory}!lsp.ResultType("textDocument/completion") {
-    if (true) return null;
-    const file = self.files.get(request.textDocument.uri) orelse return .{
-        .CompletionList = types.CompletionList{
-            .isIncomplete = false,
-            .items = &.{},
-        },
-    };
-
-    const doc = switch (file) {
-        .ziggy => |doc| doc,
-        .ziggy_schema => return null,
-    };
+    log.debug("completion request", .{});
+    const doc = self.docs.get(request.textDocument.uri) orelse return null;
 
     const offset = lsp.offsets.positionToIndex(
         doc.src,
@@ -253,52 +261,95 @@ pub fn @"textDocument/completion"(
 
     log.debug("completion at offset {}", .{offset});
 
-    switch (file) {
-        .ziggy => |z| {
-            const ast = z.ast orelse return .{
-                .CompletionList = types.CompletionList{
-                    .isIncomplete = false,
-                    .items = &.{},
-                },
-            };
+    const schema_path = doc.schema_uri orelse return null;
+    const schema = self.schemas.get(schema_path).?;
+    if (schema.ast.errors.len > 0) return null;
 
-            const ziggy_completion = ast.completionsForOffset(@intCast(offset));
+    const resolved = schema.ast.resolveZiggyOffset(
+        schema.src,
+        doc.ast,
+        doc.src,
+        @intCast(offset),
+    ) orelse return null;
+
+    var node = schema.ast.nodes[resolved.schema_idx];
+
+    c: switch (node.tag) {
+        .root, .root_expr, .type_expr => unreachable,
+        .struct_field, .union_field => {
+            node = schema.ast.nodes[node.parent_idx];
+            continue :c node.tag;
+        },
+        .@"struct", .@"union" => {
+            const scope = schema.ast.scopes.getPtr(resolved.schema_idx) orelse return null;
+
+            var existing_fields: std.StringHashMapUnmanaged(void) = .empty;
+            defer existing_fields.deinit(arena);
+            {
+                var ziggy_idx = resolved.ziggy_idx;
+                var ziggy_node = doc.ast.nodes[ziggy_idx];
+                z: switch (ziggy_node.tag) {
+                    .struct_field, .dict_field => {
+                        ziggy_idx = ziggy_node.parent_idx;
+                        if (ziggy_idx == 0) return null;
+                        ziggy_node = doc.ast.nodes[ziggy_idx];
+                        continue :z ziggy_node.tag;
+                    },
+                    .struct_v, .struct_h => {
+                        var field_idx = ziggy_idx + 1;
+                        while (field_idx < doc.ast.nodes.len) {
+                            const child_node = doc.ast.nodes[field_idx];
+                            if (child_node.parent_idx != ziggy_idx) break;
+
+                            const tok_src = doc.src[child_node.loc.start..];
+                            var t: ziggy.Tokenizer = .init(.none);
+                            const tok = t.next(tok_src, true);
+                            switch (tok.tag) {
+                                .identifier => {
+                                    try existing_fields.put(arena, tok.loc.slice(tok_src)[1..], {});
+                                },
+                                .bytes => {
+                                    const key = tok.loc.slice(tok_src);
+                                    try existing_fields.put(arena, key[1 .. key.len - 1], {});
+                                },
+                                else => {},
+                            }
+
+                            if (child_node.next_idx == 0) break;
+                            field_idx = child_node.next_idx;
+                        }
+                    },
+                    else => return null,
+                }
+            }
 
             const completions = try arena.alloc(
-                types.CompletionItem,
-                ziggy_completion.len,
+                types.completion.Item,
+                scope.fields.count(),
             );
 
-            for (completions, ziggy_completion) |*c, zc| {
-                c.* = .{
-                    .label = zc.name,
-                    .labelDetails = .{ .detail = zc.type },
+            var c_idx: u32 = 0;
+            for (scope.fields.keys()) |field| {
+                if (existing_fields.contains(field)) continue;
+                defer c_idx += 1;
+
+                completions[c_idx] = .{
+                    .label = field,
                     .kind = .Field,
-                    .insertText = zc.snippet,
-                    .insertTextFormat = .Snippet,
                     .documentation = .{
-                        .MarkupContent = .{
+                        .markup_content = .{
                             .kind = .markdown,
-                            .value = zc.desc,
+                            .value = "banana",
                         },
                     },
                 };
             }
 
-            return .{
-                .CompletionList = types.CompletionList{
-                    .isIncomplete = false,
-                    .items = completions,
-                },
-            };
-        },
-        .ziggy_schema => return .{
-            .CompletionList = types.CompletionList{
-                .isIncomplete = false,
-                .items = &.{},
-            },
+            return .{ .completion_items = completions[0..c_idx] };
         },
     }
+
+    return null;
 }
 
 pub fn @"textDocument/definition"(
@@ -317,15 +368,14 @@ pub fn @"textDocument/definition"(
     );
     log.debug("hover at offset {}", .{offset});
 
-    const node_idx = schema.ast.resolveZiggyOffset(
+    const resolved = schema.ast.resolveZiggyOffset(
         schema.src,
         doc.ast,
         doc.src,
         @intCast(offset),
-    );
-    if (node_idx == 0) return null;
+    ) orelse return null;
 
-    const node = schema.ast.nodes[node_idx];
+    const node = schema.ast.nodes[resolved.schema_idx];
     return .{
         .definition = types.Definition{
             .location = .{
@@ -354,16 +404,15 @@ pub fn @"textDocument/hover"(
     );
     log.debug("hover at offset {}", .{offset});
 
-    const node_idx = schema.ast.resolveZiggyOffset(
+    const resolved = schema.ast.resolveZiggyOffset(
         schema.src,
         doc.ast,
         doc.src,
         @intCast(offset),
-    );
-    if (node_idx == 0) return null;
+    ) orelse return null;
 
     var out: std.ArrayList(u8) = .empty;
-    const node = schema.ast.nodes[node_idx];
+    const node = schema.ast.nodes[resolved.schema_idx];
     log.debug("hover node: {any}", .{node});
     switch (node.tag) {
         .@"struct", .@"union", .struct_field, .union_field => {

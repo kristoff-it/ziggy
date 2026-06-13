@@ -21,7 +21,6 @@ scopes: Scopes = .empty,
 /// with the default `$ = any` schema, which is what `validateDefault` makes
 /// convenient to do.
 ///
-/// Asserts that the schema does not contain errors.
 /// Asserts that the document does not contain errors.
 /// Caller owns returned memory.
 pub fn validateDefault(
@@ -140,9 +139,9 @@ pub const Node = struct {
     tag: Tag,
     loc: Loc = undefined,
     // 0 = not present
-    // To disambiguate doc comments that start at index zero, when the field is
-    // set it points at the second slash in `///` so you must subtract 1 before
-    // retokenizing.
+    // To disambiguate doc comments that start at index zero, when the
+    // field is set, it points at the second slash in `///` so you must
+    // subtract 1 before retokenizing.
     docs_offset: u32 = 0,
 
     parent_idx: u32,
@@ -945,6 +944,7 @@ const Parser = struct {
     fn consume(p: *Parser) void {
         p.prev_loc = p.tok.loc;
         p.tok = p.tokenizer.next(p.src);
+        // log.debug("new tok: [{t}] '{s}'", .{ p.tok.tag, p.tok.loc.slice(p.src) });
     }
 
     fn node(p: *Parser) *Node {
@@ -2406,9 +2406,15 @@ fn loadExpr(
     }
 }
 
+pub const ResolvedOffset = struct {
+    scope_idx: u32,
+    schema_idx: u32,
+    ziggy_idx: u32,
+};
+
 /// Resolves an offset in a Ziggy document to a corresponding schema node, which
 /// can then be used for providing documentation, goto definition, etc.
-/// Returns 0 in case of resolution failure, which can happen if the Ziggy
+/// Returns `null` in case of resolution failure, which can happen if the Ziggy
 /// document contains errors.
 ///
 /// Asserts that the schema does not contain errors.
@@ -2418,7 +2424,7 @@ pub fn resolveZiggyOffset(
     ziggy_ast: ZiggyAst,
     ziggy_src: [:0]const u8,
     ziggy_offset: u32,
-) u32 {
+) ?ResolvedOffset {
     assert(schema_ast.errors.len == 0);
 
     var scope_idx: u32 = 0;
@@ -2436,17 +2442,25 @@ pub fn resolveZiggyOffset(
         });
 
         if (ziggy_node.loc.start > ziggy_offset or ziggy_node.loc.end <= ziggy_offset) {
-            return 0;
+            return null;
         }
 
         const t = tokenizer.next(schema_src);
         switch (t.tag) {
             .slice_sigil, .opt_slice_sigil => switch (ziggy_node.tag) {
-                .null => if (t.tag == .opt_slice_sigil) return schema_idx else return 0,
+                .null => if (t.tag == .opt_slice_sigil) return .{
+                    .scope_idx = scope_idx,
+                    .schema_idx = schema_idx,
+                    .ziggy_idx = ziggy_idx,
+                } else return null,
                 .array_h, .array_v => {
                     var child_idx = ziggy_idx + 1;
                     if (child_idx == ziggy_ast.nodes.len or
-                        ziggy_ast.nodes[child_idx].parent_idx != ziggy_idx) return schema_idx;
+                        ziggy_ast.nodes[child_idx].parent_idx != ziggy_idx) return .{
+                        .scope_idx = scope_idx,
+                        .schema_idx = schema_idx,
+                        .ziggy_idx = ziggy_idx,
+                    };
                     while (child_idx != 0) {
                         const child = ziggy_ast.nodes[child_idx];
                         defer child_idx = child.next_idx;
@@ -2457,12 +2471,20 @@ pub fn resolveZiggyOffset(
                         }
                     }
 
-                    return schema_idx;
+                    return .{
+                        .scope_idx = scope_idx,
+                        .schema_idx = schema_idx,
+                        .ziggy_idx = ziggy_idx,
+                    };
                 },
-                else => return 0,
+                else => return null,
             },
             .identifier, .opt_identifier => {
-                if (t.tag == .opt_identifier and ziggy_node.tag == .null) return schema_idx;
+                if (t.tag == .opt_identifier and ziggy_node.tag == .null) return .{
+                    .scope_idx = scope_idx,
+                    .schema_idx = schema_idx,
+                    .ziggy_idx = ziggy_idx,
+                };
 
                 const container_name = t.loc.slice(schema_src);
                 const container_idx = schema_ast.scopes.get(scope_idx).?.types.get(
@@ -2471,7 +2493,7 @@ pub fn resolveZiggyOffset(
                         .opt_identifier => container_name[1..],
                         else => unreachable,
                     },
-                ) orelse return 0;
+                ) orelse return null;
                 const info = containerInfo(schema_ast.nodes, schema_src, container_idx);
 
                 switch (info.kind) {
@@ -2483,7 +2505,11 @@ pub fn resolveZiggyOffset(
                                 if (field_idx == ziggy_ast.nodes.len or
                                     ziggy_ast.nodes[field_idx].parent_idx != ziggy_idx)
                                 {
-                                    return schema_idx;
+                                    return .{
+                                        .scope_idx = scope_idx,
+                                        .schema_idx = schema_idx,
+                                        .ziggy_idx = ziggy_idx,
+                                    };
                                 }
 
                                 while (field_idx != 0) {
@@ -2509,7 +2535,7 @@ pub fn resolveZiggyOffset(
                                             }
                                         };
                                         log.debug("resolve: field name: {s}\n", .{name});
-                                        const schema_field = schema_ast.scopes.get(container_idx).?.fields.get(name) orelse return 0;
+                                        const schema_field = schema_ast.scopes.get(container_idx).?.fields.get(name) orelse return null;
 
                                         // is the offset in the field or in the value?
                                         const value = ziggy_ast.nodes[field_idx + 1];
@@ -2526,13 +2552,21 @@ pub fn resolveZiggyOffset(
                                         }
 
                                         log.debug("resolve: field hit", .{});
-                                        return schema_field.idx;
+                                        return .{
+                                            .scope_idx = scope_idx,
+                                            .schema_idx = schema_field.idx,
+                                            .ziggy_idx = ziggy_idx,
+                                        };
                                     }
                                 }
 
-                                return container_idx;
+                                return .{
+                                    .scope_idx = scope_idx,
+                                    .schema_idx = container_idx,
+                                    .ziggy_idx = ziggy_idx,
+                                };
                             },
-                            else => return 0,
+                            else => return null,
                         }
                     },
                     .@"union" => switch (ziggy_node.tag) {
@@ -2549,7 +2583,7 @@ pub fn resolveZiggyOffset(
                                 break :blk raw[1 .. raw.len - 1]; // skip '.' and '('
 
                             };
-                            const schema_field = schema_ast.scopes.get(container_idx).?.fields.get(name) orelse return 0;
+                            const schema_field = schema_ast.scopes.get(container_idx).?.fields.get(name) orelse return null;
 
                             // is the offset in the field or in the value?
                             const value = ziggy_ast.nodes[ziggy_idx + 1];
@@ -2562,21 +2596,29 @@ pub fn resolveZiggyOffset(
                                 continue :outer;
                             }
 
-                            return schema_field.idx;
+                            return .{
+                                .scope_idx = scope_idx,
+                                .schema_idx = schema_field.idx,
+                                .ziggy_idx = ziggy_idx,
+                            };
                         },
-                        else => return 0,
+                        else => return null,
                     },
                 }
             },
             .dict_sigil, .opt_dict_sigil => {
                 switch (ziggy_node.tag) {
-                    .null => if (t.tag == .opt_dict_sigil) return schema_idx else return 0,
+                    .null => if (t.tag == .opt_dict_sigil) return .{
+                        .scope_idx = scope_idx,
+                        .schema_idx = schema_idx,
+                        .ziggy_idx = ziggy_idx,
+                    } else return null,
                     .dict_h, .dict_v => {
                         var field_idx = ziggy_idx + 1;
                         if (field_idx == ziggy_ast.nodes.len or
                             ziggy_ast.nodes[field_idx].parent_idx != ziggy_idx)
                         {
-                            return 0;
+                            return null;
                         }
 
                         while (field_idx != 0) {
@@ -2592,12 +2634,20 @@ pub fn resolveZiggyOffset(
                                     continue :outer;
                                 }
 
-                                return schema_idx;
+                                return .{
+                                    .scope_idx = scope_idx,
+                                    .schema_idx = schema_idx,
+                                    .ziggy_idx = ziggy_idx,
+                                };
                             }
                         }
-                        return schema_idx;
+                        return .{
+                            .scope_idx = scope_idx,
+                            .schema_idx = schema_idx,
+                            .ziggy_idx = ziggy_idx,
+                        };
                     },
-                    else => return 0,
+                    else => return null,
                 }
             },
             .opt_bytes_kw,
@@ -2609,7 +2659,11 @@ pub fn resolveZiggyOffset(
             .int_kw,
             .float_kw,
             .any_kw,
-            => return schema_idx,
+            => return .{
+                .scope_idx = scope_idx,
+                .schema_idx = schema_idx,
+                .ziggy_idx = ziggy_idx,
+            },
             else => unreachable,
         }
     }

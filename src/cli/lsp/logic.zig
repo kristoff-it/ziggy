@@ -14,18 +14,18 @@ pub const Language = enum { supermd, ziggy, ziggy_schema };
 pub fn loadFile(
     self: *Handler,
     arena: std.mem.Allocator,
-    new_text: [:0]const u8,
+    new_text: [:0]u8,
     uri: []const u8,
     language: Language,
 ) !void {
     switch (language) {
         .ziggy_schema => {
             var schema = Schema.init(self.gpa, new_text, true);
-            errdefer schema.deinit(self.gpa);
+            errdefer schema.deinit(self.gpa, false);
 
             const gop = try self.schemas.getOrPut(self.gpa, uri);
             if (gop.found_existing) {
-                gop.value_ptr.deinit(self.gpa);
+                gop.value_ptr.deinit(self.gpa, true);
                 gop.value_ptr.src = schema.src;
                 gop.value_ptr.ast = schema.ast;
             } else {
@@ -119,7 +119,7 @@ pub fn loadFile(
             const doc = try Document.init(self.gpa, language, new_text);
             const gop = try self.docs.getOrPut(self.gpa, uri);
             if (gop.found_existing) {
-                gop.value_ptr.deinit(self.gpa);
+                gop.value_ptr.deinit(self.gpa, true);
                 gop.value_ptr.src = doc.src;
                 gop.value_ptr.ast = doc.ast;
             } else {
@@ -146,7 +146,7 @@ pub fn loadFile(
                 break :blk try ziggy.schema.Ast.validateDefault(arena, doc.ast, doc.src);
             };
 
-            log.debug("sending {}  errors", .{doc.ast.errors.len + validation_errors.len});
+            log.debug("sending {} errors", .{doc.ast.errors.len + validation_errors.len});
             const diags = try arena.alloc(lsp.types.Diagnostic, doc.ast.errors.len + validation_errors.len);
             for (doc.ast.errors, diags[0..doc.ast.errors.len]) |err, *d| {
                 const msg = try std.fmt.allocPrint(arena, "{f}", .{err.tag});
@@ -239,7 +239,7 @@ pub fn schemaForZiggy(
 
         var schema = Schema.init(self.gpa, src, false);
         schema.refs = 1;
-        errdefer schema.deinit(self.gpa);
+        errdefer schema.deinit(self.gpa, false);
         const gpa_schema_uri = try self.gpa.dupe(u8, uri_schema);
         errdefer self.gpa.free(gpa_schema_uri);
         try self.schemas.putNoClobber(
@@ -287,7 +287,7 @@ pub fn schemaForZiggy(
 
         var schema = Schema.init(self.gpa, schema_src, false);
         schema.refs = 1;
-        errdefer schema.deinit(self.gpa);
+        errdefer schema.deinit(self.gpa, false);
         const gpa_dot_schema_uri = try self.gpa.dupe(u8, dot_schema_uri);
         try self.schemas.putNoClobber(
             self.gpa,

@@ -51,8 +51,6 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
 
-    logging.setup(io, gpa, init.environ_map);
-
     const args = init.minimal.args.toSlice(init.arena.allocator()) catch fatal("oom\n", .{});
 
     if (args.len < 2) fatalHelp();
@@ -63,6 +61,7 @@ pub fn main(init: std.process.Init) !void {
     };
 
     if (cmd == .lsp) lsp_mode = true;
+    logging.setup(io, gpa, init.environ_map);
 
     _ = switch (cmd) {
         .lsp => {
