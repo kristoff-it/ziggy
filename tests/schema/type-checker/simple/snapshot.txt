@@ -1,0 +1,4 @@
+root.RootErr1: schema field 'b' missing from struct definition
+root.RootErr2.c: does not exist in schema
+root.RootErr3.b_oops: does not exist in schema
+root.RootErr3: schema field 'b' missing from struct definition

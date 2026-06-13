@@ -1,0 +1,6 @@
+$ = Root
+
+struct Root {
+    a: bool,
+    b: int,
+}

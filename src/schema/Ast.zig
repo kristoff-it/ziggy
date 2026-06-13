@@ -1206,7 +1206,7 @@ const Parser = struct {
 
         const top_lvl_names = p.scopes.get(0).?.types;
         for (top_lvl_names.values()) |top_level_container_idx| {
-            log.debug("exploring top level type {}", .{top_level_container_idx});
+            // log.debug("exploring top level type {}", .{top_level_container_idx});
             assert(unexplored_paths.items.len == 0);
             assert(dfs_path.entries.len == 0);
 
@@ -2869,8 +2869,8 @@ test "resolve simple struct field" {
     const schema_ast: Ast = try .init(gpa, schema_src);
     defer schema_ast.deinit(gpa);
 
-    const schema_idx = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 7);
-    try std.testing.expectEqual(4, schema_idx);
+    const resolved = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 7);
+    try std.testing.expectEqual(4, resolved.?.schema_idx);
 }
 
 test "resolve simple struct field - braceless" {
@@ -2896,8 +2896,8 @@ test "resolve simple struct field - braceless" {
     const schema_ast: Ast = try .init(gpa, schema_src);
     defer schema_ast.deinit(gpa);
 
-    const schema_idx = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 2);
-    try std.testing.expectEqual(4, schema_idx);
+    const resolved = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 2);
+    try std.testing.expectEqual(4, resolved.?.schema_idx);
 }
 
 test "resolve value in struct" {
@@ -2925,8 +2925,8 @@ test "resolve value in struct" {
     const schema_ast: Ast = try .init(gpa, schema_src);
     defer schema_ast.deinit(gpa);
 
-    const schema_idx = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 13);
-    try std.testing.expectEqual(5, schema_idx);
+    const resolved = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 13);
+    try std.testing.expectEqual(5, resolved.?.schema_idx);
 }
 
 test "resolve value in nested struct - value" {
@@ -2958,8 +2958,8 @@ test "resolve value in nested struct - value" {
     const schema_ast: Ast = try .init(gpa, schema_src);
     defer schema_ast.deinit(gpa);
 
-    const schema_idx = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 13);
-    try std.testing.expectEqual(6, schema_idx);
+    const resolved = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 13);
+    try std.testing.expectEqual(6, resolved.?.schema_idx);
 }
 
 test "resolve value in nested struct" {
@@ -2991,8 +2991,8 @@ test "resolve value in nested struct" {
     const schema_ast: Ast = try .init(gpa, schema_src);
     defer schema_ast.deinit(gpa);
 
-    const schema_idx = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 16);
-    try std.testing.expectEqual(7, schema_idx);
+    const resolved = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 16);
+    try std.testing.expectEqual(7, resolved.?.schema_idx);
 }
 
 test "resolve value in dict" {
@@ -3016,8 +3016,8 @@ test "resolve value in dict" {
     const schema_ast: Ast = try .init(gpa, schema_src);
     defer schema_ast.deinit(gpa);
 
-    const schema_idx = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 5);
-    try std.testing.expectEqual(2, schema_idx);
+    const resolved = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 5);
+    try std.testing.expectEqual(2, resolved.?.schema_idx);
 }
 
 test "resolve value in dict value" {
@@ -3044,8 +3044,8 @@ test "resolve value in dict value" {
     const schema_ast: Ast = try .init(gpa, schema_src);
     defer schema_ast.deinit(gpa);
 
-    const schema_idx = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 16);
-    try std.testing.expectEqual(4, schema_idx);
+    const resolved = schema_ast.resolveZiggyOffset(schema_src, ziggy_ast, ziggy_src, 16);
+    try std.testing.expectEqual(4, resolved.?.schema_idx);
 }
 
 test "validate structs" {
