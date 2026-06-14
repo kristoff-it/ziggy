@@ -6,7 +6,9 @@ const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
 const Serializer = @import("Serializer.zig");
 const Deserializer = @import("Deserializer.zig");
-const deserializeLeaky = @import("root.zig").deserializeLeaky;
+const root = @import("root.zig");
+const deserializeLeaky = root.deserializeLeaky;
+const Options = root.Options;
 
 /// A type capable of deserializing from, and serializing to, any Zig Document.
 pub const Dynamic = union(enum) {
@@ -24,98 +26,101 @@ pub const Dynamic = union(enum) {
     bool: bool,
     null,
 
-    pub const ziggy_options = struct {
-        pub fn serialize(
-            s: *const Serializer,
-            value: Dynamic,
-            indent_level: usize,
-            depth: usize,
-        ) !void {
-            const w = s.writer;
-            const opts = s.opts;
-            switch (value) {
-                inline .bool, .integer, .float => |b| try w.print("{}", .{b}),
-                .null => try w.writeAll("null"),
-                .bytes => |b| try w.print(
-                    "\"{}\"",
-                    .{std.zig.fmtEscapes(b)},
-                ),
-                .@"enum" => |tag| try w.print(
-                    ".{s}",
-                    .{tag},
-                ),
-                .@"union" => |un| {
-                    try w.print(".{s}(", .{un.tag});
-                    try un.value.ziggy_options.serialize(
-                        un.value.*,
-                        opts,
-                        indent_level,
-                        depth,
-                        w,
-                    );
-                    try w.writeAll(")");
-                },
-                .kv => |kv| try Dictionary(Dynamic).ziggy_options.serialize(
-                    kv,
-                    opts,
-                    indent_level,
-                    depth,
-                    w,
-                ),
-                .array => |array| {
-                    try w.writeAll("[");
-                    for (array, 0..) |e, idx| {
-                        try e.ziggy_options.serialize(e, opts, indent_level, depth, w);
-                        if (idx < array.len - 1) {
-                            try w.writeAll(", ");
-                        }
-                    }
-                    try w.writeAll("]");
-                },
-            }
-        }
-
-        pub fn deserialize(
-            d: *const Deserializer,
-            first: Token,
-            top_lvl: bool,
-        ) Deserializer.Error!Dynamic {
-            switch (first.tag) {
-                .null => return .null,
-                .true => return .{ .bool = true },
-                .false => return .{ .bool = false },
-                .integer => return .{
-                    .integer = try d.deserializeOne(i64, first, false),
-                },
-                .float, .pos_inf, .neg_inf, .nan => return .{
-                    .float = try d.deserializeOne(f64, first, false),
-                },
-                .bytes, .bytes_line => return .{
-                    .bytes = try d.deserializeOne([]const u8, first, false),
-                },
-                .identifier, .dotlb, .lb => return .{
-                    .kv = try d.deserializeOne(Dictionary(Dynamic), first, top_lvl),
-                },
-                .@"enum" => return .{ .@"enum" = first.loc.slice(d.src)[1..] },
-                .union_case => return .{
-                    .tag = blk: {
-                        const raw = first.loc.slice(d.src)[1..]; // skip '.'
-                        break :blk raw[0 .. raw.len - 1]; // skip '('
-                    },
-                    .value = try d.deserializeOne(*Dynamic, d.next(), false),
-                },
-                .lsb => {
-                    return .{
-                        .array = try d.deserializeOne([]const Dynamic, first, false),
-                    };
-                },
-                else => return d.unexpected(first),
-            }
-        }
+    pub const ziggy_options: Options(Dynamic) = .{
+        .serialize = serializeDynamic,
+        .deserialize = deserializeDynamic,
+        .roles = .any,
     };
 };
 
-/// Thin wrapper over std.StringArrayHashMapUnmanaged
+fn serializeDynamic(
+    s: *const Serializer,
+    value: Dynamic,
+    indent_level: usize,
+    depth: usize,
+) Writer.Error!void {
+    const w = s.writer;
+    const opts = s.opts;
+    switch (value) {
+        inline .bool, .integer, .float => |b| try w.print("{}", .{b}),
+        .null => try w.writeAll("null"),
+        .bytes => |b| try w.print(
+            "\"{}\"",
+            .{std.zig.fmtEscapes(b)},
+        ),
+        .@"enum" => |tag| try w.print(
+            ".{s}",
+            .{tag},
+        ),
+        .@"union" => |un| {
+            try w.print(".{s}(", .{un.tag});
+            try un.value.ziggy_options.serialize(
+                un.value.*,
+                opts,
+                indent_level,
+                depth,
+                w,
+            );
+            try w.writeAll(")");
+        },
+        .kv => |kv| try Dictionary(Dynamic).ziggy_options.serialize(
+            kv,
+            opts,
+            indent_level,
+            depth,
+            w,
+        ),
+        .array => |array| {
+            try w.writeAll("[");
+            for (array, 0..) |e, idx| {
+                try e.ziggy_options.serialize(e, opts, indent_level, depth, w);
+                if (idx < array.len - 1) {
+                    try w.writeAll(", ");
+                }
+            }
+            try w.writeAll("]");
+        },
+    }
+}
+
+fn deserializeDynamic(
+    d: *const Deserializer,
+    first: Token,
+    top_lvl: bool,
+) Deserializer.Error!Dynamic {
+    switch (first.tag) {
+        .null => return .null,
+        .true => return .{ .bool = true },
+        .false => return .{ .bool = false },
+        .integer => return .{
+            .integer = try d.deserializeOne(i64, first, false),
+        },
+        .float, .pos_inf, .neg_inf, .nan => return .{
+            .float = try d.deserializeOne(f64, first, false),
+        },
+        .bytes, .bytes_line => return .{
+            .bytes = try d.deserializeOne([]const u8, first, false),
+        },
+        .identifier, .dotlb, .lb => return .{
+            .kv = try d.deserializeOne(Dictionary(Dynamic), first, top_lvl),
+        },
+        .@"enum" => return .{ .@"enum" = first.loc.slice(d.src)[1..] },
+        .union_case => return .{
+            .tag = blk: {
+                const raw = first.loc.slice(d.src)[1..]; // skip '.'
+                break :blk raw[0 .. raw.len - 1]; // skip '('
+            },
+            .value = try d.deserializeOne(*Dynamic, d.next(), false),
+        },
+        .lsb => {
+            return .{
+                .array = try d.deserializeOne([]const Dynamic, first, false),
+            };
+        },
+        else => return d.unexpected(first),
+    }
+}
+
 pub fn Dictionary(comptime T: type) type {
     return struct {
         container_kind: enum { @"struct", dict } = .@"struct",
@@ -123,155 +128,198 @@ pub fn Dictionary(comptime T: type) type {
 
         const Self = @This();
         const Child = T;
-        pub const ziggy_options = struct {
-            pub fn deserialize(
-                d: *const Deserializer,
-                first: Token,
-                top_lvl: bool,
-            ) Deserializer.Error!Self {
-                var result: Self = .{};
-                var field_token = if (top_lvl and first.tag == .identifier)
-                    first
-                else switch (first.tag) {
-                    .eod, .eof => {
-                        d.meta.doc = .{ .lines = d.tokenizer.lines, .end = first.loc.end };
-                        return if (top_lvl) result else d.unexpected(first);
+
+        pub const ziggy_options: Options(Self) = .{
+            .serialize = serializeDict,
+            .deserialize = deserializeDict,
+            .roles = .{
+                .some = .{
+                    .dict = Child,
+                },
+            },
+        };
+
+        fn serializeDict(
+            s: *const Serializer,
+            value: Self,
+            indent_level: usize,
+            depth: usize,
+        ) !void {
+            const w = s.writer;
+            const opts = s.opts;
+
+            const omit_curlies = opts.omit_top_level_curlies and depth == 0;
+            const indent = if (omit_curlies) indent_level else indent_level + 1;
+            const item_count = value.fields.count();
+
+            switch (value.container_kind) {
+                .@"struct" => if (!omit_curlies) try w.writeAll(".{"),
+                .dict => try w.writeAll("{"),
+            }
+            if (!omit_curlies) try s.indent(indent);
+
+            var idx: usize = 1;
+            var fields_it = value.fields.iterator();
+            switch (value.container_kind) {
+                .@"struct" => {
+                    while (fields_it.next()) |entry| : (idx += 1) {
+                        if (opts.whitespace == .minified) {
+                            try w.print(".{s}=", .{entry.key_ptr.*});
+                        } else {
+                            try w.print(".{s} = ", .{entry.key_ptr.*});
+                        }
+                        try s.serializeOne(entry.value_ptr.*, indent, depth + 1);
+
+                        if (idx < item_count) {
+                            try w.writeAll(",");
+                            try s.indent(indent);
+                        }
+                    }
+                },
+                .dict => {
+                    while (fields_it.next()) |entry| : (idx += 1) {
+                        if (opts.whitespace == .minified) {
+                            try w.print("\"{s}\":", .{entry.key_ptr.*});
+                        } else {
+                            try w.print("\"{s}\": ", .{entry.key_ptr.*});
+                        }
+                        try s.serializeOne(entry.value_ptr.*, indent, depth + 1);
+                        if (idx < item_count) {
+                            try w.writeAll(",");
+                            try s.indent(indent);
+                        }
+                    }
+                },
+            }
+            if (!omit_curlies) {
+                if (item_count > 0 and opts.whitespace != .minified) try w.writeAll(",");
+                try s.indent(indent_level);
+                try w.writeAll("}");
+            }
+        }
+
+        fn deserializeDict(
+            d: *const Deserializer,
+            first: Token,
+            top_lvl: bool,
+        ) Deserializer.Error!Self {
+            var result: Self = .{};
+            var field_token = if (top_lvl and first.tag == .identifier)
+                first
+            else switch (first.tag) {
+                .eod, .eof => {
+                    d.meta.doc = .{ .lines = d.tokenizer.lines, .end = first.loc.end };
+                    return if (top_lvl) result else d.unexpected(first);
+                },
+                .lb => return deserializeDictInner(d, first),
+                .dotlb => blk: {
+                    const tok = d.next();
+                    if (tok.tag != .identifier) return d.unexpected(tok);
+                    break :blk tok;
+                },
+                else => return d.unexpected(first),
+            };
+
+            assert(field_token.tag == .identifier);
+            while (true) {
+                switch (field_token.tag) {
+                    .identifier => {},
+                    .rb, .eod, .eof => {
+                        if (first.tag == .identifier) switch (field_token.tag) {
+                            // braceless top lvl struct
+                            .eof => {},
+                            .eod => d.meta.doc = .{
+                                .lines = d.tokenizer.lines,
+                                .end = field_token.loc.end,
+                            },
+                            else => return d.unexpected(field_token),
+                        } else switch (field_token.tag) {
+                            .rb => {},
+                            else => return d.unexpected(field_token),
+                        }
+                        return result;
                     },
-                    .lb => return deserializeDict(d, first),
-                    .dotlb => blk: {
-                        const tok = d.next();
-                        if (tok.tag != .identifier) return d.unexpected(tok);
-                        break :blk tok;
-                    },
-                    else => return d.unexpected(first),
+                    else => return d.unexpected(field_token),
+                }
+                const name = field_token.loc.slice(d.src)[1..]; // skip '.'
+
+                const eql = d.next();
+                if (eql.tag != .eql) return d.unexpected(eql);
+
+                const gop = try result.fields.getOrPut(d.gpa, name);
+                if (gop.found_existing) return d.duplicateField(field_token);
+                gop.value_ptr.* = try d.deserializeOne(T, d.next(), false);
+                if (d.peek() == .comma) _ = d.next();
+                field_token = d.next();
+                continue;
+            }
+            comptime unreachable;
+        }
+
+        fn deserializeDictInner(
+            d: *const Deserializer,
+            first: Token,
+        ) Deserializer.Error!Self {
+            assert(first.tag == .lb);
+            var result: Self = .{ .container_kind = .dict };
+            var field_token = d.next();
+            while (true) {
+                switch (field_token.tag) {
+                    .bytes => {},
+                    .rb => return result,
+                    else => return d.unexpected(field_token),
+                }
+
+                const name = blk: {
+                    const raw = field_token.loc.slice(d.src)[1..]; // skip first '"'
+                    break :blk raw[0 .. raw.len - 1]; // skip second '"'
                 };
 
-                assert(field_token.tag == .identifier);
-                while (true) {
-                    switch (field_token.tag) {
-                        .identifier => {},
-                        .rb, .eod, .eof => {
-                            if (first.tag == .identifier) switch (field_token.tag) {
-                                // braceless top lvl struct
-                                .eof => {},
-                                .eod => d.meta.doc = .{
-                                    .lines = d.tokenizer.lines,
-                                    .end = field_token.loc.end,
-                                },
-                                else => return d.unexpected(field_token),
-                            } else switch (field_token.tag) {
-                                .rb => {},
-                                else => return d.unexpected(field_token),
-                            }
-                            return result;
-                        },
-                        else => return d.unexpected(field_token),
-                    }
-                    const name = field_token.loc.slice(d.src)[1..]; // skip '.'
+                const colon = d.next();
+                if (colon.tag != .colon) return d.unexpected(colon);
 
-                    const eql = d.next();
-                    if (eql.tag != .eql) return d.unexpected(eql);
-
-                    const gop = try result.fields.getOrPut(d.gpa, name);
-                    if (gop.found_existing) return d.duplicateField(field_token);
-                    gop.value_ptr.* = try d.deserializeOne(T, d.next(), false);
-                    if (d.peek() == .comma) _ = d.next();
-                    field_token = d.next();
-                    continue;
-                }
-                comptime unreachable;
+                const gop = try result.fields.getOrPut(d.gpa, name);
+                if (gop.found_existing) return d.duplicateField(field_token);
+                gop.value_ptr.* = try d.deserializeOne(T, d.next(), false);
+                if (d.peek() == .comma) _ = d.next();
+                field_token = d.next();
+                continue;
             }
+            comptime unreachable;
+        }
+    };
+}
 
-            fn deserializeDict(
-                d: *const Deserializer,
-                first: Token,
-            ) Deserializer.Error!Self {
-                assert(first.tag == .lb);
-                var result: Self = .{ .container_kind = .dict };
-                var field_token = d.next();
-                while (true) {
-                    switch (field_token.tag) {
-                        .bytes => {},
-                        .rb => return result,
-                        else => return d.unexpected(field_token),
-                    }
+pub fn ArrayList(T: type) type {
+    return struct {
+        list: std.ArrayList(T),
 
-                    const name = blk: {
-                        const raw = field_token.loc.slice(d.src)[1..]; // skip first '"'
-                        break :blk raw[0 .. raw.len - 1]; // skip second '"'
-                    };
+        const Self = @This();
+        pub const Child = T;
+        pub const ziggy_options: root.Options(Self) = .{
+            .roles = .{ .some = .{ .slice = Child } },
 
-                    const colon = d.next();
-                    if (colon.tag != .colon) return d.unexpected(colon);
-
-                    const gop = try result.fields.getOrPut(d.gpa, name);
-                    if (gop.found_existing) return d.duplicateField(field_token);
-                    gop.value_ptr.* = try d.deserializeOne(T, d.next(), false);
-                    if (d.peek() == .comma) _ = d.next();
-                    field_token = d.next();
-                    continue;
+            .serialize = struct {
+                fn serialize(
+                    s: *const Serializer,
+                    value: Self,
+                    indent_level: usize,
+                    depth: usize,
+                ) std.Io.Writer.Error!void {
+                    try s.serializeOne(value.list.items, indent_level, depth);
                 }
-                comptime unreachable;
-            }
+            }.serialize,
 
-            pub fn serialize(
-                s: *const Serializer,
-                value: Self,
-                indent_level: usize,
-                depth: usize,
-            ) !void {
-                const w = s.writer;
-                const opts = s.opts;
-
-                const omit_curlies = opts.omit_top_level_curlies and depth == 0;
-                const indent = if (omit_curlies) indent_level else indent_level + 1;
-                const item_count = value.fields.count();
-
-                switch (value.container_kind) {
-                    .@"struct" => if (!omit_curlies) try w.writeAll(".{"),
-                    .dict => try w.writeAll("{"),
+            .deserialize = struct {
+                fn deserialize(
+                    d: *const Deserializer,
+                    first: Tokenizer.Token,
+                    top_lvl: bool,
+                ) Deserializer.Error!Self {
+                    const items = try d.deserializeOne([]Child, first, top_lvl);
+                    return .{ .list = .fromOwnedSlice(items) };
                 }
-                if (!omit_curlies) try s.indent(indent);
-
-                var idx: usize = 1;
-                var fields_it = value.fields.iterator();
-                switch (value.container_kind) {
-                    .@"struct" => {
-                        while (fields_it.next()) |entry| : (idx += 1) {
-                            if (opts.whitespace == .minified) {
-                                try w.print(".{s}=", .{entry.key_ptr.*});
-                            } else {
-                                try w.print(".{s} = ", .{entry.key_ptr.*});
-                            }
-                            try s.serializeOne(entry.value_ptr.*, indent, depth + 1);
-
-                            if (idx < item_count) {
-                                try w.writeAll(",");
-                                try s.indent(indent);
-                            }
-                        }
-                    },
-                    .dict => {
-                        while (fields_it.next()) |entry| : (idx += 1) {
-                            if (opts.whitespace == .minified) {
-                                try w.print("\"{s}\":", .{entry.key_ptr.*});
-                            } else {
-                                try w.print("\"{s}\": ", .{entry.key_ptr.*});
-                            }
-                            try s.serializeOne(entry.value_ptr.*, indent, depth + 1);
-                            if (idx < item_count) {
-                                try w.writeAll(",");
-                                try s.indent(indent);
-                            }
-                        }
-                    },
-                }
-                if (!omit_curlies) {
-                    if (item_count > 0 and opts.whitespace != .minified) try w.writeAll(",");
-                    try s.indent(indent_level);
-                    try w.writeAll("}");
-                }
-            }
+            }.deserialize,
         };
     };
 }
@@ -377,46 +425,48 @@ test "map + union stringify" {
                 hash: []const u8,
 
                 const Self = @This();
-                pub const ziggy_options = struct {
-                    pub fn serialize(
-                        s: *const Serializer,
-                        value: Self,
-                        indent_level: usize,
-                        depth: usize,
-                    ) !void {
-                        const w = s.writer;
-                        const opts = s.opts;
+                pub const ziggy_options: root.Options(Self) = .{
+                    .serialize = struct {
+                        pub fn serialize(
+                            s: *const Serializer,
+                            value: Self,
+                            indent_level: usize,
+                            depth: usize,
+                        ) !void {
+                            const w = s.writer;
+                            const opts = s.opts;
 
-                        const omit_curlies = opts.omit_top_level_curlies and depth == 0;
-                        const indent = if (omit_curlies) indent_level else indent_level + 1;
-                        if (!omit_curlies) {
-                            try w.writeAll(".{");
-                            try s.indent(indent);
+                            const omit_curlies = opts.omit_top_level_curlies and depth == 0;
+                            const indent = if (omit_curlies) indent_level else indent_level + 1;
+                            if (!omit_curlies) {
+                                try w.writeAll(".{");
+                                try s.indent(indent);
+                            }
+                            if (opts.whitespace == .minified) {
+                                try w.writeAll(".url=");
+                            } else {
+                                try w.writeAll(".url = ");
+                            }
+                            try s.serializeOne(value.url, indent, depth + 1);
+                            if (opts.whitespace == .minified) {
+                                try w.writeAll(",");
+                            } else {
+                                try w.writeAll(",");
+                                try s.indent(indent);
+                            }
+                            if (opts.whitespace == .minified) {
+                                try w.writeAll(".hash=");
+                            } else {
+                                try w.writeAll(".hash = ");
+                            }
+                            try s.serializeOne(value.hash, indent, depth + 1);
+                            if (!omit_curlies) {
+                                if (opts.whitespace != .minified) try w.writeAll(",");
+                                try s.indent(indent_level);
+                                try w.writeAll("}");
+                            }
                         }
-                        if (opts.whitespace == .minified) {
-                            try w.writeAll(".url=");
-                        } else {
-                            try w.writeAll(".url = ");
-                        }
-                        try s.serializeOne(value.url, indent, depth + 1);
-                        if (opts.whitespace == .minified) {
-                            try w.writeAll(",");
-                        } else {
-                            try w.writeAll(",");
-                            try s.indent(indent);
-                        }
-                        if (opts.whitespace == .minified) {
-                            try w.writeAll(".hash=");
-                        } else {
-                            try w.writeAll(".hash = ");
-                        }
-                        try s.serializeOne(value.hash, indent, depth + 1);
-                        if (!omit_curlies) {
-                            if (opts.whitespace != .minified) try w.writeAll(",");
-                            try s.indent(indent_level);
-                            try w.writeAll("}");
-                        }
-                    }
+                    }.serialize,
                 };
             },
             local: struct {
@@ -455,4 +505,27 @@ test "map + union stringify" {
 
     try Serializer.serialize(proj, .{ .whitespace = .space_4 }, &out.writer);
     try std.testing.expectEqualStrings(case, out.written());
+}
+
+test "arraylist basics" {
+    const case =
+        \\.foo = [1,2,3],
+        \\.bar = [4,5,6],
+        \\.baz = "banana",
+    ;
+    const T = struct {
+        foo: []const u16,
+        bar: ArrayList(u32),
+        baz: ArrayList(u8),
+    };
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var meta: Deserializer.Meta = .init;
+    const result = try deserializeLeaky(T, arena, case, &meta, .{});
+    try std.testing.expectEqualSlices(u16, &.{ 1, 2, 3 }, result.foo);
+    try std.testing.expectEqualSlices(u32, &.{ 4, 5, 6 }, result.bar.list.items);
+    try std.testing.expectEqualStrings("banana", result.baz.list.items);
 }

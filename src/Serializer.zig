@@ -3,6 +3,7 @@ const Serializer = @This();
 const std = @import("std");
 const Io = std.Io;
 const log = std.log.scoped(.serizalizer);
+const root = @import("root.zig");
 
 opts: Options,
 writer: *Io.Writer,
@@ -50,52 +51,54 @@ pub fn serializeOne(
             switch (ptr.size) {
                 .slice => {
                     switch (ptr.child) {
-                        u8 => try s.escapeString(value, indent_level),
-                        else => try s.serializeArray(value, indent_level, depth),
+                        u8 => return s.escapeString(value, indent_level),
+                        else => return s.serializeArray(value, indent_level, depth),
                     }
                 },
-                .one => try s.serializeOne(value.*, indent_level, depth),
+                .one => return s.serializeOne(value.*, indent_level, depth),
 
                 else => @compileError("expected a slice or single pointer, got a many/C pointer '" ++ @typeName(T) ++ "'"),
             }
         },
         .array => |arr| switch (arr.child) {
-            u8 => try s.escapeString(&value, indent_level),
-            else => try s.serializeArray(value, indent_level, depth),
+            u8 => return s.escapeString(&value, indent_level),
+            else => return s.serializeArray(value, indent_level, depth),
         },
 
         .@"enum" => {
-            if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "serialize")) {
-                try T.ziggy_options.serialize(s, value, indent_level, depth);
-            } else {
-                try w.print(".{t}", .{value});
-            }
+            if (root.getOptions(T)) |opts| if (opts.serialize) |ser| {
+                try ser(s, value, indent_level, depth);
+                return;
+            };
+
+            return w.print(".{t}", .{value});
         },
 
         .@"struct" => {
-            if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "serialize")) {
-                try T.ziggy_options.serialize(s, value, indent_level, depth);
-            } else {
-                try s.serializeStruct(value, indent_level, depth);
-            }
+            if (root.getOptions(T)) |opts| if (opts.serialize) |ser| {
+                try ser(s, value, indent_level, depth);
+                return;
+            };
+
+            return s.serializeStruct(value, indent_level, depth);
         },
         .@"union" => {
-            if (@hasDecl(T, "ziggy_options") and @hasDecl(T.ziggy_options, "serialize")) {
-                try T.ziggy_options.serialize(s, value, indent_level, depth);
-            } else {
-                try s.serializeUnion(value, indent_level, depth);
-            }
+            if (root.getOptions(T)) |opts| if (opts.serialize) |ser| {
+                try ser(s, value, indent_level, depth);
+                return;
+            };
+            return s.serializeUnion(value, indent_level, depth);
         },
 
         .optional => {
             if (value) |v| {
-                try s.serializeOne(v, indent_level, depth);
+                return s.serializeOne(v, indent_level, depth);
             } else {
-                try w.writeAll("null");
+                return w.writeAll("null");
             }
         },
 
-        else => @panic("TODO: implement support for " ++ @typeName(T)),
+        else => @compileError("Type " ++ @typeName(T) ++ " is not supported."),
     }
 }
 
@@ -200,20 +203,20 @@ fn serializeStructInner(
     const StructType = @TypeOf(strct);
     const info = @typeInfo(StructType).@"struct";
     const FE = std.meta.FieldEnum(StructType);
-    const has_skip_fields: bool = @hasDecl(StructType, "ziggy_options") and @hasDecl(
-        StructType.ziggy_options,
-        "skip_fields",
-    );
+    const skip_fields: []const std.meta.FieldEnum(StructType) = if (root.getOptions(StructType)) |ziggy_opts|
+        ziggy_opts.skip_fields
+    else
+        &.{};
+
     const field_count = blk: {
         var c: usize = 0;
         outer: inline for (info.field_names, info.field_types, 0..) |field_name, field_type, idx| {
-            if (has_skip_fields) {
-                @setEvalBranchQuota(1000);
-                const e: FE = @enumFromInt(idx);
-                inline for (StructType.ziggy_options.skip_fields) |sf| {
-                    if (sf == e) continue :outer;
-                }
+            @setEvalBranchQuota(1000);
+            const e: FE = @enumFromInt(idx);
+            inline for (skip_fields) |sf| {
+                if (sf == e) continue :outer;
             }
+
             switch (@typeInfo(field_type)) {
                 .optional => if (opts.emit_null_fields or @field(strct, field_name) != null) {
                     c += 1;
@@ -226,13 +229,12 @@ fn serializeStructInner(
     if (info.field_names.len > 0) {
         var print_idx: usize = 1;
         blk: {
-            if (has_skip_fields) {
-                @setEvalBranchQuota(1000);
-                const z: FE = @enumFromInt(0);
-                inline for (StructType.ziggy_options.skip_fields) |sf| {
-                    if (sf == z) break :blk;
-                }
+            @setEvalBranchQuota(1000);
+            const z: FE = @enumFromInt(0);
+            inline for (skip_fields) |sf| {
+                if (sf == z) break :blk;
             }
+
             switch (@typeInfo(info.field_types[0])) {
                 .optional => if (!opts.emit_null_fields and
                     @field(strct, info.field_names[0]) == null) break :blk,
@@ -255,17 +257,13 @@ fn serializeStructInner(
         }
 
         outer: inline for (info.field_names[1..], info.field_types[1..], 2..) |field_name, field_type, idx| {
-            // Skip fields mentioned under 'ziggy_options.skip_fields'
-            if (has_skip_fields) {
-                const skip_fields = StructType.ziggy_options.skip_fields;
-                if (@TypeOf(skip_fields) != []const FE) {
-                    @compileError("ziggy_options.skip_fields must be a []const std.meta.FieldEnum(T)");
-                }
+            if (@TypeOf(skip_fields) != []const FE) {
+                @compileError("ziggy_options.skip_fields must be a []const std.meta.FieldEnum(T)");
+            }
 
-                const sf_idx: FE = @enumFromInt(idx - 1);
-                inline for (skip_fields) |sf| { // did you 'pub *var*' skip_fields? (must be 'pub const')
-                    if (sf == sf_idx) continue :outer;
-                }
+            const sf_idx: FE = @enumFromInt(idx - 1);
+            inline for (skip_fields) |sf| { // did you 'pub *var*' skip_fields? (must be 'pub const')
+                if (sf == sf_idx) continue :outer;
             }
 
             const name = field_name;
@@ -591,8 +589,8 @@ test "simple struct + skip fields" {
         c: ?i16,
 
         const S = @This();
-        pub const ziggy_options = struct {
-            pub const skip_fields: []const std.meta.FieldEnum(S) = &.{.b};
+        pub const ziggy_options: root.Options(S) = .{
+            .skip_fields = &.{.b},
         };
     };
 

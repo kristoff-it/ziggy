@@ -1,4 +1,4 @@
 root.RootErr1.a: has type '[]const u8' which is incompatible with 'bool'
-root.RootErr2.b: has type '?[]const u8' which is incompatible with 'int'
-root.RootErr3.a: has type 'root.RootErr3__struct_28034' which is incompatible with 'bool'
+root.RootErr2.b: has type '[]const u16' which is incompatible with 'int'
+root.RootErr3.a: has type 'root.RootErr3.Foo' which is incompatible with 'bool'
 root.RootErr3.b: has type '[]const u8' which is incompatible with 'int'

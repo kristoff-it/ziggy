@@ -1,8 +1,2 @@
-root.RootOk.ziggy.schema:4:8: missing comma after field
-root.RootOk.ziggy.schema:6:8: unexpected token
-root.RootErr1.ziggy.schema:4:8: missing comma after field
-root.RootErr1.ziggy.schema:6:8: unexpected token
-root.RootErr2.ziggy.schema:4:8: missing comma after field
-root.RootErr2.ziggy.schema:6:8: unexpected token
-root.RootErr3.ziggy.schema:4:8: missing comma after field
-root.RootErr3.ziggy.schema:6:8: unexpected token
+root.RootErr.ziggy.schema:4:8: missing comma after field
+root.RootErr.ziggy.schema:6:8: unexpected token

@@ -161,6 +161,11 @@ pub const Node = struct {
             null;
     }
 
+    pub fn typeExpr(n: *const Node) Tokenizer {
+        assert(n.tag == .type_expr);
+        return .{ .idx = n.loc.start };
+    }
+
     pub const Tag = enum {
         root,
         root_expr,
@@ -172,6 +177,11 @@ pub const Node = struct {
     };
 };
 
+pub fn init(gpa: Allocator, src: [:0]const u8) !Ast {
+    var p: Parser = .{ .gpa = gpa, .src = src };
+    return p.parse();
+}
+
 pub fn deinit(ast: Ast, gpa: Allocator) void {
     gpa.free(ast.nodes);
     gpa.free(ast.errors);
@@ -182,16 +192,25 @@ pub fn deinit(ast: Ast, gpa: Allocator) void {
     @constCast(&ast.scopes).deinit(gpa);
 }
 
-pub fn init(gpa: Allocator, src: [:0]const u8) !Ast {
-    var p: Parser = .{ .gpa = gpa, .src = src };
-    return p.parse();
+/// Given a node index, returns a pointer to its first child or null.
+/// Use this function in contexts where the node might not have children,
+/// write the code explicitly otherwise (using asserts instead of branching).
+///
+/// If the child is present, it's idx is `parent_idx + 1`.
+pub fn child(ast: *const Ast, parent_idx: u32) ?*const Node {
+    assert(parent_idx < ast.nodes.len);
+    const child_idx = parent_idx + 1;
+    if (child_idx == ast.nodes.len) return null;
+    const ch = &ast.nodes[child_idx];
+    if (ch.parent_idx != parent_idx) return null;
+    return ch;
 }
 
 const ContainerKind = enum { @"struct", @"union" };
 const Parser = struct {
     gpa: Allocator,
     src: [:0]const u8,
-    tokenizer: Tokenizer = .{},
+    tokenizer: Tokenizer = .init,
     node_idx: u32 = 0,
     prev_loc: Loc = undefined,
     tok: Token = .{ .tag = .invalid, .loc = .{ .start = 0, .end = 0 } },
@@ -969,7 +988,7 @@ const Parser = struct {
         const container_idx, const scope_slot: u32 = switch (tag) {
             .@"struct", .@"union" => blk: {
                 add_to_parent_scope: {
-                    var t: Tokenizer = .{ .idx = p.tok.loc.end };
+                    var t: Tokenizer = .initFrom(p.tok.loc.end);
                     const name_tok = t.next(p.src);
                     if (name_tok.tag != .identifier) break :add_to_parent_scope;
                     const name = name_tok.loc.slice(p.src);
@@ -1445,8 +1464,9 @@ const Parser = struct {
                 }
 
                 const expr_idx = field.childIdx(fi.nodes) orelse continue;
+
                 const expr = fi.nodes[expr_idx];
-                var t: Tokenizer = .{ .idx = expr.loc.start };
+                var t: Tokenizer = .initFrom(expr.loc.start);
                 const tok = t.next(fi.src);
                 switch (tok.tag) {
                     else => continue,
@@ -1491,7 +1511,7 @@ const Parser = struct {
                     .union_field => {
                         const expr_idx = field.childIdx(fi.nodes) orelse return true;
                         const expr = fi.nodes[expr_idx];
-                        var t: Tokenizer = .{ .idx = expr.loc.start };
+                        var t: Tokenizer = .initFrom(expr.loc.start);
                         switch (t.next(fi.src).tag) {
                             .identifier => continue,
                             else => return true,
@@ -1551,7 +1571,7 @@ fn containerInfo(nodes: []const Node, src: [:0]const u8, container_idx: u32) Con
         .@"union" => .@"union",
         else => unreachable,
     };
-    var t: Tokenizer = .{ .idx = container.loc.start };
+    var t: Tokenizer = .initFrom(container.loc.start);
     _ = t.next(src);
     const tok = t.next(src);
     assert(tok.tag == .identifier);
@@ -1601,7 +1621,7 @@ const Fmt = struct {
             direction: switch (direction) {
                 .enter => {
                     const container_src = f.src[c.loc.start..]; // preserves null terminator
-                    var t: Tokenizer = .{};
+                    var t: Tokenizer = .init;
                     const container_kw = t.next(container_src);
                     assert(container_kw.tag == .struct_kw or container_kw.tag == .union_kw);
                     const name = t.next(container_src);
@@ -1628,7 +1648,7 @@ const Fmt = struct {
                             },
                             .struct_field, .union_field => {
                                 const field_src = f.src[elem.loc.start..];
-                                var field_t: Tokenizer = .{};
+                                var field_t: Tokenizer = .init;
                                 const field_name = field_t.next(field_src);
                                 assert(field_name.tag == .identifier);
                                 try f.printDocs(elem, w, indent);
@@ -1706,7 +1726,7 @@ const Fmt = struct {
         if (n.docs_offset == 0) return;
         const docs_src = f.src[n.docs_offset - 1 ..];
 
-        var t: Tokenizer = .{};
+        var t: Tokenizer = .init;
         while (true) {
             const tok = t.next(docs_src);
             if (tok.tag != .doc_comment_line) return;
@@ -2377,7 +2397,7 @@ fn loadExpr(
     stack: *std.ArrayList(Token),
     node_idx: u32,
 ) !void {
-    var tokenizer: Tokenizer = .{ .idx = schema_ast.nodes[node_idx].loc.start };
+    var tokenizer: Tokenizer = .initFrom(schema_ast.nodes[node_idx].loc.start);
     log.debug("load expr start", .{});
     while (true) {
         const t = tokenizer.next(schema_src);
@@ -2430,7 +2450,7 @@ pub fn resolveZiggyOffset(
     var scope_idx: u32 = 0;
     var ziggy_idx: u32 = 1;
     var schema_idx: u32 = 2; // root_expr
-    var tokenizer: Tokenizer = .{ .idx = schema_ast.nodes[schema_idx].loc.start };
+    var tokenizer: Tokenizer = .initFrom(schema_ast.nodes[schema_idx].loc.start);
     var ziggy_node = ziggy_ast.nodes[ziggy_idx];
 
     outer: while (true) {
@@ -2462,12 +2482,12 @@ pub fn resolveZiggyOffset(
                         .ziggy_idx = ziggy_idx,
                     };
                     while (child_idx != 0) {
-                        const child = ziggy_ast.nodes[child_idx];
-                        defer child_idx = child.next_idx;
+                        const ch = ziggy_ast.nodes[child_idx];
+                        defer child_idx = ch.next_idx;
 
-                        if (child.loc.start <= ziggy_offset and child.loc.end > ziggy_offset) {
+                        if (ch.loc.start <= ziggy_offset and ch.loc.end > ziggy_offset) {
                             ziggy_idx = child_idx;
-                            ziggy_node = child;
+                            ziggy_node = ch;
                         }
                     }
 
@@ -2513,15 +2533,15 @@ pub fn resolveZiggyOffset(
                                 }
 
                                 while (field_idx != 0) {
-                                    const child = ziggy_ast.nodes[field_idx];
-                                    defer field_idx = child.next_idx;
+                                    const ch = ziggy_ast.nodes[field_idx];
+                                    defer field_idx = ch.next_idx;
 
-                                    if (child.loc.start <= ziggy_offset and child.loc.end > ziggy_offset) {
+                                    if (ch.loc.start <= ziggy_offset and ch.loc.end > ziggy_offset) {
                                         const name = blk: {
                                             var name_t: ZiggyTokenizer = .{
                                                 .lines = 0,
                                                 .delimiter = .none,
-                                                .idx = child.loc.start,
+                                                .idx = ch.loc.start,
                                             };
                                             const tok = name_t.next(ziggy_src, true);
                                             assert(tok.tag == .identifier);
@@ -2539,7 +2559,7 @@ pub fn resolveZiggyOffset(
 
                                         // is the offset in the field or in the value?
                                         const value = ziggy_ast.nodes[field_idx + 1];
-                                        if (value.loc.start <= ziggy_offset and child.loc.end > ziggy_offset) {
+                                        if (value.loc.start <= ziggy_offset and ch.loc.end > ziggy_offset) {
                                             log.debug("resolve: value hit", .{});
                                             ziggy_idx = field_idx + 1;
                                             ziggy_node = value;
@@ -2622,13 +2642,13 @@ pub fn resolveZiggyOffset(
                         }
 
                         while (field_idx != 0) {
-                            const child = ziggy_ast.nodes[field_idx];
-                            defer field_idx = child.next_idx;
+                            const ch = ziggy_ast.nodes[field_idx];
+                            defer field_idx = ch.next_idx;
 
-                            if (child.loc.start <= ziggy_offset and child.loc.end > ziggy_offset) {
+                            if (ch.loc.start <= ziggy_offset and ch.loc.end > ziggy_offset) {
                                 // is the offset in the field or in the value?
                                 const value = ziggy_ast.nodes[field_idx + 1];
-                                if (value.loc.start <= ziggy_offset and child.loc.end > ziggy_offset) {
+                                if (value.loc.start <= ziggy_offset and ch.loc.end > ziggy_offset) {
                                     ziggy_idx = field_idx + 1;
                                     ziggy_node = value;
                                     continue :outer;

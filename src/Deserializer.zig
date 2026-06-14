@@ -1,13 +1,14 @@
 const Deserializer = @This();
 
 const std = @import("std");
-const Io = std.Io;
 const assert = std.debug.assert;
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const root = @import("root.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
 const Ast = @import("Ast.zig");
 const schema = @import("schema");
-const Allocator = std.mem.Allocator;
 
 gpa: Allocator,
 src: [:0]const u8,
@@ -426,11 +427,10 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
             else => return d.unexpectedValue(first),
         },
         .@"union" => |info| {
-            if (@hasDecl(T, "ziggy_options") and
-                @hasDecl(T.ziggy_options, "deserialize"))
-            {
-                return T.ziggy_options.deserialize(d, first, false);
-            }
+            if (root.getOptions(T)) |opt| if (opt.deserialize) |des| {
+                return des(d, first, false);
+            };
+
             if (info.tag_type == null) @compileError("cannot deserialize untagged unions");
             switch (first.tag) {
                 .identifier => {
@@ -443,11 +443,9 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                     } else return d.unknownField(first);
                 },
                 .union_case => {
-                    if (@hasDecl(T, "ziggy_options") and
-                        @hasDecl(T.ziggy_options, "deserialize"))
-                    {
-                        return T.ziggy_options.deserialize(d, first, false);
-                    }
+                    if (root.getOptions(T)) |opt| if (opt.deserialize) |des| {
+                        return des(d, first, false);
+                    };
                     const tag = blk: {
                         const raw = first.loc.slice(d.src)[1..]; // skip '.'
                         break :blk raw[0 .. raw.len - 1]; // skip '('
@@ -508,11 +506,9 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
             comptime unreachable;
         },
         .@"struct" => |info| {
-            if (@hasDecl(T, "ziggy_options") and
-                @hasDecl(T.ziggy_options, "deserialize"))
-            {
-                return T.ziggy_options.deserialize(d, first, top_lvl);
-            }
+            if (root.getOptions(T)) |opt| if (opt.deserialize) |des| {
+                return des(d, first, top_lvl);
+            };
 
             var seen: std.StaticBitSet(info.field_names.len) = .empty;
             var result: T = undefined;
@@ -561,43 +557,31 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                     else => return d.unexpected(field_token),
                 }
                 const name = field_token.loc.slice(d.src)[1..]; // skip '.'
+
+                const skip_fields: []const std.meta.FieldEnum(T) = if (root.getOptions(T)) |opts|
+                    opts.skip_fields
+                else
+                    &.{};
+
                 inline for (info.field_names, info.field_types, 0..) |f_name, f_type, idx| {
                     // We skip seen fields to optimize the happy path
                     if (!seen.isSet(idx) and std.mem.eql(u8, f_name, name)) {
                         const eql = d.next();
                         if (eql.tag != .eql) return d.unexpected(eql);
 
-                        if (@hasDecl(T, "ziggy_options") and
-                            @hasDecl(T.ziggy_options, "skip_fields"))
-                        blk: {
-                            const skip_fields = T.ziggy_options.skip_fields;
-                            if (@TypeOf(skip_fields) != []const std.meta.FieldEnum(T)) {
-                                @compileError(
-                                    "ziggy_options.skip_fields must be a []const std.meta.FieldEnum(T)",
-                                );
-                            }
+                        // skip fields
+                        if (std.mem.indexOfScalar(
+                            std.meta.FieldEnum(T),
+                            skip_fields,
+                            std.meta.stringToEnum(std.meta.FieldEnum(T), name).?,
+                        ) != null) return d.unknownField(field_token);
 
-                            if (std.mem.indexOfScalar(
-                                std.meta.FieldEnum(T),
-                                skip_fields,
-                                std.meta.stringToEnum(std.meta.FieldEnum(T), name).?,
-                            ) != null) return d.unknownField(field_token);
+                        @field(result, f_name) = try d.deserializeOne(
+                            f_type,
+                            d.next(),
+                            false,
+                        );
 
-                            // otherwise continue deserializing as normal
-                            break :blk;
-                        }
-
-                        if (@hasDecl(T, "ziggy_options") and
-                            @hasDecl(T.ziggy_options, "deserializeField"))
-                        {
-                            T.ziggy_options.deserializeField(d, &result, f_name, field_token);
-                        } else {
-                            @field(result, f_name) = try d.deserializeOne(
-                                f_type,
-                                d.next(),
-                                false,
-                            );
-                        }
                         seen.set(idx);
 
                         const has_comma = d.peek() == .comma;
@@ -733,17 +717,12 @@ inline fn deserializeDict(
             if (!seen.isSet(idx) and std.mem.eql(u8, f_name, name)) {
                 const colon = d.next();
                 if (colon.tag != .colon) return d.unexpected(colon);
-                if (@hasDecl(T, "ziggy_options") and
-                    @hasDecl(T.ziggy_options, "deserializeField"))
-                {
-                    T.ziggy_options.deserializeField(d, result, f_name, field_token);
-                } else {
-                    @field(result, f_name) = try d.deserializeOne(
-                        f_type,
-                        d.next(),
-                        false,
-                    );
-                }
+
+                @field(result, f_name) = try d.deserializeOne(
+                    f_type,
+                    d.next(),
+                    false,
+                );
                 seen.set(idx);
 
                 const has_comma = d.peek() == .comma;

@@ -484,6 +484,8 @@ pub fn setupTestStep(
                 })),
             });
 
+            types.addImport("ziggy", ziggy_module);
+
             const check = addTypeCheckStepInternal(
                 b,
                 target,

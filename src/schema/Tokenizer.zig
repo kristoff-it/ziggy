@@ -1,7 +1,13 @@
 const Tokenizer = @This();
 const std = @import("std");
 
-idx: u32 = 0,
+idx: u32,
+
+pub const init: Tokenizer = .{ .idx = 0 };
+
+pub fn initFrom(src_idx: u32) Tokenizer {
+    return .{ .idx = src_idx };
+}
 
 pub const Token = struct {
     tag: Tag,
@@ -393,7 +399,7 @@ test "basics" {
     };
     // zig fmt: on
 
-    var t: Tokenizer = .{};
+    var t: Tokenizer = .init;
 
     for (expected, 0..) |e, idx| {
         errdefer std.debug.print("failed at index: {}\n", .{idx});
@@ -474,7 +480,7 @@ test "more" {
     };
     // zig fmt: on
 
-    var t: Tokenizer = .{};
+    var t: Tokenizer = .init;
 
     for (expected, 0..) |e, idx| {
         errdefer std.debug.print("failed at index: {} \n---\n{s}\n---\n", .{ idx, case[t.idx..] });
@@ -517,7 +523,7 @@ test "sigil errors" {
     };
     // zig fmt: on
 
-    var t: Tokenizer = .{};
+    var t: Tokenizer = .init;
 
     for (expected, 0..) |e, idx| {
         errdefer std.debug.print("failed at index: {} \n---\n{s}\n---\n", .{ idx, case[t.idx..] });
