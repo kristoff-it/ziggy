@@ -161,11 +161,6 @@ pub const Node = struct {
             null;
     }
 
-    pub fn typeExpr(n: *const Node) Tokenizer {
-        assert(n.tag == .type_expr);
-        return .{ .idx = n.loc.start };
-    }
-
     pub const Tag = enum {
         root,
         root_expr,
@@ -1252,7 +1247,6 @@ const Parser = struct {
 
                 const source_container = containerInfo(p.nodes.items, p.src, source_container_idx);
 
-                log.debug("adding {any} to path\n", .{ux});
                 const gop_p = try dfs_path.getOrPut(p.gpa, source_container_idx);
                 if (gop_p.found_existing) {
                     const suffix_keys = dfs_path.keys()[gop_p.index..];
@@ -1327,14 +1321,14 @@ const Parser = struct {
                     .last_option = ux.last_option,
                 };
 
-                log.debug("field '{s}' ({}) of {t} {s} ({}) resolved to type ({})\n", .{
-                    ux.field.name_loc.slice(p.src),
-                    ux.field.node_idx,
-                    source_container.kind,
-                    source_container.name.slice(p.src),
-                    source_container_idx,
-                    ux.field.target_container_idx,
-                });
+                // log.debug("field '{s}' ({}) of {t} {s} ({}) resolved to type ({})\n", .{
+                //     ux.field.name_loc.slice(p.src),
+                //     ux.field.node_idx,
+                //     source_container.kind,
+                //     source_container.name.slice(p.src),
+                //     source_container_idx,
+                //     ux.field.target_container_idx,
+                // });
 
                 var it = p.fieldIterator(ux.field.target_container_idx);
                 switch (it.container_kind) {

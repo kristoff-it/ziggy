@@ -5,33 +5,34 @@ const afl = @import("afl_kit");
 /// The full Ziggy parsing functionality is available at build time.
 pub const ziggy = @import("src/root.zig");
 
-/// Validates user-provided types against Ziggy Schemas.
+/// Validates user-provided types against a Ziggy Schema.
 ///
-/// `types` is a module whose root source file must only
-/// contain public declarations of container types that
-/// are meant to be used to serialize/deserialize Ziggy
-/// documents.
-///
-/// Each type must:
-/// - have a public `ziggy` struct decl
-/// - have a public `ziggy.schema` string decl containing
-///   the schema that the type is meant to encode
-///
-/// Note that if you don't refer to `T.ziggy.schema` in
-/// your executables, the schema string will not be included,
-/// making this practice not problematic on that front.
-///
-/// Use @embedFile to conveniently place the schema in your
-/// type defitition.
+/// All public top-level declarations present in the root
+/// source file of the provided 'types' module will be
+/// matched by name witch corresponding type definitions
+/// in the provided Ziggy Schema.
 ///
 /// You can add any other module import to your module, which
 /// means that you can just re-export your type definitions in
 /// the root source file of `types`.
+///
+/// If your Zig type name does not match the corresponding
+/// Ziggy Schema type name, make sure to use a public
+/// re-export that does:
+///
+///     pub const SchemaTypeNameA = MyZigTypeName;
+///
+/// See `ziggy.Options` for more information on how to
+/// customize (de)serialization for a Zig type.
 pub fn addTypeCheckStep(
+    /// Your `*std.Build` instance.
     project: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.lang.OptimizeMode,
+    /// A module that exposes your type definitions.
     types: *std.Build.Module,
+    /// Path to the schema file
+    schema_path: std.Build.LazyPath,
 ) *std.Build.Step {
     const ziggy_dep = project.dependencyFromBuildZig(@This(), .{
         .target = target,
@@ -45,6 +46,8 @@ pub fn addTypeCheckStep(
         ziggy_b.path("build/type-checker.zig"),
         ziggy_dep.module("ziggy"),
         types,
+        schema_path,
+        false,
     ).step;
 }
 
@@ -55,6 +58,8 @@ fn addTypeCheckStepInternal(
     root_source_file: std.Build.LazyPath,
     ziggy_mod: *std.Build.Module,
     types: *std.Build.Module,
+    schema_path: std.Build.LazyPath,
+    comptime test_mode_enabled: bool,
 ) *std.Build.Step.Run {
     const check = project.addExecutable(.{
         .name = "type_checker",
@@ -68,7 +73,16 @@ fn addTypeCheckStepInternal(
     check.root_module.addImport("types", types);
     check.root_module.addImport("ziggy", ziggy_mod);
 
+    const test_mode = project.addOptions();
+    test_mode.addOption(bool, "enabled", test_mode_enabled);
+    check.root_module.addOptions("test_mode", test_mode);
+
     const run = project.addRunArtifact(check);
+    run.addFileArg(schema_path);
+    if (project.root.root_dir.path) |root_path| {
+        run.addArg(root_path);
+    }
+
     return run;
 }
 
@@ -493,6 +507,12 @@ pub fn setupTestStep(
                 b.path("build/type-checker.zig"),
                 ziggy_module,
                 types,
+                b.path(b.pathJoin(&.{
+                    base_path,
+                    basename,
+                    "root.ziggy-schema",
+                })),
+                true,
             );
 
             check.expectExitCode(1);

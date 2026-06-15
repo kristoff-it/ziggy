@@ -40,13 +40,12 @@ fn serializeDynamic(
     depth: usize,
 ) Writer.Error!void {
     const w = s.writer;
-    const opts = s.opts;
     switch (value) {
         inline .bool, .integer, .float => |b| try w.print("{}", .{b}),
         .null => try w.writeAll("null"),
         .bytes => |b| try w.print(
             "\"{}\"",
-            .{std.zig.fmtEscapes(b)},
+            .{std.zig.fmtString(b)},
         ),
         .@"enum" => |tag| try w.print(
             ".{s}",
@@ -54,26 +53,24 @@ fn serializeDynamic(
         ),
         .@"union" => |un| {
             try w.print(".{s}(", .{un.tag});
-            try un.value.ziggy_options.serialize(
+            try @TypeOf(un.value.*).ziggy_options.serialize.?(
+                s,
                 un.value.*,
-                opts,
                 indent_level,
                 depth,
-                w,
             );
             try w.writeAll(")");
         },
-        .kv => |kv| try Dictionary(Dynamic).ziggy_options.serialize(
+        .kv => |kv| try Dictionary(Dynamic).ziggy_options.serialize.?(
+            s,
             kv,
-            opts,
             indent_level,
             depth,
-            w,
         ),
         .array => |array| {
             try w.writeAll("[");
             for (array, 0..) |e, idx| {
-                try e.ziggy_options.serialize(e, opts, indent_level, depth, w);
+                try @TypeOf(e).ziggy_options.serialize.?(s, e, indent_level, depth);
                 if (idx < array.len - 1) {
                     try w.writeAll(", ");
                 }
@@ -130,16 +127,12 @@ pub fn Dictionary(comptime T: type) type {
         const Child = T;
 
         pub const ziggy_options: Options(Self) = .{
-            .serialize = serializeDict,
-            .deserialize = deserializeDict,
-            .roles = .{
-                .some = .{
-                    .dict = Child,
-                },
-            },
+            .serialize = serialize,
+            .deserialize = deserialize,
+            .roles = .{ .container = .{ .dict = Child } },
         };
 
-        fn serializeDict(
+        fn serialize(
             s: *const Serializer,
             value: Self,
             indent_level: usize,
@@ -198,7 +191,7 @@ pub fn Dictionary(comptime T: type) type {
             }
         }
 
-        fn deserializeDict(
+        fn deserialize(
             d: *const Deserializer,
             first: Token,
             top_lvl: bool,
@@ -211,7 +204,7 @@ pub fn Dictionary(comptime T: type) type {
                     d.meta.doc = .{ .lines = d.tokenizer.lines, .end = first.loc.end };
                     return if (top_lvl) result else d.unexpected(first);
                 },
-                .lb => return deserializeDictInner(d, first),
+                .lb => return deserializeDict(d, first),
                 .dotlb => blk: {
                     const tok = d.next();
                     if (tok.tag != .identifier) return d.unexpected(tok);
@@ -256,7 +249,7 @@ pub fn Dictionary(comptime T: type) type {
             comptime unreachable;
         }
 
-        fn deserializeDictInner(
+        fn deserializeDict(
             d: *const Deserializer,
             first: Token,
         ) Deserializer.Error!Self {
@@ -297,7 +290,7 @@ pub fn ArrayList(T: type) type {
         const Self = @This();
         pub const Child = T;
         pub const ziggy_options: root.Options(Self) = .{
-            .roles = .{ .some = .{ .slice = Child } },
+            .roles = .{ .container = .{ .slice = Child } },
 
             .serialize = struct {
                 fn serialize(

@@ -1,2 +1,2 @@
-root.RootErr.ziggy.schema:4:8: missing comma after field
-root.RootErr.ziggy.schema:6:8: unexpected token
+tests/schema/type-checker/schema-errors/root.ziggy-schema:4:8: missing comma after field
+tests/schema/type-checker/schema-errors/root.ziggy-schema:6:8: unexpected token

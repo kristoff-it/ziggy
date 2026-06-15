@@ -1,0 +1,4 @@
+root.RootErr.a: has type 'dynamic.ArrayList(u32)' which is incompatible with '[]bool'
+          hint: zig child type is 'u32', schema has 'bool'
+root.RootErr.b: has type 'dynamic.Dictionary(u32)' which is incompatible with '{:}bool'
+          hint: zig child type is 'u32', schema has 'bool'

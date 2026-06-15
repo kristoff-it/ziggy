@@ -46,13 +46,6 @@ pub fn Options(T: type) type {
         /// is null, skipped fields must have a default value.
         skip_fields: []const std.meta.FieldEnum(T) = &.{},
 
-        /// The source of the schema this type is expected to match.
-        /// Used by Zig type <> Ziggy schema compatibility validation.
-        /// If you don't refeerence this field in your own code, the
-        /// data will not be embedded in the final executable (i.e.
-        /// there is no runtime cost to filling this value).
-        schema: ?[:0]const u8 = null,
-
         /// Used by build-time Zig type <> Ziggy Schema compatibility
         /// validation for types that customize (de)serialization.
         ///
@@ -69,13 +62,10 @@ pub fn Options(T: type) type {
         /// - 'none': The default value.
         roles: union(enum) {
             any,
-            some: struct {
+            container: struct {
                 dict: ?type = null,
                 slice: ?type = null,
                 optional: ?type = null,
-                int: bool = false,
-                float: bool = false,
-                bool: bool = false,
             },
             none,
         } = .none,
@@ -117,7 +107,10 @@ pub fn Options(T: type) type {
 ///
 /// Will trigger a compile error if `ziggy_options` is not of the
 /// right type.
-pub fn getOptions(T: type) ?Options(T) {
+pub inline fn getOptions(T: type) switch (@typeInfo(T)) {
+    .@"struct", .@"union", .@"enum" => ?Options(T),
+    else => ?void,
+} {
     switch (@typeInfo(T)) {
         .@"struct", .@"union", .@"enum" => {},
         else => return null,

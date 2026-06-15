@@ -1,0 +1,14 @@
+$ = Root
+
+struct Root {
+    a: MyStruct,
+
+    struct MyStruct {
+        b: MyUnion,
+
+        union MyUnion {
+            x: bool,
+            y: []Root,
+        }
+    }
+}

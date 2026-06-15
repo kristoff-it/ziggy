@@ -1,0 +1,7 @@
+$ = Root
+
+struct Root {
+    a: []bool,
+    b: {:}bool,
+    d: any,
+}

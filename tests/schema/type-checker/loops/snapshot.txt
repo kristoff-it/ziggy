@@ -1,0 +1,1 @@
+root.MyUnionErr: must be a tagged union to be (de)serialized
