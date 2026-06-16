@@ -1474,13 +1474,14 @@ const Parser = struct {
                 switch (tok.tag) {
                     else => continue,
                     .identifier => {
-                        const target = resolveContainer(
+                        const target_idx = findContainerTypeImpl(
                             fi.nodes,
                             fi.scopes,
-                            fi.src,
-                            tok.loc.slice(fi.src),
                             fi.container_idx,
+                            tok.loc.slice(fi.src),
                         ).?;
+
+                        const target_info = containerInfo(fi.nodes, fi.src, target_idx);
 
                         const name_loc = blk: {
                             t.idx = field.loc.start;
@@ -1492,8 +1493,8 @@ const Parser = struct {
                         return .{
                             .name_loc = name_loc,
                             .node_idx = fi.next_field_idx,
-                            .target_container_idx = target.node_idx,
-                            .target_container_name = target.name,
+                            .target_container_idx = target_idx,
+                            .target_container_name = target_info.name,
                             // .target_container_kind = target.kind,
                         };
                     },
@@ -1524,42 +1525,6 @@ const Parser = struct {
             } else return false;
         }
     };
-
-    const ResolvedContainer = struct {
-        name: Loc,
-        node_idx: u32,
-        kind: ContainerKind,
-    };
-    fn resolveContainer(
-        nodes: []const Node,
-        scopes: *const Scopes,
-        src: [:0]const u8,
-        name: []const u8,
-        source_container_idx: u32,
-    ) ?ResolvedContainer {
-        var container_idx = source_container_idx;
-        while (true) {
-            const scope = scopes.get(container_idx).?.types;
-            if (scope.getEntry(name)) |entry| {
-                const slice = entry.key_ptr.*;
-                const start: u32 = @intCast(slice.ptr - src.ptr);
-                return .{
-                    .node_idx = entry.value_ptr.*,
-                    .name = .{
-                        .start = start,
-                        .end = @intCast(start + slice.len),
-                    },
-                    .kind = switch (nodes[entry.value_ptr.*].tag) {
-                        .@"struct" => .@"struct",
-                        .@"union" => .@"union",
-                        else => unreachable,
-                    },
-                };
-            }
-            if (container_idx == 0) return null;
-            container_idx = nodes[container_idx].parent_idx;
-        }
-    }
 };
 
 const ContainerInfo = struct {
