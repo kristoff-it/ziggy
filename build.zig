@@ -576,10 +576,20 @@ pub fn setupFuzzStep(
             .single_threaded = true,
         }),
     });
-
     repro.root_module.addImport("ziggy", ziggy_module);
-
     test_step.dependOn(&b.addInstallArtifact(repro, .{}).step);
+
+    const smith_repro = b.addExecutable(.{
+        .name = "fuzz-repro-smith",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/fuzz/afl-repro-smith.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .single_threaded = true,
+        }),
+    });
+    smith_repro.root_module.addImport("ziggy", ziggy_module);
+    test_step.dependOn(&b.addInstallArtifact(smith_repro, .{}).step);
 }
 const Version = union(Kind) {
     tag: []const u8,
