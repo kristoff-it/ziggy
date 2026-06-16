@@ -1970,16 +1970,7 @@ pub fn validate(
                                     .opt_identifier => container_name[1..], // skip '?'
                                     else => unreachable,
                                 };
-                                var current_scope = scope;
-                                const container_idx = while (true) {
-                                    break schema_ast.scopes.get(current_scope).?.types.get(
-                                        search_name,
-                                    ) orelse {
-                                        assert(current_scope != 0);
-                                        current_scope = schema_ast.nodes[current_scope].parent_idx;
-                                        continue;
-                                    };
-                                };
+                                const container_idx = schema_ast.findContainerType(scope, search_name).?;
                                 const info = containerInfo(
                                     schema_ast.nodes,
                                     schema_src,
@@ -2047,16 +2038,7 @@ pub fn validate(
                                     .opt_identifier => container_name[1..], // skip '?'
                                     else => unreachable,
                                 };
-                                var current_scope = scope;
-                                const container_idx = while (true) {
-                                    break schema_ast.scopes.get(current_scope).?.types.get(
-                                        search_name,
-                                    ) orelse {
-                                        assert(current_scope != 0);
-                                        current_scope = schema_ast.nodes[current_scope].parent_idx;
-                                        continue;
-                                    };
-                                };
+                                const container_idx = schema_ast.findContainerType(scope, search_name).?;
                                 const info = containerInfo(schema_ast.nodes, schema_src, container_idx);
                                 switch (info.kind) {
                                     .@"struct" => {
@@ -2169,16 +2151,7 @@ pub fn validate(
                                     .opt_identifier => container_name[1..], // skip '?'
                                     else => unreachable,
                                 };
-                                var current_scope = scope;
-                                const container_idx = while (true) {
-                                    break schema_ast.scopes.get(current_scope).?.types.get(
-                                        search_name,
-                                    ) orelse {
-                                        assert(current_scope != 0);
-                                        current_scope = schema_ast.nodes[current_scope].parent_idx;
-                                        continue;
-                                    };
-                                };
+                                const container_idx = schema_ast.findContainerType(scope, search_name).?;
                                 const info = containerInfo(schema_ast.nodes, schema_src, container_idx);
                                 switch (info.kind) {
                                     .@"union" => {
