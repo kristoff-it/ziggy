@@ -191,7 +191,7 @@ pub fn deinit(ast: Ast, gpa: Allocator) void {
 /// Use this function in contexts where the node might not have children,
 /// write the code explicitly otherwise (using asserts instead of branching).
 ///
-/// If the child is present, it's idx is `parent_idx + 1`.
+/// If the child is present, its idx is `parent_idx + 1`.
 pub fn child(ast: *const Ast, parent_idx: u32) ?*const Node {
     assert(parent_idx < ast.nodes.len);
     const child_idx = parent_idx + 1;
@@ -199,6 +199,32 @@ pub fn child(ast: *const Ast, parent_idx: u32) ?*const Node {
     const ch = &ast.nodes[child_idx];
     if (ch.parent_idx != parent_idx) return null;
     return ch;
+}
+
+const TypeExpr = struct {
+    loc: Loc,
+    it: Tokenizer,
+};
+
+/// Returns the type expression of a struct/union field.
+/// In case of a payloadless union field, returns null.
+pub inline fn fieldTypeExpr(ast: *const Ast, field_idx: u32) ?TypeExpr {
+    assert(ast.nodes[field_idx].tag == .struct_field or
+        ast.nodes[field_idx].tag == .union_field);
+
+    const field_type_idx = field_idx + 1;
+    if (field_type_idx < ast.nodes.len) {
+        const type_node = ast.nodes[field_type_idx];
+        if (type_node.parent_idx == field_idx) {
+            assert(type_node.tag == .type_expr);
+            return .{
+                .loc = type_node.loc,
+                .it = .{ .idx = type_node.loc.start },
+            };
+        }
+    }
+
+    return null;
 }
 
 const ContainerKind = enum { @"struct", @"union" };

@@ -120,23 +120,17 @@ fn validateZigContainer(
             switch (zig_kind) {
                 else => unreachable,
                 .@"struct" => if (schema_kind == .@"union") {
-                    err.report(
-                        T,
-                        null,
-                        "is of kind 'struct', while schema expects 'union' or 'enum'",
-                        .{},
-                    );
+                    err.report(T, null,
+                        \\is of kind 'struct', while schema expects 'union' or 'enum'
+                    , .{});
                     return;
                 },
                 .@"union", .@"enum" => {
                     if (zig_kind == .@"union") {
                         if (container_info.tag_type == null) {
-                            err.report(
-                                T,
-                                null,
-                                "must be a tagged union to be (de)serialized",
-                                .{},
-                            );
+                            err.report(T, null,
+                                \\must be a tagged union to be (de)serialized
+                            , .{});
                             return;
                         }
                     }
@@ -144,29 +138,20 @@ fn validateZigContainer(
                     switch (schema_kind) {
                         else => unreachable,
                         .@"struct" => {
-                            err.report(
-                                T,
-                                null,
-                                "is of kind '{t}' but schema expects 'struct'",
-                                .{zig_kind},
-                            );
+                            err.report(T, null,
+                                \\is of kind '{t}' but schema expects 'struct'
+                            , .{zig_kind});
                             return;
                         },
                         .@"union" => if (zig_kind == .@"enum") {
                             // If schema container is a union and Zig type is an enum,
                             // check that all schema fields are payloadless.
                             for (type_scope.fields.values()) |field| {
-                                const payload_idx = field.idx + 1;
-                                if (payload_idx < ast.nodes.len) {
-                                    if (ast.nodes[payload_idx].parent_idx == field.idx) {
-                                        err.report(
-                                            T,
-                                            null,
-                                            "is of kind 'enum' but the schema union has at least one payload",
-                                            .{},
-                                        );
-                                        return;
-                                    }
+                                if (ast.fieldTypeExpr(field.idx) != null) {
+                                    err.report(T, null,
+                                        \\is of kind 'enum' but the schema union has at least one payload
+                                    , .{});
+                                    return;
                                 }
                             }
                         },
@@ -177,29 +162,29 @@ fn validateZigContainer(
             inline for (container_info.field_names, 0..) |f_name, f_idx| {
                 if (type_scope.fields.getPtr(f_name)) |field| {
                     if (zig_kind != .@"enum") {
+                        if (ast.fieldTypeExpr(field.idx)) |field_expr| {
+                            var expr = field_expr;
+                            const expr_src = expr.loc.slice(schema_src);
+                            validateFieldExpr(
+                                arena,
+                                err,
+                                seen,
+                                schema_src,
+                                ast,
+                                T,
+                                node_idx,
+                                container_info.field_types[f_idx],
+                                f_name,
+                                expr_src,
+                                &expr.it,
+                                expr.it.next(schema_src),
+                            );
+                        }
+
                         const field_type_idx = field.idx + 1;
                         if (field_type_idx < ast.nodes.len) {
                             const field_type = ast.nodes[field_type_idx];
-                            if (field_type.parent_idx == field.idx) {
-                                const expr_src = field_type.loc.slice(schema_src);
-                                var expr_it: ziggy.schema.Tokenizer = .{
-                                    .idx = field_type.loc.start,
-                                };
-                                validateFieldExpr(
-                                    arena,
-                                    err,
-                                    seen,
-                                    schema_src,
-                                    ast,
-                                    T,
-                                    node_idx,
-                                    container_info.field_types[f_idx],
-                                    f_name,
-                                    expr_src,
-                                    &expr_it,
-                                    expr_it.next(schema_src),
-                                );
-                            }
+                            if (field_type.parent_idx == field.idx) {}
                         }
                     }
                 } else {
@@ -211,21 +196,16 @@ fn validateZigContainer(
             for (type_scope.fields.values()) |schema_field| {
                 const schema_field_name = schema_field.loc.slice(schema_src);
                 if (!field_map.has(schema_field_name)) {
-                    const field_type_idx = schema_field.idx + 1;
-                    if (field_type_idx < ast.nodes.len) {
-                        const field_type = ast.nodes[field_type_idx];
-                        if (field_type.parent_idx == schema_field.idx) {
-                            const expr_src = field_type.loc.slice(schema_src);
-                            err.report(T, null, "missing field '{s}' ({s})", .{
-                                schema_field_name, expr_src,
-                            });
-                            continue;
-                        }
+                    if (ast.fieldTypeExpr(schema_field.idx)) |expr| {
+                        const expr_src = expr.loc.slice(schema_src);
+                        err.report(T, null, "missing field '{s}' ({s})", .{
+                            schema_field_name, expr_src,
+                        });
+                    } else {
+                        err.report(T, null, "missing field '{s}' (payloadless)", .{
+                            schema_field_name,
+                        });
                     }
-
-                    err.report(T, null, "missing field '{s}' (payloadless)", .{
-                        schema_field_name,
-                    });
                 }
             }
         },
