@@ -375,46 +375,30 @@ fn validateFieldExpr(
         .int_kw => if (field_info == .int) return,
 
         .opt_identifier => if (field_info == .optional) {
-            var current_scope = ast.scopes.getPtr(node_idx).?;
-            while (true) {
-                const container_name = tok.loc.slice(schema_src)[1..];
-                const child_node_idx = current_scope.types.get(container_name) orelse blk: {
-                    break :blk ast.scopes.values()[0].types.get(container_name) orelse {
-                        @panic("TODO: implement scope navigation");
-                    };
-                };
-
-                return validateZigContainer(
-                    arena,
-                    err,
-                    seen,
-                    schema_src,
-                    ast,
-                    field_info.optional.child,
-                    child_node_idx,
-                );
-            }
+            const container_name = tok.loc.slice(schema_src);
+            const child_node_idx = ast.findContainerType(node_idx, container_name).?;
+            return validateZigContainer(
+                arena,
+                err,
+                seen,
+                schema_src,
+                ast,
+                field_info.optional.child,
+                child_node_idx,
+            );
         },
         .identifier => {
-            var current_scope = ast.scopes.getPtr(node_idx).?;
-            while (true) {
-                const container_name = tok.loc.slice(schema_src);
-                const child_node_idx = current_scope.types.get(container_name) orelse blk: {
-                    break :blk ast.scopes.values()[0].types.get(container_name) orelse {
-                        @panic("TODO: implement scope navigation");
-                    };
-                };
-
-                return validateZigContainer(
-                    arena,
-                    err,
-                    seen,
-                    schema_src,
-                    ast,
-                    F,
-                    child_node_idx,
-                );
-            }
+            const container_name = tok.loc.slice(schema_src);
+            const child_node_idx = ast.findContainerType(node_idx, container_name).?;
+            return validateZigContainer(
+                arena,
+                err,
+                seen,
+                schema_src,
+                ast,
+                F,
+                child_node_idx,
+            );
         },
 
         .any_kw => {

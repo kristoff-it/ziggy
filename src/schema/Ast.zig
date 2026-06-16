@@ -16,6 +16,21 @@ nodes: []const Node,
 errors: []const Error,
 scopes: Scopes = .empty,
 
+pub fn init(gpa: Allocator, src: [:0]const u8) !Ast {
+    var p: Parser = .{ .gpa = gpa, .src = src };
+    return p.parse();
+}
+
+pub fn deinit(ast: Ast, gpa: Allocator) void {
+    gpa.free(ast.nodes);
+    gpa.free(ast.errors);
+    for (ast.scopes.values()) |*v| {
+        v.fields.deinit(gpa);
+        v.types.deinit(gpa);
+    }
+    @constCast(&ast.scopes).deinit(gpa);
+}
+
 /// Validating a Ziggy Document AST is necessary to detect duplicate fields.
 /// A Ziggy Document that doesn't have a specific schema can always be matched
 /// with the default `$ = any` schema, which is what `validateDefault` makes
@@ -31,28 +46,53 @@ pub fn validateDefault(
     return default.validate(gpa, default_src, ziggy_ast, ziggy_src);
 }
 
-pub const default_src = "$ = any";
-pub const default: Ast = .{
-    .has_syntax_errors = false,
-    .errors = &.{},
-    .nodes = &.{
-        .{
-            .tag = .root,
-            .parent_idx = 0,
-            .loc = .{ .start = 0, .end = default_src.len },
-        },
-        .{
-            .tag = .root_expr,
-            .parent_idx = 0,
-            .loc = .{ .start = 0, .end = default_src.len },
-        },
-        .{
-            .tag = .type_expr,
-            .parent_idx = 1,
-            .loc = .{ .start = "$ = ".len, .end = default_src.len },
-        },
-    },
+/// Given a node index, returns a pointer to its first child or null.
+/// Use this function in contexts where the node might not have children,
+/// write the code explicitly otherwise (using asserts instead of branching).
+///
+/// If the child is present, its idx is `parent_idx + 1`.
+/// if you're trying to get the type expression of a field, use `fieldTypeExpr`.
+pub fn child(ast: *const Ast, parent_idx: u32) ?*const Node {
+    assert(parent_idx < ast.nodes.len);
+    const child_idx = parent_idx + 1;
+    if (child_idx == ast.nodes.len) return null;
+    const ch = &ast.nodes[child_idx];
+    if (ch.parent_idx != parent_idx) return null;
+    return ch;
+}
+
+const TypeExpr = struct {
+    loc: Loc,
+    it: Tokenizer,
 };
+
+/// Returns the type expression of a struct/union field.
+/// In case of a payloadless union field, returns null.
+pub inline fn fieldTypeExpr(ast: *const Ast, field_idx: u32) ?TypeExpr {
+    assert(ast.nodes[field_idx].tag == .struct_field or
+        ast.nodes[field_idx].tag == .union_field);
+
+    const field_type_idx = field_idx + 1;
+    if (field_type_idx < ast.nodes.len) {
+        const type_node = ast.nodes[field_type_idx];
+        if (type_node.parent_idx == field_idx) {
+            assert(type_node.tag == .type_expr);
+            return .{
+                .loc = type_node.loc,
+                .it = .{ .idx = type_node.loc.start },
+            };
+        }
+    }
+
+    assert(ast.nodes[field_idx].tag == .union_field);
+    return null;
+}
+
+/// Searches recursively upwards for `type_name` starting from `starting_scope`.
+/// Returns the node_idx of the found container type. Its parent_idx is the new scope.
+pub fn findContainerType(ast: *const Ast, starting_scope: u32, type_name: []const u8) ?u32 {
+    return findContainerTypeImpl(ast.nodes, &ast.scopes, starting_scope, type_name);
+}
 
 pub const Scopes = std.AutoArrayHashMapUnmanaged(u32, struct {
     fields: std.StringArrayHashMapUnmanaged(struct {
@@ -172,61 +212,6 @@ pub const Node = struct {
     };
 };
 
-pub fn init(gpa: Allocator, src: [:0]const u8) !Ast {
-    var p: Parser = .{ .gpa = gpa, .src = src };
-    return p.parse();
-}
-
-pub fn deinit(ast: Ast, gpa: Allocator) void {
-    gpa.free(ast.nodes);
-    gpa.free(ast.errors);
-    for (ast.scopes.values()) |*v| {
-        v.fields.deinit(gpa);
-        v.types.deinit(gpa);
-    }
-    @constCast(&ast.scopes).deinit(gpa);
-}
-
-/// Given a node index, returns a pointer to its first child or null.
-/// Use this function in contexts where the node might not have children,
-/// write the code explicitly otherwise (using asserts instead of branching).
-///
-/// If the child is present, its idx is `parent_idx + 1`.
-pub fn child(ast: *const Ast, parent_idx: u32) ?*const Node {
-    assert(parent_idx < ast.nodes.len);
-    const child_idx = parent_idx + 1;
-    if (child_idx == ast.nodes.len) return null;
-    const ch = &ast.nodes[child_idx];
-    if (ch.parent_idx != parent_idx) return null;
-    return ch;
-}
-
-const TypeExpr = struct {
-    loc: Loc,
-    it: Tokenizer,
-};
-
-/// Returns the type expression of a struct/union field.
-/// In case of a payloadless union field, returns null.
-pub inline fn fieldTypeExpr(ast: *const Ast, field_idx: u32) ?TypeExpr {
-    assert(ast.nodes[field_idx].tag == .struct_field or
-        ast.nodes[field_idx].tag == .union_field);
-
-    const field_type_idx = field_idx + 1;
-    if (field_type_idx < ast.nodes.len) {
-        const type_node = ast.nodes[field_type_idx];
-        if (type_node.parent_idx == field_idx) {
-            assert(type_node.tag == .type_expr);
-            return .{
-                .loc = type_node.loc,
-                .it = .{ .idx = type_node.loc.start },
-            };
-        }
-    }
-
-    return null;
-}
-
 const ContainerKind = enum { @"struct", @"union" };
 const Parser = struct {
     gpa: Allocator,
@@ -276,6 +261,10 @@ const Parser = struct {
             v.types.deinit(p.gpa);
         }
         p.scopes.deinit(p.gpa);
+    }
+
+    fn findContainerType(p: *Parser, starting_scope: u32, type_name: []const u8) ?u32 {
+        return findContainerTypeImpl(p.nodes.items, &p.scopes, starting_scope, type_name);
     }
 
     fn parse(p: *Parser) error{OutOfMemory}!Ast {
@@ -1171,20 +1160,14 @@ const Parser = struct {
 
     fn validateIdentifiers(p: *Parser) !void {
         assert(!p.has_syntax_errors);
-        refs: for (p.refs.items) |r| {
+        for (p.refs.items) |r| {
             const name = r.loc.slice(p.src);
-            var container_idx = r.container_idx;
-            while (true) {
-                const scope = p.scopes.get(container_idx).?;
-                if (scope.types.contains(name)) continue :refs;
-                if (container_idx == 0) break;
-                container_idx = p.nodes.items[container_idx].parent_idx;
+            if (p.findContainerType(r.container_idx, name) == null) {
+                try p.err(.{
+                    .tag = .undeclared_identifier,
+                    .main_location = r.loc,
+                });
             }
-
-            try p.err(.{
-                .tag = .undeclared_identifier,
-                .main_location = r.loc,
-            });
         }
 
         for (p.scopes.keys()[1..]) |cidx| {
@@ -2706,6 +2689,47 @@ pub fn resolveZiggyOffset(
             },
             else => unreachable,
         }
+    }
+}
+
+pub const default_src = "$ = any";
+pub const default: Ast = .{
+    .has_syntax_errors = false,
+    .errors = &.{},
+    .nodes = &.{
+        .{
+            .tag = .root,
+            .parent_idx = 0,
+            .loc = .{ .start = 0, .end = default_src.len },
+        },
+        .{
+            .tag = .root_expr,
+            .parent_idx = 0,
+            .loc = .{ .start = 0, .end = default_src.len },
+        },
+        .{
+            .tag = .type_expr,
+            .parent_idx = 1,
+            .loc = .{ .start = "$ = ".len, .end = default_src.len },
+        },
+    },
+};
+
+fn findContainerTypeImpl(
+    nodes: []const Node,
+    scopes: *const Scopes,
+    starting_scope: u32,
+    type_name: []const u8,
+) ?u32 {
+    var current_scope = starting_scope;
+    while (true) {
+        return scopes.get(current_scope).?.types.get( // starting_scope is not a scope?
+            type_name,
+        ) orelse {
+            if (current_scope == 0) return null;
+            current_scope = nodes[current_scope].parent_idx;
+            continue;
+        };
     }
 }
 
