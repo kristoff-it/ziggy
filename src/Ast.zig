@@ -82,10 +82,6 @@ pub const Node = struct {
     };
 };
 
-pub fn deinit(ast: Ast, gpa: Allocator) void {
-    gpa.free(ast.nodes);
-    gpa.free(ast.errors);
-}
 
 pub const Options = struct {
     /// When parsing a SuperMD frontmatter, set to `.dashes`.
@@ -103,6 +99,12 @@ pub fn init(
     defer p.deinit();
     return p.parse();
 }
+
+pub fn deinit(ast: Ast, gpa: Allocator) void {
+    gpa.free(ast.nodes);
+    gpa.free(ast.errors);
+}
+
 
 const Parser = struct {
     gpa: Allocator,

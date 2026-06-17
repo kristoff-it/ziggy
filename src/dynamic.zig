@@ -44,7 +44,7 @@ fn serializeDynamic(
         inline .bool, .integer, .float => |b| try w.print("{}", .{b}),
         .null => try w.writeAll("null"),
         .bytes => |b| try w.print(
-            "\"{}\"",
+            "\"{f}\"",
             .{std.zig.fmtString(b)},
         ),
         .@"enum" => |tag| try w.print(
@@ -98,16 +98,30 @@ fn deserializeDynamic(
         .bytes, .bytes_line => return .{
             .bytes = try d.deserializeOne([]const u8, first, false),
         },
-        .identifier, .dotlb, .lb => return .{
-            .kv = try d.deserializeOne(Dictionary(Dynamic), first, top_lvl),
-        },
-        .@"enum" => return .{ .@"enum" = first.loc.slice(d.src)[1..] },
         .union_case => return .{
-            .tag = blk: {
-                const raw = first.loc.slice(d.src)[1..]; // skip '.'
-                break :blk raw[0 .. raw.len - 1]; // skip '('
+            .@"union" = .{
+                .tag = blk: {
+                    const raw = first.loc.slice(d.src)[1..]; // skip '.'
+                    break :blk raw[0 .. raw.len - 1]; // skip '('
+                },
+                .value = blk: {
+                    const value = try d.deserializeOne(*Dynamic, d.next(), false);
+                    const close = d.next();
+                    switch (close.tag) {
+                        .rp => break :blk value,
+                        else => return d.unexpected(close),
+                    }
+                },
             },
-            .value = try d.deserializeOne(*Dynamic, d.next(), false),
+        },
+        .identifier => if (top_lvl and d.peek() != .eof)
+            return .{
+                .kv = try d.deserializeOne(Dictionary(Dynamic), first, top_lvl),
+            }
+        else
+            return .{ .@"enum" = first.loc.slice(d.src)[1..] },
+        .dotlb, .lb => return .{
+            .kv = try d.deserializeOne(Dictionary(Dynamic), first, top_lvl),
         },
         .lsb => {
             return .{
@@ -141,7 +155,8 @@ pub fn Dictionary(comptime T: type) type {
             const w = s.writer;
             const opts = s.opts;
 
-            const omit_curlies = opts.omit_top_level_curlies and depth == 0;
+            const omit_curlies = opts.omit_top_level_curlies and depth == 0 and
+                value.container_kind == .@"struct";
             const indent = if (omit_curlies) indent_level else indent_level + 1;
             const item_count = value.fields.count();
 

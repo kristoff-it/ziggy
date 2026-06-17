@@ -23,8 +23,8 @@ pub export fn zig_fuzz_test(buf: [*:0]const u8, len: isize) void {
     const src = buf[0..end :0];
 
     // testAst(gpa, src);
-    testAstSmith(gpa, src);
-    // testDeserializer(gpa, src);
+    // testAstSmith(gpa, src);
+    testDeserializer(gpa, src);
 
     // testSchemaAst(gpa, src);
 }
@@ -129,10 +129,23 @@ fn testAst(gpa: std.mem.Allocator, src: []const u8) void {
 
 fn testDeserializer(gpa: std.mem.Allocator, src: [:0]const u8) void {
     const types = .{
-        f32,                    i32,    bool,
-        []f32,                  []bool, ?f32,
-        ?bool,                  []?f32, []?i32,
-        []?bool,                bool,   []const u8,
+        ziggy.Dynamic,
+        ziggy.Dictionary(struct {
+            a: bool,
+            b: i32,
+        }),
+        f32,
+        i32,
+        bool,
+        []f32,
+        []bool,
+        ?f32,
+        ?bool,
+        []?f32,
+        []?i32,
+        []?bool,
+        bool,
+        []const u8,
         struct { a: i32 },
         struct {
             a: i32,
@@ -221,68 +234,54 @@ fn testAstSmith(gpa: std.mem.Allocator, raw: []const u8) void {
 
     std.debug.assert(!ast.has_syntax_errors);
 
-    // var r1_buf: Io.Writer.Allocating = .init(gpa);
-    // defer r1_buf.deinit();
+    var r1_buf: Io.Writer.Allocating = .init(gpa);
+    defer r1_buf.deinit();
 
-    // ast.render(src, &r1_buf.writer) catch unreachable;
-    // const round1 = r1_buf.toOwnedSliceSentinel(0) catch unreachable;
+    ast.render(src, &r1_buf.writer) catch unreachable;
+    const round1 = r1_buf.toOwnedSliceSentinel(0) catch unreachable;
 
-    // const no_fixup = for (ast.errors) |err| {
-    //     if (err.tag == .wrong_field_style) break false;
-    // } else true;
+    const no_fixup = for (ast.errors) |err| {
+        if (err.tag == .wrong_field_style) break false;
+    } else true;
 
-    // if (no_fixup) eqlIgnoreWhitespace(src, round1);
+    if (no_fixup) eqlIgnoreWhitespace(src, round1);
 
-    // var r2_buf: Io.Writer.Allocating = .init(gpa);
-    // defer r2_buf.deinit();
+    var r2_buf: Io.Writer.Allocating = .init(gpa);
+    defer r2_buf.deinit();
 
-    // const ast2 = ziggy.Ast.init(gpa, round1, .{}) catch unreachable;
-    // defer ast2.deinit(gpa);
-    // ast2.render(round1, &r2_buf.writer) catch unreachable;
-    // const round2 = r2_buf.toOwnedSliceSentinel(0) catch unreachable;
+    const ast2 = ziggy.Ast.init(gpa, round1, .{}) catch unreachable;
+    defer ast2.deinit(gpa);
+    ast2.render(round1, &r2_buf.writer) catch unreachable;
+    const round2 = r2_buf.toOwnedSliceSentinel(0) catch unreachable;
 
-    // const ok = std.mem.eql(u8, round1, round2);
-    // if (!ok) {
-    //     std.debug.panic("---- orig ----\n{s}[end]\n\n---- round1 ---\n{s}[end]\n---- round2 ----\n{s}[end]\n", .{
-    //         src,
-    //         round1,
-    //         round2,
-    //     });
-    // }
+    const ok = std.mem.eql(u8, round1, round2);
+    if (!ok) {
+        std.debug.panic("---- orig ----\n{s}[end]\n\n---- round1 ---\n{s}[end]\n---- round2 ----\n{s}[end]\n", .{
+            src,
+            round1,
+            round2,
+        });
+    }
 }
 
 pub const doc_smith = struct {
     const Op = enum(u8) {
-        // add comment
         comment = 'c',
-        // add newline
         newline = 'n',
-        // add space,
         space = 'w',
 
-        // add null
         null = 'N',
-        // add bool
         bool = 'b',
-        // add bytes
         bytes = 'B',
-        // add int
         int = 'i',
-        // add float
         float = 'f',
-        // add slice
         slice = 'l',
-        // add struct
         @"struct" = 's',
-        // add dict
         dict = 'd',
-        // add union
         @"union" = 'u',
 
-        // up
         up = 'U',
 
-        // return
         _,
     };
 
@@ -334,18 +333,14 @@ pub const doc_smith = struct {
             }
 
             switch (op) {
-
-                // add comment
                 .comment => {
                     if (comments < max) try w.writeAll("//comment\n") else return;
                     comments += 1;
                 },
-                // add newline
                 .newline => {
                     if (newlines < max) try w.writeAll("\n") else return;
                     newlines += 1;
                 },
-                // add space,
                 .space => {
                     if (spaces < max) try w.writeAll(" ") else return;
                     spaces += 1;
@@ -396,11 +391,8 @@ pub const doc_smith = struct {
 
                 .slice, .@"struct", .dict => {
                     const tag: ziggy.Tokenizer.Token.Tag = switch (op) {
-                        // add slice
                         .slice => .lsb,
-                        // add struct
                         .@"struct" => .dotlb,
-                        // add dict
                         .dict => .lb,
                         else => unreachable,
                     };
@@ -426,7 +418,6 @@ pub const doc_smith = struct {
                     try stack.append(gpa, tag);
                 },
 
-                // add union
                 .@"union" => {
                     if (stack.last()) |last| switch (last.*) {
                         .lsb, .union_case => try w.print(".case{}(", .{idx}),
@@ -465,7 +456,6 @@ pub const doc_smith = struct {
                     }
                 },
 
-                // up
                 .up => {
                     while (true) {
                         const last = stack.pop() orelse return;

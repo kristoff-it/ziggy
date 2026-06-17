@@ -2373,6 +2373,43 @@ pub const ResolvedOffset = struct {
     ziggy_idx: u32,
 };
 
+pub const ResolvedOffset1 = struct {
+    scope_idx: u32,
+    schema_idx: u32,
+    ziggy_idx: u32,
+};
+
+/// Resolves an offset in a Ziggy document to a corresponding schema node, which
+/// can then be used for providing documentation, goto definition, etc.
+/// Returns `null` in case of resolution failure, which can happen if the Ziggy
+/// document contains errors.
+///
+/// Asserts that the schema does not contain errors.
+// pub fn resolveZiggyOffset1(
+//     schema_ast: *const Ast,
+//     schema_src: [:0]const u8,
+//     ziggy_ast: ZiggyAst,
+//     ziggy_src: [:0]const u8,
+//     ziggy_offset: u32,
+// ) ?ResolvedOffset1 {
+//     assert(schema_ast.errors.len == 0);
+
+//     var scope_idx: u32 = 0;
+//     var ziggy_idx: u32 = 1;
+//     var schema_idx: u32 = 2; // root_expr
+//     var tokenizer: Tokenizer = .initFrom(schema_ast.nodes[schema_idx].loc.start);
+//     var ziggy_node = ziggy_ast.nodes[ziggy_idx];
+
+//     outer: while (true) {
+//         log.debug("resolve: scope_idx: {}, ziggy_idx: {} ({t}), schema_idx: {}\n", .{
+//             scope_idx,
+//             ziggy_idx,
+//             ziggy_node.tag,
+//             schema_idx,
+//         });
+//     }
+// }
+
 /// Resolves an offset in a Ziggy document to a corresponding schema node, which
 /// can then be used for providing documentation, goto definition, etc.
 /// Returns `null` in case of resolution failure, which can happen if the Ziggy

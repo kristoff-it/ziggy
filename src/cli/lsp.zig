@@ -277,6 +277,7 @@ pub fn @"textDocument/completion"(
     c: switch (node.tag) {
         .root, .root_expr, .type_expr => unreachable,
         .struct_field, .union_field => {
+            std.debug.print("field\n", .{});
             node = schema.ast.nodes[node.parent_idx];
             continue :c node.tag;
         },
