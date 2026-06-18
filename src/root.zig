@@ -46,6 +46,13 @@ pub fn Options(T: type) type {
         /// is null, skipped fields must have a default value.
         skip_fields: []const std.meta.FieldEnum(T) = &.{},
 
+        /// If set, the source location of where this struct was loaded
+        /// from in the Ziggy document will be saved in this field.
+        /// The field in question must be:
+        ///  - present in `skip_fields`
+        ///  - of type `ziggy.Tokenizer.Token.Loc`
+        loc_field: ?std.meta.FieldEnum(T) = null,
+
         /// Used by build-time Zig type <> Ziggy Schema compatibility
         /// validation for types that customize (de)serialization.
         ///
@@ -106,7 +113,7 @@ pub fn Options(T: type) type {
 /// private, or T is not a container type.
 ///
 /// Will trigger a compile error if `ziggy_options` is not of the
-/// right type.
+/// right type or any other semantic error is found.
 pub inline fn getOptions(T: type) switch (@typeInfo(T)) {
     .@"struct", .@"union", .@"enum" => ?Options(T),
     else => ?void,
@@ -121,6 +128,31 @@ pub inline fn getOptions(T: type) switch (@typeInfo(T)) {
     if (@TypeOf(T.ziggy_options) != Options(T)) {
         @compileError(@typeName(T) ++
             ".ziggy_options must be of type ziggy.Options(T)");
+    }
+
+    switch (@typeInfo(T)) {
+        .@"struct" => {
+            const std = @import("std");
+            if (T.ziggy_options.loc_field) |lf| {
+                @setEvalBranchQuota(10000);
+                if (comptime std.mem.findScalar(
+                    std.meta.FieldEnum(T),
+                    T.ziggy_options.skip_fields,
+                    lf,
+                ) == null) {
+                    @compileError("Loc field '" ++ @tagName(lf) ++ "' must be listed in 'skip_fields'");
+                }
+            }
+        },
+        .@"union", .@"enum" => {
+            if (T.ziggy_options.skip_fields.len > 0) {
+                @compileError("'skip_fields' must be empty in union and enum types");
+            }
+            if (T.ziggy_options.loc_field != null) {
+                @compileError("'loc_field' must be null in union and enum types");
+            }
+        },
+        else => return null,
     }
 
     return T.ziggy_options;

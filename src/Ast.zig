@@ -82,7 +82,6 @@ pub const Node = struct {
     };
 };
 
-
 pub const Options = struct {
     /// When parsing a SuperMD frontmatter, set to `.dashes`.
     /// See the doc comments of `Tokenizer.Delimiter` for more information on
@@ -105,6 +104,31 @@ pub fn deinit(ast: Ast, gpa: Allocator) void {
     gpa.free(ast.errors);
 }
 
+pub fn fieldName(ast: *const Ast, src: [:0]const u8, node_idx: u32) []const u8 {
+    const node = ast.nodes[node_idx];
+    assert(node.tag == .struct_field or node.tag == .dict_field);
+    var t: Tokenizer = .{
+        .idx = node.loc.start,
+        .lines = 0,
+        .delimiter = ast.delimiter,
+    };
+
+    const name_tok = t.next(src, true);
+    const txt = name_tok.loc.slice(src);
+    return switch (name_tok.tag) {
+        .identifier => txt[1..],
+        .bytes => txt[1 .. txt.len - 1],
+        else => unreachable,
+    };
+}
+
+pub fn iterator(ast: *const Ast) Iterator {
+    return .{ .nodes = ast.nodes };
+}
+
+pub fn fmt(ast: *const Ast, src: [:0]const u8) Format {
+    return .{ .src = src, .ast = ast };
+}
 
 const Parser = struct {
     gpa: Allocator,
@@ -836,22 +860,14 @@ pub const Iterator = struct {
     }
 };
 
-pub fn iterator(ast: Ast) Iterator {
-    return .{ .nodes = ast.nodes };
-}
-
 pub const Format = struct {
     src: [:0]const u8,
-    ast: Ast,
+    ast: *const Ast,
 
     pub fn format(f: Format, w: *Writer) !void {
         try f.ast.render(f.src, w);
     }
 };
-
-pub fn fmt(ast: Ast, src: [:0]const u8) Format {
-    return .{ .src = src, .ast = ast };
-}
 
 fn renderComments(
     at_newline: *bool,
