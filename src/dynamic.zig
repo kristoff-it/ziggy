@@ -10,7 +10,7 @@ const root = @import("root.zig");
 const deserializeLeaky = root.deserializeLeaky;
 const Options = root.Options;
 
-/// A type capable of deserializing from, and serializing to, any Zig Document.
+/// A type capable of (de)serializing any Zig Document.
 pub const Dynamic = union(enum) {
     /// Used to deserialize Ziggy dictionaries and structs, see `kv.container_kind`.
     kv: Dictionary(Dynamic),
@@ -134,12 +134,14 @@ fn deserializeDynamic(
 
 pub fn Dictionary(comptime T: type) type {
     return struct {
-        container_kind: enum { @"struct", dict } = .@"struct",
+        container_kind: enum { @"struct", dict },
         fields: std.StringArrayHashMapUnmanaged(T) = .empty,
 
-        const Self = @This();
-        const Child = T;
+        pub const empty: @This() = .{ .container_kind = .dict };
+        pub const empty_struct: @This() = .{ .container_kind = .@"struct" };
 
+        pub const Child = T;
+        const Self = @This();
         pub const ziggy_options: Options(Self) = .{
             .serialize = serialize,
             .deserialize = deserialize,
@@ -211,7 +213,7 @@ pub fn Dictionary(comptime T: type) type {
             first: Token,
             top_lvl: bool,
         ) Deserializer.Error!Self {
-            var result: Self = .{};
+            var result: Self = .empty;
             var field_token = if (top_lvl and first.tag == .identifier)
                 first
             else switch (first.tag) {

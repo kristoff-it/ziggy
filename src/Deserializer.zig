@@ -79,6 +79,7 @@ pub const Meta = struct {
         /// Path to the Ziggy Document, null will show "<stdin>" instead.
         path: ?[]const u8,
         src: [:0]const u8,
+        /// The error returned by deserialize(Leaky).
         e: Error,
         w: *Io.Writer,
     ) error{ OutOfMemory, WriteFailed }!void {
@@ -88,11 +89,13 @@ pub const Meta = struct {
         if (ast.errors.len > 0) {
             for (ast.errors) |err| {
                 const sel = err.main_location.getSelection(src);
-                try w.print("{s}:{}:{} {f}\n", .{
+                const lp = linePreview(src, err.main_location);
+                try w.print("{s}:{}:{} {f}\n{f}", .{
                     path orelse "<stdin>",
                     sel.start.line,
                     sel.start.col,
                     err.tag,
+                    lp,
                 });
             }
             return;
@@ -147,7 +150,12 @@ pub const Meta = struct {
                 try w.print(" '{s}'", .{meta.missing_field_name});
             },
         }
-        try w.writeAll("\n");
+        // if (meta.error_loc.start >= src.len) {
+        //     try w.print(" (EOF)", .{});
+        // } else {
+        const lp = linePreview(src, meta.error_loc);
+        try w.print("\n{f}", .{lp});
+        // }
     }
 
     /// Same as reportErrors but as a formatter.
@@ -573,7 +581,12 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                 }
                 const name = field_token.loc.slice(d.src)[1..]; // skip '.'
 
-                inline for (info.field_names, info.field_types, 0..) |f_name, f_type, idx| {
+                inline for (
+                    info.field_names,
+                    info.field_types,
+                    info.field_attrs,
+                    0..,
+                ) |f_name, f_type, f_attrs, idx| {
                     // skip fields
                     @setEvalBranchQuota(100000);
                     if (comptime std.mem.indexOfScalar(
@@ -587,11 +600,21 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                         const eql = d.next();
                         if (eql.tag != .eql) return d.unexpected(eql);
 
-                        @field(result, f_name) = try d.deserializeOne(
-                            f_type,
-                            d.next(),
-                            false,
-                        );
+                        // Non-optional fields with a default value
+                        // can decode null as the default value.
+                        const first_value_tok = d.next();
+                        if (f_attrs.default_value_ptr != null and
+                            @typeInfo(f_type) != .optional and first_value_tok.tag == .null)
+                        {
+                            const dv_ptr: *const f_type = @ptrCast(@alignCast(f_attrs.default_value_ptr));
+                            @field(result, f_name) = dv_ptr.*;
+                        } else {
+                            @field(result, f_name) = try d.deserializeOne(
+                                f_type,
+                                first_value_tok,
+                                false,
+                            );
+                        }
 
                         seen.set(idx);
 
@@ -824,6 +847,37 @@ fn parseBytes(
         },
         else => return d.unexpectedValue(first_token),
     }
+}
+
+const LinePreview = struct {
+    code: []const u8,
+    spaces: u32,
+    carets: u32,
+
+    pub fn format(lp: LinePreview, w: *Io.Writer) Io.Writer.Error!void {
+        try w.print("|   {s}\n", .{lp.code});
+        try w.writeAll("|   ");
+        try w.splatByteAll(' ', lp.spaces);
+        try w.splatByteAll('^', lp.carets);
+        try w.writeAll("\n");
+    }
+};
+
+fn linePreview(src: [:0]const u8, loc: Tokenizer.Token.Loc) LinePreview {
+    const line_off = loc.line(src);
+    const line_trim_left = std.mem.trimStart(u8, line_off.line, &std.ascii.whitespace);
+    const start_trim_left = line_off.start + line_off.line.len - line_trim_left.len;
+
+    const caret_len = loc.end - loc.start;
+    const caret_spaces_len = loc.start -| start_trim_left;
+
+    const line_trim = std.mem.trimEnd(u8, line_trim_left, &std.ascii.whitespace);
+
+    return .{
+        .code = line_trim,
+        .spaces = @intCast(caret_spaces_len),
+        .carets = @intCast(caret_len),
+    };
 }
 
 test "struct - basics" {
@@ -1313,6 +1367,8 @@ test "missing delimiter in markdown" {
 
     try std.testing.expectFmt(
         \\<stdin>:5:1 unexpected token
+        \\|   aarst arst arst
+        \\|   ^^^^^
         \\
     , "{f}", .{meta.reportErrorsFmt(arena, opts, null, case, error.UnexpectedToken)});
 }
@@ -1346,6 +1402,8 @@ test "duplicate field + syntax error" {
 
     try std.testing.expectFmt(
         \\<stdin>:5:1 unexpected token
+        \\|   aarst arst arst
+        \\|   ^^^^^
         \\
     , "{f}", .{meta.reportErrorsFmt(arena, opts, null, case, error.DuplicateField)});
 }
@@ -1379,6 +1437,8 @@ test "duplicate field in markdown" {
 
     try std.testing.expectFmt(
         \\<stdin>:3:1 duplicate field 'foo'
+        \\|   .foo = false
+        \\|   ^^^^
         \\
     , "{f}", .{meta.reportErrorsFmt(arena, opts, null, case, error.DuplicateField)});
 }

@@ -525,18 +525,20 @@ const Parser = struct {
                 p.up();
             },
             else => {
-                if (p.tok.tag == .invalid) try p.err(.{
-                    .tag = .unexpected_token,
-                    .main_location = p.tok.loc,
-                }) else try p.err(.{
+                if (p.tok.tag == .invalid) {
+                    try p.err(.{
+                        .tag = .unexpected_token,
+                        .main_location = p.tok.loc,
+                    });
+                } else try p.err(.{
                     .tag = .missing_value,
                     .main_location = p.prev_loc,
                 });
 
                 try p.addChild(.missing_value);
                 p.cur().loc = .{
-                    .start = p.prev_loc.start,
-                    .end = p.tok.loc.start,
+                    .start = p.prev_loc.end,
+                    .end = p.tok.loc.end,
                 };
                 p.up();
                 try p.discardUntilRestart();
@@ -574,7 +576,12 @@ const Parser = struct {
             .dict_field,
             => switch (p.tok.tag) {
                 .eof, .eod => return,
-                .comma, .identifier, .bytes, .rb => {
+                .comma => {
+                    p.cur().loc.end = p.tok.loc.end;
+                    p.up();
+                    continue :discard p.cur().tag;
+                },
+                .identifier, .bytes, .rb => {
                     p.cur().loc.end = p.tok.loc.start;
                     p.up();
                     continue :discard p.cur().tag;

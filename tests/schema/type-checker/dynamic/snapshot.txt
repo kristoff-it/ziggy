@@ -1,4 +1,14 @@
+root.RootOk.a: schema type '[]bool' (slice) requires this Zig struct field to have a default value
+root.RootOk.b: schema type '{:}bool' (dictionary) requires this Zig struct field to have a default value
+root.RootOk1.a: schema type '[]bool' (slice) requires this Zig struct field to have a default value
+root.RootOk1.b: schema type '{:}bool' (dictionary) requires this Zig struct field to have a default value
+root.RootOk2.a: schema type '[]bool' (slice) requires this Zig struct field to have a default value
+root.RootOk2.b: schema type '{:}bool' (dictionary) requires this Zig struct field to have a default value
+root.RootOk3.a: schema type '[]bool' (slice) requires this Zig struct field to have a default value
+root.RootOk3.b: schema type '{:}bool' (dictionary) requires this Zig struct field to have a default value
+root.RootErr.a: schema type '[]bool' (slice) requires this Zig struct field to have a default value
 root.RootErr.a: has type 'dynamic.ArrayList(u32)' which is incompatible with '[]bool'
           hint: zig child type is 'u32', schema has 'bool'
+root.RootErr.b: schema type '{:}bool' (dictionary) requires this Zig struct field to have a default value
 root.RootErr.b: has type 'dynamic.Dictionary(u32)' which is incompatible with '{:}bool'
           hint: zig child type is 'u32', schema has 'bool'

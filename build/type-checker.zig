@@ -159,12 +159,54 @@ fn validateZigContainer(
                 },
             }
 
-            inline for (container_info.field_names, 0..) |f_name, f_idx| {
+            const skip_fields = if (ziggy.getOptions(T)) |opts| opts.skip_fields else &.{};
+            inline for (container_info.field_names, 0..) |f_name, f_idx| blk: {
+                @setEvalBranchQuota(100000);
+                if (zig_kind == .@"struct" and comptime std.mem.indexOfScalar(
+                    std.meta.FieldEnum(T),
+                    skip_fields,
+                    std.meta.stringToEnum(std.meta.FieldEnum(T), f_name).?,
+                ) != null) break :blk;
+
                 if (type_scope.fields.getPtr(f_name)) |field| {
                     if (zig_kind != .@"enum") {
                         if (ast.fieldTypeExpr(field.idx)) |field_expr| {
+                            const f_type = container_info.field_types[f_idx];
+
                             var expr = field_expr;
                             const expr_src = expr.loc.slice(schema_src);
+
+                            if (zig_kind == .@"struct") {
+                                // A Schema field of outer type '?', '{:}', '[]'
+                                // must have a corresponding Zig type with a
+                                // default value.
+                                const f_attrs = container_info.field_attrs[f_idx];
+                                switch (expr_src[0]) {
+                                    '?' => if (f_attrs.default_value_ptr == null) {
+                                        err.report(T, f_name,
+                                            \\schema type '{s}' (optional) requires this Zig struct field to have a default value
+                                        , .{expr_src});
+                                    } else if (@typeInfo(f_type) != .optional) {
+                                        // Optional Schema fields are
+                                        // compatible with non-optional Zig
+                                        // fields that have a default
+                                        // value.
+                                        expr.it.idx += "?".len;
+                                    },
+                                    '[' => if (f_attrs.default_value_ptr == null) {
+                                        err.report(T, f_name,
+                                            \\schema type '{s}' (slice) requires this Zig struct field to have a default value
+                                        , .{expr_src});
+                                    },
+                                    '{' => if (f_attrs.default_value_ptr == null) {
+                                        err.report(T, f_name,
+                                            \\schema type '{s}' (dictionary) requires this Zig struct field to have a default value
+                                        , .{expr_src});
+                                    },
+                                    else => {},
+                                }
+                            }
+
                             validateFieldExpr(
                                 arena,
                                 err,
@@ -173,18 +215,12 @@ fn validateZigContainer(
                                 ast,
                                 T,
                                 node_idx,
-                                container_info.field_types[f_idx],
+                                f_type,
                                 f_name,
                                 expr_src,
                                 &expr.it,
                                 expr.it.next(schema_src),
                             );
-                        }
-
-                        const field_type_idx = field.idx + 1;
-                        if (field_type_idx < ast.nodes.len) {
-                            const field_type = ast.nodes[field_type_idx];
-                            if (field_type.parent_idx == field.idx) {}
                         }
                     }
                 } else {
@@ -375,7 +411,7 @@ fn validateFieldExpr(
         .int_kw => if (field_info == .int) return,
 
         .opt_identifier => if (field_info == .optional) {
-            const container_name = tok.loc.slice(schema_src);
+            const container_name = tok.loc.slice(schema_src)[1..];
             const child_node_idx = ast.findContainerType(node_idx, container_name).?;
             return validateZigContainer(
                 arena,

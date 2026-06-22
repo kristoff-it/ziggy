@@ -1,1 +1,3 @@
 missing_comma.ziggy:1:8 missing token: ',' after field value
+|   .foo = "bar"
+|          ^^^^^

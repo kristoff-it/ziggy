@@ -1,1 +1,3 @@
 struct.ziggy:2:8 unexpected value '.false'
+|   .bar = .false,
+|          ^^^^^^

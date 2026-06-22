@@ -61,10 +61,11 @@ pub fn Options(T: type) type {
         ///           will also consume child values. This is the
         ///           value of `ziggy.Dynamic`.
         ///
-        /// - 'some': Lets you specify compatibily with each type.
-        ///           In the case of wrapping types ('?', '{:}',
-        ///           '[]') it is necessary to specify the child
-        ///           type in order to express compatibility.
+        /// - 'some': Lets you specify compatibily with container
+        ///           types. You will need to provide the child
+        ///           type of your custom container in order to
+        ///           let the algorithm continue validating the
+        ///           type.
         ///
         /// - 'none': The default value.
         roles: union(enum) {
@@ -72,7 +73,6 @@ pub fn Options(T: type) type {
             container: struct {
                 dict: ?type = null,
                 slice: ?type = null,
-                optional: ?type = null,
             },
             none,
         } = .none,
