@@ -208,7 +208,6 @@ pub fn schemaForZiggy(
     uri_doc: []const u8,
 ) error{OutOfMemory}!?struct { []const u8, Schema } {
     const uri_schema = try std.fmt.allocPrint(arena, "{s}-schema", .{uri_doc});
-    log.debug("trying to find schema at '{s}'", .{uri_schema});
 
     if (self.schemas.getEntry(uri_schema)) |kv| {
         kv.value_ptr.refs += 1;
@@ -219,6 +218,7 @@ pub fn schemaForZiggy(
             else => uri_schema["file://".len..],
         };
 
+        log.debug("trying to find schema at '{s}' [{s}]", .{ uri_schema, path });
         const src = self.dir.readFileAllocOptions(
             self.io,
             path,
@@ -270,6 +270,8 @@ pub fn schemaForZiggy(
             .wasi => dot_schema_path["/".len..],
             else => dot_schema_path,
         };
+
+        log.debug("trying to find dot schema at '{s}' [{s}]", .{ uri_schema, path });
         const schema_src = self.dir.readFileAllocOptions(
             self.io,
             path,

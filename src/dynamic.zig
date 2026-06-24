@@ -14,10 +14,7 @@ const Options = root.Options;
 pub const Dynamic = union(enum) {
     /// Used to deserialize Ziggy dictionaries and structs, see `kv.container_kind`.
     kv: Dictionary(Dynamic),
-    @"union": struct {
-        tag: []const u8,
-        value: *Dynamic,
-    },
+    @"union": Union,
     @"enum": []const u8,
     array: []const Dynamic,
     bytes: []const u8,
@@ -25,6 +22,11 @@ pub const Dynamic = union(enum) {
     float: f64,
     bool: bool,
     null,
+
+    pub const Union = struct {
+        tag: []const u8,
+        value: *Dynamic,
+    };
 
     pub const ziggy_options: Options(Dynamic) = .{
         .serialize = serializeDynamic,

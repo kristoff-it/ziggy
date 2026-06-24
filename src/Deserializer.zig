@@ -150,12 +150,9 @@ pub const Meta = struct {
                 try w.print(" '{s}'", .{meta.missing_field_name});
             },
         }
-        // if (meta.error_loc.start >= src.len) {
-        //     try w.print(" (EOF)", .{});
-        // } else {
+
         const lp = linePreview(src, meta.error_loc);
         try w.print("\n{f}", .{lp});
-        // }
     }
 
     /// Same as reportErrors but as a formatter.

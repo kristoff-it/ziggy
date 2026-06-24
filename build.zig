@@ -51,41 +51,6 @@ pub fn addTypeCheckStep(
     ).step;
 }
 
-fn addTypeCheckStepInternal(
-    project: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.lang.OptimizeMode,
-    root_source_file: std.Build.LazyPath,
-    ziggy_mod: *std.Build.Module,
-    types: *std.Build.Module,
-    schema_path: std.Build.LazyPath,
-    comptime test_mode_enabled: bool,
-) *std.Build.Step.Run {
-    const check = project.addExecutable(.{
-        .name = "type_checker",
-        .root_module = project.createModule(.{
-            .root_source_file = root_source_file,
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-
-    check.root_module.addImport("types", types);
-    check.root_module.addImport("ziggy", ziggy_mod);
-
-    const test_mode = project.addOptions();
-    test_mode.addOption(bool, "enabled", test_mode_enabled);
-    check.root_module.addOptions("test_mode", test_mode);
-
-    const run = project.addRunArtifact(check);
-    run.addFileArg(schema_path);
-    if (project.root.root_dir.path) |root_path| {
-        run.addArg(root_path);
-    }
-
-    return run;
-}
-
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -650,4 +615,39 @@ fn getGitVersion(b: *std.Build) Version {
             .{git_describe},
         ),
     }
+}
+
+fn addTypeCheckStepInternal(
+    project: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.lang.OptimizeMode,
+    root_source_file: std.Build.LazyPath,
+    ziggy_mod: *std.Build.Module,
+    types: *std.Build.Module,
+    schema_path: std.Build.LazyPath,
+    comptime test_mode_enabled: bool,
+) *std.Build.Step.Run {
+    const check = project.addExecutable(.{
+        .name = "type_checker",
+        .root_module = project.createModule(.{
+            .root_source_file = root_source_file,
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    check.root_module.addImport("types", types);
+    check.root_module.addImport("ziggy", ziggy_mod);
+
+    const test_mode = project.addOptions();
+    test_mode.addOption(bool, "enabled", test_mode_enabled);
+    check.root_module.addOptions("test_mode", test_mode);
+
+    const run = project.addRunArtifact(check);
+    run.addFileArg(schema_path);
+    if (project.root.root_dir.path) |root_path| {
+        run.addArg(root_path);
+    }
+
+    return run;
 }

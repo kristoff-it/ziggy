@@ -87,7 +87,7 @@
 		"commentContents": {
 			"patterns": [
 				{
-					"match": "\\b(NOTE)\\b:?",
+					"match": "\\b(NOTE|WARNING)\\b:?",
 					"name": "keyword.todo.ziggy_schema"
 				}
 			]
