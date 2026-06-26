@@ -27,7 +27,7 @@ export async function activate(context: ExtensionContext) {
         // Load the WebAssembly code
         const filename = Uri.joinPath(
             context.extensionUri,
-            'wasm',
+            'out',
             'ziggy.wasm'
         );
 

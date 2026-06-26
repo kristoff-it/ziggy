@@ -4,7 +4,7 @@
   "description": "Data serialization language and schema lanugage for clear config files and API messages.",
   "repository": "https://github.com/kristoff-it/ziggy",
   "publisher": "LorisCro",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "engines": {
     "vscode": "^1.92.0"
   },
@@ -116,5 +116,10 @@
     "build": "npm run build-base -- --sourcemap",
     "watch": "npm run build-base -- --sourcemap --watch",
     "lint": "eslint . --ext .ts"
+  },
+  "allowScripts": {
+    "@vscode/vsce-sign@2.0.9": true,
+    "esbuild@0.12.29": true,
+    "keytar@7.9.0": true
   }
 }
