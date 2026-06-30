@@ -5,24 +5,25 @@
 /// <reference types="tree-sitter-cli/dsl"/>
 //@ts-check
 
-
 module.exports = grammar({
-  name: 'ziggy_schema',
+  name: "ziggy_schema",
 
-  extras: _ => [/\s/],
-  word: $ => $.identifier,
+  extras: (_) => [/\s/],
+  word: ($) => $.identifier,
 
   rules: {
-    schema: $ => seq(
-      optional($.doc_comment),
-      seq("$", '=', field("root", $.expr)),
-      repeat(choice($.struct, $.union)),
-    ),
+    schema: ($) =>
+      seq(
+        optional($.doc_comment),
+        seq("$", "=", field("root", $.expr)),
+        repeat(choice($.struct, $.union)),
+      ),
 
-    expr: $ => seq(
-      repeat(choice('[]', '{:}', '?')),
-      choice('bytes', 'int', 'float', 'bool', 'any', $.identifier)
-    ),
+    expr: ($) =>
+      seq(
+        repeat(choice("[]", "{:}", "?")),
+        choice("bytes", "int", "float", "bool", "any", $.identifier),
+      ),
 
     identifier: (_) => {
       const identifier_start = /[a-zA-Z_]/;
@@ -30,50 +31,48 @@ module.exports = grammar({
       return token(seq(identifier_start, repeat(identifier_part)));
     },
 
-    struct: $ => seq(
-      field("docs", optional($.doc_comment)),
-      'struct', field("name", $.identifier), '{',
+    struct: ($) =>
+      seq(
+        field("docs", optional($.doc_comment)),
+        "struct",
+        field("name", $.identifier),
+        "{",
         commaSep($.struct_field),
         repeat(choice($.struct, $.union)),
-      '}',
-    ),
+        "}",
+      ),
 
-    union: $ => seq(
-      field("docs", optional($.doc_comment)),
-      'union', field("name", $.identifier), '{',
+    union: ($) =>
+      seq(
+        field("docs", optional($.doc_comment)),
+        "union",
+        field("name", $.identifier),
+        "{",
         commaSep($.union_field),
         repeat(choice($.struct, $.union)),
-      '}',
-    ),
+        "}",
+      ),
 
-    struct_field: $ => seq(
-      field("docs", optional($.doc_comment)),
-      field("key", $.identifier), ':', field("value", $.expr),
-      field("default", optional(seq('=', $.default)))
-    ),
-    
-    union_field: $ => seq(
-      field("docs", optional($.doc_comment)),
-      field("key", $.identifier), optional(seq(':', field("value", $.expr))),
-      field("default", optional(seq('=', $.default)))
-    ),
+    struct_field: ($) =>
+      seq(
+        field("docs", optional($.doc_comment)),
+        field("key", $.identifier),
+        ":",
+        field("value", $.expr),
+      ),
 
-    doc_comment: _ => repeat1(token(seq('///', /.*/))),
+    union_field: ($) =>
+      seq(
+        field("docs", optional($.doc_comment)),
+        field("key", $.identifier),
+        optional(seq(":", field("value", $.expr))),
+      ),
 
-    default: $ => choice(
-      "null",
-      "true",
-      "false",
-      "[]",
-      "{}",
-      $.string,
-      $.number,
-    ),
+    doc_comment: (_) => repeat1(token(seq("///", /.*/))),
 
     string: (_) => seq('"', /[^"\n]*/, '"'),
     number: (_) => /\d+/,
-    enum: $ => seq('@', alias($.identifier, "_enum_name")),
-  }
+  },
 });
 
 /**

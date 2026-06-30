@@ -1,24 +1,5 @@
 [
   {
-    "type": "default",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": false,
-      "types": [
-        {
-          "type": "number",
-          "named": true
-        },
-        {
-          "type": "string",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "doc_comment",
     "named": true,
     "fields": {}
@@ -41,6 +22,7 @@
   {
     "type": "schema",
     "named": true,
+    "root": true,
     "fields": {
       "root": {
         "multiple": false,
@@ -71,11 +53,6 @@
         }
       ]
     }
-  },
-  {
-    "type": "string",
-    "named": true,
-    "fields": {}
   },
   {
     "type": "struct",
@@ -125,20 +102,6 @@
     "type": "struct_field",
     "named": true,
     "fields": {
-      "default": {
-        "multiple": true,
-        "required": false,
-        "types": [
-          {
-            "type": "=",
-            "named": false
-          },
-          {
-            "type": "default",
-            "named": true
-          }
-        ]
-      },
       "docs": {
         "multiple": false,
         "required": false,
@@ -219,20 +182,6 @@
     "type": "union_field",
     "named": true,
     "fields": {
-      "default": {
-        "multiple": true,
-        "required": false,
-        "types": [
-          {
-            "type": "=",
-            "named": false
-          },
-          {
-            "type": "default",
-            "named": true
-          }
-        ]
-      },
       "docs": {
         "multiple": false,
         "required": false,
@@ -266,10 +215,6 @@
     }
   },
   {
-    "type": "\"",
-    "named": false
-  },
-  {
     "type": "$",
     "named": false
   },
@@ -290,15 +235,7 @@
     "named": false
   },
   {
-    "type": "@",
-    "named": false
-  },
-  {
     "type": "[]",
-    "named": false
-  },
-  {
-    "type": "_enum_name",
     "named": false
   },
   {
@@ -314,10 +251,6 @@
     "named": false
   },
   {
-    "type": "false",
-    "named": false
-  },
-  {
     "type": "float",
     "named": false
   },
@@ -330,19 +263,7 @@
     "named": false
   },
   {
-    "type": "null",
-    "named": false
-  },
-  {
-    "type": "number",
-    "named": true
-  },
-  {
     "type": "struct",
-    "named": false
-  },
-  {
-    "type": "true",
     "named": false
   },
   {
@@ -355,10 +276,6 @@
   },
   {
     "type": "{:}",
-    "named": false
-  },
-  {
-    "type": "{}",
     "named": false
   },
   {
