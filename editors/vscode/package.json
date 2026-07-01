@@ -8,23 +8,14 @@
   "engines": {
     "vscode": "^1.92.0"
   },
-  "categories": [
-    "Programming Languages"
-  ],
-  "activationEvents": [
-    "onLanguage:supermd"
-  ],
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:supermd"],
   "contributes": {
     "languages": [
       {
         "id": "ziggy",
-        "aliases": [
-          "Ziggy",
-          "ziggy"
-        ],
-        "extensions": [
-          ".ziggy"
-        ],
+        "aliases": ["Ziggy", "ziggy"],
+        "extensions": [".ziggy"],
         "configuration": "./language-configuration.json"
       },
       {
@@ -36,12 +27,8 @@
           "ziggy-schema",
           "ziggy-schema"
         ],
-        "extensions": [
-          ".ziggy-schema"
-        ],
-        "filenames": [
-          ".ziggy-schema"
-        ],
+        "extensions": [".ziggy-schema"],
+        "filenames": [".ziggy-schema"],
         "configuration": "./schema.language-configuration.json"
       }
     ],
@@ -82,11 +69,7 @@
           "scope": "window",
           "type": "string",
           "description": "Traces the communication between VS Code and the language server.",
-          "enum": [
-            "off",
-            "messages",
-            "verbose"
-          ],
+          "enum": ["off", "messages", "verbose"],
           "default": "off"
         }
       }
@@ -94,9 +77,7 @@
   },
   "main": "./out/extension",
   "browser": "./out/extension",
-  "extensionDependencies": [
-    "ms-vscode.wasm-wasi-core"
-  ],
+  "extensionDependencies": ["ms-vscode.wasm-wasi-core"],
   "devDependencies": {
     "@types/node": "^18.0.0",
     "@types/vscode": "^1.92.0",

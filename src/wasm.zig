@@ -10,11 +10,6 @@ pub fn main(init: std.process.Init) !void {
         .{},
     );
 
-    for (init.preopens.map.keys()) |k| {
-        std.log.debug("[{s}]", .{k});
-    }
-    std.log.debug("/ -> {any}", .{root.dir});
-
     const args = init.minimal.args.toSlice(init.arena.allocator()) catch std.process.fatal("oom", .{});
     try lsp_exe.run(init.io, init.gpa, root.dir, args[1..]);
 }
