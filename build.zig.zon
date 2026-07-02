@@ -22,6 +22,7 @@
         },
     },
     .paths = .{
+    "build",
         "build.zig",
         "build.zig.zon",
         "src",
