@@ -70,8 +70,8 @@ module.exports = grammar({
 
     doc_comment: (_) => repeat1(token(seq("///", /.*/))),
 
-    string: (_) => seq('"', /[^"\n]*/, '"'),
-    number: (_) => /\d+/,
+    // string: (_) => seq('"', /[^"\n]*/, '"'),
+    // number: (_) => /\d+/,
   },
 });
 

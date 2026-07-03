@@ -6,15 +6,6 @@
   "$"
 ] @keyword
 
-(string) @string
-(number) @number
-
-[
-  "true"
-  "false"
-] @bool
-
-
 [
   "?"
   "[]"
