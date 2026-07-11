@@ -116,14 +116,48 @@ fn validateZigContainer(
     const type_scope = ast.scopes.get(node_idx).?;
     switch (@typeInfo(T)) {
         else => unreachable,
+        .pointer => |ptr_info| {
+            std.debug.assert(ptr_info.size == .one);
+
+            return validateZigContainer(
+                arena,
+                err,
+                seen,
+                schema_src,
+                ast,
+                ptr_info.child,
+                node_idx,
+            );
+        },
         inline .@"struct", .@"union", .@"enum" => |container_info, zig_kind| {
             switch (zig_kind) {
                 else => unreachable,
-                .@"struct" => if (schema_kind == .@"union") {
-                    err.report(T, null,
-                        \\is of kind 'struct', while schema expects 'union' or 'enum'
-                    , .{});
-                    return;
+                .@"struct" => {
+                    if (schema_kind == .@"union") {
+                        if (ziggy.getOptions(T)) |opts| {
+                            switch (opts.roles) {
+                                .container => |c| {
+                                    if (c.@"union") |U| {
+                                        return validateZigContainer(
+                                            arena,
+                                            err,
+                                            seen,
+                                            schema_src,
+                                            ast,
+                                            U,
+                                            node_idx,
+                                        );
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+
+                        err.report(T, null,
+                            \\is of kind 'struct', while schema expects 'union' or 'enum'
+                        , .{});
+                        return;
+                    }
                 },
                 .@"union", .@"enum" => {
                     if (zig_kind == .@"union") {
