@@ -702,12 +702,18 @@ fn finalizeStruct(
     seen: anytype,
     last: Token,
 ) Error!void {
+    const loc_field = if (root.getOptions(@TypeOf(result.*))) |opts| opts.loc_field else null;
+    if (loc_field) |lf| {
+        @field(result, @tagName(lf)).end = d.tokenizer.idx;
+    }
+
     inline for (
         info.field_names,
         info.field_types,
         info.field_attrs,
         0..,
     ) |f_name, f_type, f_attrs, idx| {
+        if (loc_field) |lf| if (comptime std.mem.eql(u8, f_name, @tagName(lf))) continue;
         if (!seen.isSet(idx)) {
             if (f_attrs.default_value_ptr != null) {
                 const dv_ptr: *const f_type = @ptrCast(@alignCast(f_attrs.default_value_ptr));
@@ -717,10 +723,6 @@ fn finalizeStruct(
                 return d.missingField(last, f_name);
             }
         }
-    }
-    const loc_field = if (root.getOptions(@TypeOf(result.*))) |opts| opts.loc_field else null;
-    if (loc_field) |lf| {
-        @field(result, @tagName(lf)).end = d.tokenizer.idx;
     }
 }
 
