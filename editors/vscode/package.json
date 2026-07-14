@@ -4,7 +4,7 @@
   "description": "Data serialization language and schema lanugage for clear config files and API messages.",
   "repository": "https://github.com/kristoff-it/ziggy",
   "publisher": "LorisCro",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "engines": {
     "vscode": "^1.92.0"
   },

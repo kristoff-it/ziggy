@@ -4,6 +4,11 @@ All notable changes to the Ziggy extension will be documented in this file.
 
 Documentation: https://ziggy-lang.io
 
+## [v0.2.0]
+Bug fixes and minor improvements not relevant to the language server.
+The Ziggy CLI tool can now pretty-print Ziggy documents with syntax
+highlighting support (both terminal and HTML).
+
 ## [v0.1.2]
 Fix mistake when creating the vscode extension bundle.
 
