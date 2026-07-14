@@ -1,6 +1,7 @@
+const options = @import("options");
+const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
-const builtin = @import("builtin");
 const folders = @import("known-folders");
 const ziggy = @import("ziggy");
 const logging = @import("cli/logging.zig");
@@ -51,7 +52,12 @@ pub const Command = enum {
     check,
     convert,
     lsp,
+    version,
+    @"--version",
+    @"-v",
     help,
+    @"--help",
+    @"-h",
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -82,7 +88,10 @@ pub fn main(init: std.process.Init) !void {
         .cat => cat_exe.run(io, gpa, args[2..]),
         .check => check_exe.run(io, gpa, args[2..]),
         .convert => convert_exe.run(io, gpa, args[2..]),
-        .help => fatalHelp(),
+        .help, .@"--help", .@"-h" => fatalHelp(),
+        .version, .@"--version", .@"-v" => {
+            std.debug.print("{s}\n", .{options.version});
+        },
         else => std.debug.panic("TODO cmd={s}", .{@tagName(cmd)}),
     } catch |err| fatal("unexpected error: {s}\n", .{@errorName(err)});
 }
@@ -98,12 +107,13 @@ fn fatalHelp() noreturn {
         \\
         \\Commands: 
         \\  fmt          Format Ziggy files
-        \\  cat          Print Syntax-Highlighted Ziggy files
+        \\  cat          Print syntax-highlighted Ziggy files
         \\  query, q     Query Ziggy Documents
         \\  check        Check Ziggy Documents against a Ziggy Schema
         \\  convert      Convert between JSON, YAML, TOML and Ziggy Documents
         \\  lsp          Start the Ziggy LSP
-        \\  help         Show this menu and exit
+        \\  version      Print version number and exit 
+        \\  help         Print this menu and exit
         \\
         \\General Options:
         \\  --help, -h   Print command specific usage
