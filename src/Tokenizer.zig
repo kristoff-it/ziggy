@@ -70,6 +70,70 @@ pub const Token = struct {
         comment_line,
         eod, // ---, ```, or </script>
         eof,
+
+        pub fn literal(t: Tag) []const u8 {
+            return switch (t) {
+                .comment_line,
+                .eod,
+                .eof,
+                .bytes,
+                .bytes_line,
+                .integer,
+                .float,
+                .union_case,
+                .invalid,
+                .identifier,
+                => unreachable,
+                .comma => ",",
+                .eql => "=",
+                .colon => ":",
+                .rp => ")",
+                .dotlb => ".{",
+                .lb => "{",
+                .rb => "}",
+                .lsb => "[",
+                .rsb => "]",
+                .nan => "nan",
+                .pos_inf => "inf",
+                .neg_inf => "-inf",
+                .null => "null",
+                .true => "true",
+                .false => "false",
+            };
+        }
+
+        pub const Kind = enum {
+            punctuation,
+            comment_line,
+            bytes,
+            bytes_line,
+            integer,
+            float,
+            identifier,
+            eod,
+            null,
+            bool,
+            @"enum",
+        };
+
+        pub fn kind(t: Tag) Kind {
+            return switch (t) {
+                .eof,
+                .invalid,
+                .union_case, // we always split it
+                => unreachable,
+                .comma, .eql, .colon, .rp, .dotlb, .lb, .rb, .lsb, .rsb => .punctuation,
+                .comment_line => .comment_line,
+                .bytes => .bytes,
+                .bytes_line => .bytes_line,
+                .integer => .integer,
+                .float, .nan, .pos_inf, .neg_inf => .float,
+                .identifier => .identifier,
+                .null => .null,
+                .true, .false => .bool,
+                .eod => .eod,
+            };
+        }
     };
 
     pub const Loc = struct {

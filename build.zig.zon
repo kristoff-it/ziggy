@@ -20,9 +20,13 @@
             .url = "git+https://github.com/kristoff-it/zig-afl-kit#e9b5dfc14c06133786a09214709316dc9fb54bd9",
             .hash = "afl_kit-0.1.0-NdJ3ctQfAACNK1UANoF4pwkWOdW-JGLXHby9OE9-xMPq",
         },
+        .ansi_term = .{
+            .url = "git+https://github.com/kristoff-it/ansi_term?ref=fixes#c4679e859bd61259754bd312e59b54dd03957e90",
+            .hash = "ansi_term-0.3.0-_baAyzFoAACjFHF9VpZSo71Q7QUclZQlpYqZZShaNwYg",
+        },
     },
     .paths = .{
-    "build",
+        "build",
         "build.zig",
         "build.zig.zon",
         "src",

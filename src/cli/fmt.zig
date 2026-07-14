@@ -236,7 +236,7 @@ pub fn fmtSuperMD(
 
     if (ast.has_syntax_errors) return error.Syntax;
 
-    return std.fmt.allocPrint(gpa, "{f}\n", .{ast.fmt(src)});
+    return std.fmt.allocPrint(gpa, "{f}\n", .{ast.fmt(src, .plain)});
 }
 
 pub fn fmtZiggy(
@@ -264,7 +264,7 @@ pub fn fmtZiggy(
 
     if (ast.has_syntax_errors) return error.Syntax;
 
-    return std.fmt.allocPrint(gpa, "{f}\n", .{ast.fmt(src)});
+    return std.fmt.allocPrint(gpa, "{f}\n", .{ast.fmt(src, .plain)});
 }
 
 fn fmtSchema(
@@ -416,7 +416,7 @@ pub const Command = struct {
             \\Detected extensions:
             \\     Ziggy         .ziggy
             \\     Ziggy Schema  .ziggy-schema
-            \\     SuperMD       .supermd
+            \\     SuperMD       .smd
             \\
             \\NOTE: SuperMD support is temporary until a dedicated
             \\      CLI tool is created.

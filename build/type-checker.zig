@@ -114,11 +114,17 @@ fn validateZigContainer(
 
     const schema_kind = ast.nodes[node_idx].tag;
     const type_scope = ast.scopes.get(node_idx).?;
+
     switch (@typeInfo(T)) {
         else => unreachable,
+        .optional => {
+            err.report(T, null,
+                \\is an optional, but schema expects a non-optional value
+            , .{});
+            return;
+        },
         .pointer => |ptr_info| {
             std.debug.assert(ptr_info.size == .one);
-
             return validateZigContainer(
                 arena,
                 err,

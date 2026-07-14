@@ -714,7 +714,7 @@ pub fn @"textDocument/formatting"(
         log.debug("format doc!", .{});
 
         var aw = std.Io.Writer.Allocating.init(arena);
-        try doc.ast.render(doc.src, &aw.writer);
+        try doc.ast.render(doc.src, .plain, &aw.writer);
 
         return try arena.dupe(types.TextEdit, &.{.{
             .range = range,
@@ -722,7 +722,7 @@ pub fn @"textDocument/formatting"(
         }});
     }
 
-    if (self.docs.get(request.textDocument.uri)) |schema| {
+    if (self.schemas.get(request.textDocument.uri)) |schema| {
         if (schema.ast.has_syntax_errors) return null;
         const range: offsets.Range = .{
             .start = .{ .line = 0, .character = 0 },
@@ -736,7 +736,7 @@ pub fn @"textDocument/formatting"(
         log.debug("format schema!", .{});
 
         var aw = std.Io.Writer.Allocating.init(arena);
-        try schema.ast.render(schema.src, &aw.writer);
+        try aw.writer.print("{f}", .{schema.ast.fmt(schema.src)});
 
         return try arena.dupe(types.TextEdit, &.{.{
             .range = range,

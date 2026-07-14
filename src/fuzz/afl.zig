@@ -23,8 +23,8 @@ pub export fn zig_fuzz_test(buf: [*:0]const u8, len: isize) void {
     const src = buf[0..end :0];
 
     // testAst(gpa, src);
-    // testAstSmith(gpa, src);
-    testDeserializer(gpa, src);
+    testAstSmith(gpa, src);
+    // testDeserializer(gpa, src);
 
     // testSchemaAst(gpa, src);
 }
@@ -237,7 +237,7 @@ fn testAstSmith(gpa: std.mem.Allocator, raw: []const u8) void {
     var r1_buf: Io.Writer.Allocating = .init(gpa);
     defer r1_buf.deinit();
 
-    ast.render(src, &r1_buf.writer) catch unreachable;
+    ast.render(src, .plain, &r1_buf.writer) catch unreachable;
     const round1 = r1_buf.toOwnedSliceSentinel(0) catch unreachable;
 
     const no_fixup = for (ast.errors) |err| {
@@ -251,7 +251,7 @@ fn testAstSmith(gpa: std.mem.Allocator, raw: []const u8) void {
 
     const ast2 = ziggy.Ast.init(gpa, round1, .{}) catch unreachable;
     defer ast2.deinit(gpa);
-    ast2.render(round1, &r2_buf.writer) catch unreachable;
+    ast2.render(round1, .plain, &r2_buf.writer) catch unreachable;
     const round2 = r2_buf.toOwnedSliceSentinel(0) catch unreachable;
 
     const ok = std.mem.eql(u8, round1, round2);

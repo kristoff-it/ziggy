@@ -1,3 +1,4 @@
 missing_bottom_curly.ziggy:4:1 missing token: '}'
 |   .bar = false,
 |                 
+

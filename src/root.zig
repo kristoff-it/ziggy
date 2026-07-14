@@ -27,14 +27,21 @@ pub const Dynamic = @import("dynamic.zig").Dynamic;
 /// A thin wrapper around `std.StringArrayHashMap` that can match Ziggy
 /// dictionaries.
 pub const Dictionary = @import("dynamic.zig").Dictionary;
-// A thhin wrapper around `std.ArrayList` that can match Ziggy slices.
+/// A thhin wrapper around `std.ArrayList` that can match Ziggy slices.
 pub const ArrayList = @import("dynamic.zig").ArrayList;
 
 /// Ziggy Schemas can be used to validate the structure of Ziggy Documents.
 pub const schema = @import("schema.zig");
 
-// Ziggy Documents and Schemas can have a maximum size of 4GB
+/// Ziggy Documents and Schemas can have a maximum size of 4GB
 pub const max_size = @import("std").math.maxInt(u32);
+
+/// Rendering modes supported by Document and Schema ASTs
+pub const RenderMode = enum {
+    plain,
+    html,
+    terminal,
+};
 
 /// When a Zig container type has a public decl named `ziggy_options` of
 /// type `Options(T)`, it can customize (de)serialization behavior.

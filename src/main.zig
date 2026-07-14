@@ -8,6 +8,7 @@ const lsp_exe = @import("cli/lsp.zig");
 const fmt_exe = @import("cli/fmt.zig");
 const check_exe = @import("cli/check.zig");
 const convert_exe = @import("cli/convert.zig");
+const cat_exe = @import("cli/cat.zig");
 
 pub const known_folders_config: folders.KnownFolderConfig = .{
     .xdg_force_default = true,
@@ -43,7 +44,15 @@ pub fn panic(
     std.process.exit(1);
 }
 
-pub const Command = enum { lsp, query, fmt, check, convert, help };
+pub const Command = enum {
+    fmt,
+    cat,
+    query,
+    check,
+    convert,
+    lsp,
+    help,
+};
 
 pub fn main(init: std.process.Init) !void {
     // Note: The Io impl must be `Threaded` because we use threadlocals
@@ -70,6 +79,7 @@ pub fn main(init: std.process.Init) !void {
             lsp_exe.run(io, gpa, Io.Dir.cwd(), args[2..]) catch @panic("err");
         },
         .fmt => fmt_exe.run(io, gpa, args[2..]),
+        .cat => cat_exe.run(io, gpa, args[2..]),
         .check => check_exe.run(io, gpa, args[2..]),
         .convert => convert_exe.run(io, gpa, args[2..]),
         .help => fatalHelp(),
@@ -87,9 +97,10 @@ fn fatalHelp() noreturn {
         \\Usage: ziggy COMMAND [OPTIONS]
         \\
         \\Commands: 
-        \\  fmt          Format Ziggy Documents      
-        \\  query, q     Query Ziggy Documents 
-        \\  check        Check Ziggy Documents against a Ziggy Schema 
+        \\  fmt          Format Ziggy files
+        \\  cat          Print Syntax-Highlighted Ziggy files
+        \\  query, q     Query Ziggy Documents
+        \\  check        Check Ziggy Documents against a Ziggy Schema
         \\  convert      Convert between JSON, YAML, TOML and Ziggy Documents
         \\  lsp          Start the Ziggy LSP
         \\  help         Show this menu and exit

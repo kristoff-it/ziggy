@@ -73,6 +73,9 @@ pub fn build(b: *std.Build) !void {
         .strip = false,
     });
 
+    const ansi_term = b.dependency("ansi_term", .{});
+    ziggy_module.addImport("ansi_term", ansi_term.module("ansi_term"));
+
     const folders = b.dependency("known_folders", .{}).module("known-folders");
     const lsp = b.dependency("lsp_kit", .{}).module("lsp");
     // const yaml = b.dependency("yaml", .{

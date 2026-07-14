@@ -4,6 +4,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Writer = std.Io.Writer;
 const Allocator = std.mem.Allocator;
+const ansi = @import("ansi_term");
+const root = @import("root.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;
 const Loc = Token.Loc;
@@ -79,6 +81,35 @@ pub const Node = struct {
         //The following tags are never present in correct documents
         struct_v_fixup,
         missing_value,
+
+        /// Only valid on single-token nodes.
+        fn kind(t: Tag) Tokenizer.Token.Tag.Kind {
+            return switch (t) {
+                .root,
+                .braceless_struct,
+                .struct_h,
+                .struct_v,
+                .dict_h,
+                .dict_v,
+                .array_h,
+                .array_v,
+                .struct_field,
+                .dict_field,
+                .array_element,
+                .@"union",
+                .bytes_multiline,
+                .struct_v_fixup,
+                .missing_value,
+                => unreachable,
+
+                .@"enum" => .@"enum",
+                .bytes => .bytes,
+                .integer => .integer,
+                .float => .float,
+                .bool => .bool,
+                .null => .null,
+            };
+        }
     };
 };
 
@@ -126,8 +157,8 @@ pub fn iterator(ast: *const Ast) Iterator {
     return .{ .nodes = ast.nodes };
 }
 
-pub fn fmt(ast: *const Ast, src: [:0]const u8) Format {
-    return .{ .src = src, .ast = ast };
+pub fn fmt(ast: *const Ast, src: [:0]const u8, rm: root.RenderMode) Format {
+    return .{ .src = src, .ast = ast, .rm = rm };
 }
 
 const Parser = struct {
@@ -870,9 +901,10 @@ pub const Iterator = struct {
 pub const Format = struct {
     src: [:0]const u8,
     ast: *const Ast,
+    rm: root.RenderMode,
 
     pub fn format(f: Format, w: *Writer) !void {
-        try f.ast.render(f.src, w);
+        try f.ast.render(f.src, f.rm, w);
     }
 };
 
@@ -881,6 +913,7 @@ fn renderComments(
     indent: u32,
     last_end: u32,
     src: [:0]const u8,
+    r: *Renderer,
     w: *Writer,
 ) !void {
     var t: Tokenizer = .{ .idx = last_end, .delimiter = .none, .lines = 0 };
@@ -900,7 +933,7 @@ fn renderComments(
         } else {
             try w.splatByteAll(' ', indent * 4);
         }
-        try w.print("{s}", .{tok.loc.slice(src)});
+        try r.token(tok);
         try w.writeAll("\n");
     }
     at_newline.* |= !first;
@@ -924,12 +957,228 @@ fn fixupApplies(f: ?Fixup, offset: u32) bool {
     return false;
 }
 
+const Renderer = struct {
+    w: *Writer,
+    src: [:0]const u8,
+    mode: root.RenderMode,
+    // used for syntax-highlighting in the terminal
+    ansi_style: ansi.style.Style = .{},
+
+    fn lit(r: *Renderer, t: Tokenizer.Token.Tag) !void {
+        switch (r.mode) {
+            .plain => try r.w.writeAll(t.literal()),
+            .html => {
+                try r.w.print("<{0s}>{1s}</{0s}>", .{
+                    htmlTag(t.kind()),
+                    t.literal(),
+                });
+            },
+            .terminal => {
+                try r.styleUpdate(t.kind());
+                try r.w.writeAll(t.literal());
+                try r.styleClean();
+            },
+        }
+    }
+
+    fn token(r: *Renderer, tok: Tokenizer.Token) !void {
+        if (tok.tag == .union_case) return r.union_case(tok);
+
+        const tok_src = tok.loc.slice(r.src);
+        switch (r.mode) {
+            .plain => try r.w.writeAll(tok_src),
+            .html => {
+                try r.w.print("<{0s}>{1s}</{0s}>", .{
+                    htmlTag(tok.tag.kind()),
+                    tok_src,
+                });
+            },
+            .terminal => {
+                try r.styleUpdate(tok.tag.kind());
+                try r.w.writeAll(tok_src);
+                try r.styleClean();
+            },
+        }
+    }
+
+    fn node(r: *Renderer, n: *const Node) !void {
+        const node_src = n.loc.slice(r.src);
+        switch (r.mode) {
+            .plain => try r.w.print("{s}", .{node_src}),
+            .html => {
+                try r.w.print("<{0s}>{1s}</{0s}>", .{
+                    htmlTag(n.tag.kind()),
+                    node_src,
+                });
+            },
+            .terminal => {
+                try r.styleUpdate(n.tag.kind());
+                try r.w.writeAll(node_src);
+                try r.styleClean();
+            },
+        }
+    }
+
+    fn identifier(r: *Renderer, name: []const u8) !void {
+        switch (r.mode) {
+            .plain => try r.w.print(".{s}", .{name}),
+            .html => {
+                try r.w.print("<{0s}>.{1s}</{0s}>", .{
+                    htmlTag(.identifier),
+                    name,
+                });
+            },
+            .terminal => {
+                try r.styleUpdate(.identifier);
+                try r.w.print(".{s}", .{name});
+                try r.styleClean();
+            },
+        }
+    }
+
+    fn union_case(r: *Renderer, tok: Tokenizer.Token) !void {
+        const tok_src = tok.loc.slice(r.src);
+        const case = tok_src[0 .. tok_src.len - 1];
+
+        switch (r.mode) {
+            .plain => try r.w.writeAll(case),
+            .html => {
+                try r.w.print("<{0s}>{1s}</{0s}>", .{
+                    htmlTag(.@"enum"),
+                    case,
+                });
+            },
+            .terminal => {
+                try r.styleUpdate(.@"enum");
+                try r.w.writeAll(case);
+                try r.styleClean();
+            },
+        }
+
+        try r.left_paren();
+    }
+
+    fn bytes(r: *Renderer, b: []const u8) !void {
+        switch (r.mode) {
+            .plain => try r.w.print("\"{s}\"", .{b}),
+            .html => {
+                try r.w.print("<{0s}>\"{1s}\"</{0s}>", .{
+                    htmlTag(.bytes),
+                    b,
+                });
+            },
+            .terminal => {
+                try r.styleUpdate(.bytes);
+                try r.w.print("\"{s}\"", .{b});
+                try r.styleClean();
+            },
+        }
+    }
+
+    fn left_paren(r: *Renderer) !void {
+        switch (r.mode) {
+            .plain => try r.w.writeByte('('),
+            .html => {
+                try r.w.print("<{0s}>(</{0s}>", .{
+                    htmlTag(.punctuation),
+                });
+            },
+            .terminal => {
+                try r.styleUpdate(.punctuation);
+                try r.w.writeByte('(');
+                try r.styleClean();
+            },
+        }
+    }
+
+    fn htmlTag(k: Tokenizer.Token.Tag.Kind) []const u8 {
+        return switch (k) {
+            .punctuation => "z-p",
+            .identifier => "z-i",
+            .bool => "z-b",
+            .null => "z-n",
+            .comment_line => "z-c",
+            .bytes, .bytes_line => "z-b",
+            .integer, .float => "z-n",
+            .eod => "z-d",
+            .@"enum" => "z-e",
+        };
+    }
+
+    fn styleUpdate(r: *Renderer, k: Tokenizer.Token.Tag.Kind) !void {
+        var new: ansi.style.Style = .{};
+
+        switch (k) {
+            .punctuation => {},
+            .identifier => {},
+            .bool => {
+                new.foreground = .Red;
+                new.font_style = .{
+                    .bold = true,
+                };
+            },
+            .null => {
+                new.foreground = .Blue;
+                new.font_style = .{
+                    .bold = true,
+                };
+            },
+            .comment_line => {
+                new.font_style = .{
+                    .italic = true,
+                    .dim = true,
+                };
+            },
+            .bytes, .bytes_line => {
+                new.foreground = .Yellow;
+            },
+            .integer, .float => {
+                new.foreground = .Blue;
+            },
+            .eod, .@"enum" => {
+                new.foreground = .Yellow;
+                new.font_style = .{
+                    .bold = true,
+                };
+            },
+        }
+
+        try ansi.format.updateStyle(r.w, new, r.ansi_style);
+        r.ansi_style = new;
+    }
+
+    fn styleClean(r: *Renderer) !void {
+        var clean = r.ansi_style;
+        clean.font_style = .{};
+        try ansi.format.updateStyle(r.w, clean, r.ansi_style);
+        r.ansi_style = clean;
+    }
+
+    fn done(r: *Renderer) void {
+        switch (r.mode) {
+            .terminal => {
+                ansi.format.updateStyle(r.w, .{}, r.ansi_style) catch {};
+                r.ansi_style = undefined;
+            },
+            else => {},
+        }
+    }
+};
+
 /// Formats the Ast and applies fixups. An Ast can have errors and still be
 /// formatted but none of the errors can be a syntax error.
 ///
 /// Asserts that `ast.has_syntax_errors` is false.
-pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
+pub fn render(ast: Ast, src: [:0]const u8, mode: root.RenderMode, w: *Writer) Writer.Error!void {
     assert(!ast.has_syntax_errors);
+
+    var r: Renderer = .{
+        .w = w,
+        .src = src,
+        .mode = mode,
+    };
+
+    defer r.done();
 
     const nodes = ast.nodes;
 
@@ -943,7 +1192,7 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
     var indent: u32 = 0;
     var array_start = false;
     var at_newline = true;
-    try renderComments(&at_newline, indent, 0, src, w);
+    try renderComments(&at_newline, indent, 0, src, &r, w);
     while (true) {
         const ev = it.next();
         switch (ev) {
@@ -958,27 +1207,33 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                             else => unreachable,
                         }
 
-                        const open_tok = switch (node.tag) {
-                            .struct_h, .struct_v, .struct_v_fixup => ".{",
-                            .dict_h, .dict_v => "{",
+                        const open_tag: Token.Tag = switch (node.tag) {
+                            .struct_h, .struct_v, .struct_v_fixup => .dotlb,
+                            .dict_h, .dict_v => .lb,
                             else => unreachable,
                         };
-                        try w.writeAll(open_tok);
+
+                        try r.lit(open_tag);
                         at_newline = false;
                         try renderComments(
                             &at_newline,
                             indent,
-                            @intCast(node.loc.start + open_tok.len),
+                            @intCast(node.loc.start + switch (open_tag) {
+                                .dotlb => @as(u32, 2),
+                                .lb => @as(u32, 1),
+                                else => unreachable,
+                            }),
                             src,
+                            &r,
                             w,
                         );
                     },
                     .array_h, .array_v => {
                         array_start = true;
                         indent += @intFromBool(node.tag == .array_v);
-                        try w.writeAll("[");
+                        try r.lit(.lsb);
                         at_newline = false;
-                        try renderComments(&at_newline, indent, node.loc.start + 1, src, w);
+                        try renderComments(&at_newline, indent, node.loc.start + 1, src, &r, w);
                     },
                     .struct_field, .dict_field => {
                         var t: Tokenizer = .{
@@ -989,10 +1244,10 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                         const parent_tag = nodes[node.parent_idx].tag;
                         switch (parent_tag) {
                             .braceless_struct, .struct_v, .struct_v_fixup, .dict_v => {
-                                if (!at_newline) try w.writeAll("\n");
+                                if (!at_newline) try w.writeByte('\n');
                                 try w.splatByteAll(' ', indent * 4);
                             },
-                            .struct_h, .dict_h => try w.writeAll(" "),
+                            .struct_h, .dict_h => try w.writeByte(' '),
                             else => unreachable,
                         }
 
@@ -1007,16 +1262,16 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                             switch (parent_tag) {
                                 .braceless_struct, .struct_h, .struct_v, .struct_v_fixup => {
                                     const slice = field_name.loc.slice(src);
-                                    try w.print(".{s}", .{slice[1 .. slice.len - 1]});
+                                    try r.identifier(slice[1 .. slice.len - 1]);
                                 },
                                 .dict_v, .dict_h => {
                                     const slice = field_name.loc.slice(src);
-                                    try w.print("\"{s}\"", .{slice[1..]});
+                                    try r.bytes(slice[1..]);
                                 },
                                 else => unreachable,
                             }
                             at_newline = false;
-                            try renderComments(&at_newline, indent, field_name.loc.end, src, w);
+                            try renderComments(&at_newline, indent, field_name.loc.end, src, &r, w);
                             if (at_newline) try w.splatByteAll(' ', indent * 4);
                             assert(switch (field_separator.tag) {
                                 .colon, .eql => true,
@@ -1034,9 +1289,9 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                                 .dict_v, .dict_h => Token.Tag.bytes,
                                 else => unreachable,
                             });
-                            try w.writeAll(field_name.loc.slice(src));
+                            try r.token(field_name);
                             at_newline = false;
-                            try renderComments(&at_newline, indent, field_name.loc.end, src, w);
+                            try renderComments(&at_newline, indent, field_name.loc.end, src, &r, w);
                             if (at_newline) try w.splatByteAll(' ', indent * 4);
                             assert(switch (field_separator.tag) {
                                 .colon, .eql => true,
@@ -1044,13 +1299,16 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                             });
                         }
 
-                        try w.writeAll(switch (parent_tag) {
-                            .braceless_struct, .struct_h, .struct_v, .struct_v_fixup => " =",
-                            .dict_v, .dict_h => ":",
+                        switch (parent_tag) {
+                            .braceless_struct, .struct_h, .struct_v, .struct_v_fixup => {
+                                try w.writeByte(' ');
+                                try r.lit(.eql);
+                            },
+                            .dict_v, .dict_h => try r.lit(.colon),
                             else => unreachable,
-                        });
+                        }
                         at_newline = false;
-                        try renderComments(&at_newline, indent, field_separator.loc.end, src, w);
+                        try renderComments(&at_newline, indent, field_separator.loc.end, src, &r, w);
                         try w.splatByteAll(' ', if (at_newline) indent * 4 else 1);
                     },
                     .array_element => {
@@ -1069,9 +1327,9 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                         };
                         const case = t.next(src, true);
                         assert(case.tag == .union_case);
-                        try w.writeAll(case.loc.slice(src));
+                        try r.token(case);
                         at_newline = false;
-                        try renderComments(&at_newline, indent, case.loc.end, src, w);
+                        try renderComments(&at_newline, indent, case.loc.end, src, &r, w);
                     },
                     .bytes_multiline => {
                         var t: Tokenizer = .{
@@ -1085,11 +1343,11 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                         }
                         while (line.loc.start < node.loc.end) : (line = t.next(src, false)) {
                             try w.splatByteAll(' ', (indent + 1) * 4);
-                            try w.writeAll(line.loc.slice(src));
+                            try r.token(line);
                             try w.writeAll("\n");
                         }
                         at_newline = true;
-                        try renderComments(&at_newline, indent, node.loc.end, src, w);
+                        try renderComments(&at_newline, indent, node.loc.end, src, &r, w);
                     },
                     .@"enum",
                     .bytes,
@@ -1098,9 +1356,9 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                     .bool,
                     .null,
                     => {
-                        try w.writeAll(node.loc.slice(src));
+                        try r.node(node);
                         at_newline = false;
-                        try renderComments(&at_newline, indent, node.loc.end, src, w);
+                        try renderComments(&at_newline, indent, node.loc.end, src, &r, w);
                     },
                 }
             },
@@ -1113,30 +1371,30 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
                     {
                         try w.writeAll(" ");
                     }
-                    try w.writeAll("}");
+                    try r.lit(.rb);
                     at_newline = false;
-                    try renderComments(&at_newline, indent, node.loc.end, src, w);
+                    try renderComments(&at_newline, indent, node.loc.end, src, &r, w);
                 },
                 .struct_v, .struct_v_fixup, .dict_v => {
                     indent -= 1;
                     if (!at_newline) try w.writeAll("\n");
                     try w.splatByteAll(' ', indent * 4);
-                    try w.writeAll("}");
+                    try r.lit(.rb);
                     at_newline = false;
-                    try renderComments(&at_newline, indent, node.loc.end, src, w);
+                    try renderComments(&at_newline, indent, node.loc.end, src, &r, w);
                 },
                 .array_h => {
-                    try w.writeAll("]");
+                    try r.lit(.rsb);
                     at_newline = false;
-                    try renderComments(&at_newline, indent, node.loc.end, src, w);
+                    try renderComments(&at_newline, indent, node.loc.end, src, &r, w);
                 },
                 .array_v => {
                     indent -= 1;
                     if (!at_newline) try w.writeAll("\n");
                     try w.splatByteAll(' ', indent * 4);
-                    try w.writeAll("]");
+                    try r.lit(.rsb);
                     at_newline = false;
-                    try renderComments(&at_newline, indent, node.loc.end, src, w);
+                    try renderComments(&at_newline, indent, node.loc.end, src, &r, w);
                 },
                 .struct_field, .dict_field, .array_element => {
                     // Roundabout way to check if there is a comma at the
@@ -1153,18 +1411,18 @@ pub fn render(ast: Ast, src: [:0]const u8, w: *Writer) Writer.Error!void {
 
                     if (has_comma or nodes[node.parent_idx].tag == .struct_v_fixup) {
                         if (at_newline) try w.splatByteAll(' ', indent * 4);
-                        try w.writeAll(",");
+                        try r.lit(.comma);
                         at_newline = false;
                     }
 
                     if (has_comma) {
-                        try renderComments(&at_newline, indent, node.loc.end, src, w);
+                        try renderComments(&at_newline, indent, node.loc.end, src, &r, w);
                     }
                 },
                 .@"union" => {
-                    try w.writeAll(")");
+                    try r.lit(.rp);
                     at_newline = false;
-                    try renderComments(&at_newline, indent, node.loc.end, src, w);
+                    try renderComments(&at_newline, indent, node.loc.end, src, &r, w);
                 },
                 .root,
                 .missing_value,

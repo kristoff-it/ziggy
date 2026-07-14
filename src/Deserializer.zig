@@ -90,7 +90,7 @@ pub const Meta = struct {
             for (ast.errors) |err| {
                 const sel = err.main_location.getSelection(src);
                 const lp = linePreview(src, err.main_location);
-                try w.print("{s}:{}:{} {f}\n{f}", .{
+                try w.print("{s}:{}:{} {f}\n{f}\n", .{
                     path orelse "<stdin>",
                     sel.start.line,
                     sel.start.col,
@@ -848,7 +848,7 @@ fn parseBytes(
     }
 }
 
-const LinePreview = struct {
+pub const LinePreview = struct {
     code: []const u8,
     spaces: u32,
     carets: u32,
@@ -862,7 +862,7 @@ const LinePreview = struct {
     }
 };
 
-fn linePreview(src: [:0]const u8, loc: Tokenizer.Token.Loc) LinePreview {
+pub fn linePreview(src: [:0]const u8, loc: Tokenizer.Token.Loc) LinePreview {
     const line_off = loc.line(src);
     const line_trim_left = std.mem.trimStart(u8, line_off.line, &std.ascii.whitespace);
     const start_trim_left = line_off.start + line_off.line.len - line_trim_left.len;
@@ -1369,6 +1369,7 @@ test "missing delimiter in markdown" {
         \\|   aarst arst arst
         \\|   ^^^^^
         \\
+        \\
     , "{f}", .{meta.reportErrorsFmt(arena, opts, null, case, error.UnexpectedToken)});
 }
 
@@ -1403,6 +1404,7 @@ test "duplicate field + syntax error" {
         \\<stdin>:5:1 unexpected token
         \\|   aarst arst arst
         \\|   ^^^^^
+        \\
         \\
     , "{f}", .{meta.reportErrorsFmt(arena, opts, null, case, error.DuplicateField)});
 }
