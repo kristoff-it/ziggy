@@ -188,7 +188,7 @@ fn formatFileFallible(
     const stdout = &stdout_writer.interface;
 
     if (check) any_error.store(true, .unordered) else {
-        var af = try Io.Dir.cwd().createFileAtomic(io, full_path, .{});
+        var af = try Io.Dir.cwd().createFileAtomic(io, full_path, .{ .replace = true });
         defer af.deinit(io);
 
         var writer = af.file.writer(io, &.{});
