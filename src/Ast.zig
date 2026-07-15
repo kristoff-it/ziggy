@@ -1420,6 +1420,7 @@ pub fn render(ast: Ast, src: [:0]const u8, mode: root.RenderMode, w: *Writer) Wr
                     }
                 },
                 .@"union" => {
+                    if (at_newline) try w.splatByteAll(' ', indent * 4);
                     try r.lit(.rp);
                     at_newline = false;
                     try renderComments(&at_newline, indent, node.loc.end, src, &r, w);
@@ -1460,141 +1461,149 @@ test "struct - empty" {
     try std.testing.expect(ast.errors.len == 0);
 }
 
-// test "struct - empty" {
-//     const case =
-//         \\{}
-//     ;
+test "dict - empty" {
+    const case =
+        \\{}
+        \\
+    ;
 
-//     var diag: Diagnostic = .{ .path = null };
-//     errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
-//     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
-//     defer ast.deinit(std.testing.allocator);
-//     try std.testing.expectFmt(case, "{f}", .{ast});
-// }
+    const ast = try Ast.init(std.testing.allocator, case, .{});
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{f}", .{ast.fmt(case, .plain)});
+}
 
-// test "array - empty" {
-//     const case =
-//         \\[]
-//     ;
+test "array - empty" {
+    const case =
+        \\[]
+        \\
+    ;
 
-//     var diag: Diagnostic = .{ .path = null };
-//     errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
-//     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
-//     defer ast.deinit(std.testing.allocator);
-//     try std.testing.expectFmt(case, "{f}", .{ast});
-// }
+    const ast = try Ast.init(std.testing.allocator, case, .{});
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{f}", .{ast.fmt(case, .plain)});
+}
 
-// test "struct - basic" {
-//     const case =
-//         \\{
-//         \\    .foo = 1,
-//         \\    .bar = 2,
-//         \\    .baz = 3,
-//         \\}
-//     ;
+test "struct - basic" {
+    const case =
+        \\.{
+        \\    .foo = 1,
+        \\    .bar = 2,
+        \\    .baz = 3,
+        \\}
+        \\
+    ;
 
-//     var diag: Diagnostic = .{ .path = null };
-//     errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
-//     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
-//     defer ast.deinit(std.testing.allocator);
-//     try std.testing.expectFmt(case, "{f}", .{ast});
-// }
+    const ast = try Ast.init(std.testing.allocator, case, .{});
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{f}", .{ast.fmt(case, .plain)});
+}
 
-// test "array - basic" {
-//     const case =
-//         \\[
-//         \\    1,
-//         \\    2,
-//         \\    3,
-//         \\]
-//     ;
+test "array - basic" {
+    const case =
+        \\[
+        \\    1,
+        \\    2,
+        \\    3,
+        \\]
+        \\
+    ;
 
-//     var diag: Diagnostic = .{ .path = null };
-//     errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
-//     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
-//     defer ast.deinit(std.testing.allocator);
-//     try std.testing.expectFmt(case, "{f}", .{ast});
-// }
+    const ast = try Ast.init(std.testing.allocator, case, .{});
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{f}", .{ast.fmt(case, .plain)});
+}
 
-// test "braceless struct - basic" {
-//     const case =
-//         \\.foo = "hello",
-//         \\.bar = [1, 2, 3],
-//     ;
+test "braceless struct - basic" {
+    const case =
+        \\.foo = "hello",
+        \\.bar = [1, 2, 3],
+        \\
+    ;
 
-//     var diag: Diagnostic = .{ .path = null };
-//     errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
-//     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
-//     defer ast.deinit(std.testing.allocator);
-//     try std.testing.expectFmt(case, "{f}", .{ast});
-// }
+    const ast = try Ast.init(std.testing.allocator, case, .{});
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{f}", .{ast.fmt(case, .plain)});
+}
 
-// test "braceless struct - vertical" {
-//     const case =
-//         \\.foo = "hello",
-//         \\.bar = [
-//         \\    1,
-//         \\    2,
-//         \\    3,
-//         \\],
-//         \\.baz = {
-//         \\    "a": 1,
-//         \\    "b": 2,
-//         \\    "c": 3,
-//         \\},
-//     ;
+test "braceless struct - vertical" {
+    const case =
+        \\.foo = "hello",
+        \\.bar = [
+        \\    1,
+        \\    2,
+        \\    3,
+        \\],
+        \\.baz = {
+        \\    "a": 1,
+        \\    "b": 2,
+        \\    "c": 3,
+        \\},
+        \\
+    ;
+    const ast = try Ast.init(std.testing.allocator, case, .{});
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{f}", .{ast.fmt(case, .plain)});
+}
 
-//     var diag: Diagnostic = .{ .path = null };
-//     errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
-//     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
-//     defer ast.deinit(std.testing.allocator);
-//     try std.testing.expectFmt(case, "{f}", .{ast});
-// }
+test "braceless struct - complex" {
+    const case =
+        \\.foo = "bar",
+        \\.bar = [
+        \\    1,
+        \\    2,
+        \\    {
+        \\        "abc": "foo",
+        \\        "baz": ["foo", "bar"],
+        \\    },
+        \\    [
+        \\        123456789,
+        \\    ],
+        \\],
+        \\
+    ;
 
-// test "braceless struct - complex" {
-//     const case =
-//         \\.foo = "bar",
-//         \\.bar = [
-//         \\    1,
-//         \\    2,
-//         \\    {
-//         \\        "abc": "foo",
-//         \\        "baz": ["foo", "bar"],
-//         \\    },
-//         \\    [
-//         \\        123456789,
-//         \\    ],
-//         \\],
-//     ;
+    const ast = try Ast.init(std.testing.allocator, case, .{});
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{f}", .{ast.fmt(case, .plain)});
+}
 
-//     var diag: Diagnostic = .{ .path = null };
-//     errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
-//     const ast = try Ast.init(std.testing.allocator, case, true, true, false, &diag);
-//     defer ast.deinit(std.testing.allocator);
-//     try std.testing.expectFmt(case, "{f}", .{ast});
-// }
+test "frontmatter - complex" {
+    const case =
+        \\---
+        \\.foo = "bar",
+        \\.bar = [
+        \\    1,
+        \\    2,
+        \\    {
+        \\        "abc": "foo",
+        \\        "baz": ["foo", "bar"],
+        \\    },
+        \\    [
+        \\        123456789,
+        \\    ],
+        \\],
+        \\---
+        \\
+    ;
 
-// test "frontmatter - complex" {
-//     const case =
-//         \\---
-//         \\.foo = "bar",
-//         \\.bar = [
-//         \\    1,
-//         \\    2,
-//         \\    {
-//         \\        "abc": "foo",
-//         \\        "baz": ["foo", "bar"],
-//         \\    },
-//         \\    [
-//         \\        123456789,
-//         \\    ],
-//         \\],
-//         \\---
-//     ;
+    const ast = try Ast.init(std.testing.allocator, case, .{ .delimiter = .{ .dashes = 3 } });
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{f}", .{ast.fmt(case, .plain)});
+}
 
-//     var diag: Diagnostic = .{ .path = null };
-//     errdefer std.debug.print("diag: {f}", .{diag.fmt(case)});
-//     const ast = try Ast.init(std.testing.allocator, case, true, true, true, &diag);
-//     defer ast.deinit(std.testing.allocator);
-//     try std.testing.expectFmt(case, "{f}", .{ast});
-// }
+test "multiline in union" {
+    const case =
+        \\.foo = [
+        \\    .myunion(
+        \\        \\arstarst
+        \\        \\arstarst
+        \\        \\arstarst
+        \\    ),
+        \\],
+        \\
+    ;
+
+    const ast = try Ast.init(std.testing.allocator, case, .{});
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{f}", .{ast.fmt(case, .plain)});
+}

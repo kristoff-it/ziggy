@@ -68,13 +68,14 @@ pub fn build(b: *std.Build) !void {
     const options = b.addOptions();
     options.addOption([]const u8, "version", version);
 
-    const ziggy_module = b.addModule("ziggy", .{
+    const ziggy_mod = b.addModule("ziggy", .{
         .root_source_file = b.path("src/root.zig"),
         .strip = false,
     });
 
     const ansi_term = b.dependency("ansi_term", .{});
-    ziggy_module.addImport("ansi_term", ansi_term.module("ansi_term"));
+    const ansi_mod = ansi_term.module("ansi_term");
+    ziggy_mod.addImport("ansi_term", ansi_mod);
 
     const folders = b.dependency("known_folders", .{}).module("known-folders");
     const lsp = b.dependency("lsp_kit", .{}).module("lsp");
@@ -89,7 +90,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .single_threaded = single_threaded,
         .imports = &.{
-            .{ .name = "ziggy", .module = ziggy_module },
+            .{ .name = "ziggy", .module = ziggy_mod },
             .{ .name = "known-folders", .module = folders },
             .{ .name = "lsp", .module = lsp },
             // .{ .name = "yaml", .module = yaml },
@@ -116,15 +117,15 @@ pub fn build(b: *std.Build) !void {
     const check = b.step("check", "Check if the project compiles");
     check.dependOn(&ziggy_check.step);
 
-    const test_step = try setupTestStep(b, target, optimize, cli_exe);
-    setupFuzzStep(b, target, test_step, ziggy_module);
-    setupWasmStep(b, optimize, options, ziggy_module, lsp);
+    const test_step = try setupTestStep(b, target, optimize, ansi_mod, cli_exe);
+    setupFuzzStep(b, target, test_step, ziggy_mod);
+    setupWasmStep(b, optimize, options, ziggy_mod, lsp);
 
     const release = b.step("release", "Create release builds of Ziggy");
     const git_version = getGitVersion(b);
     if (git_version == .tag) {
         if (std.mem.eql(u8, version, git_version.tag[1..])) {
-            setupReleaseStep(b, ziggy_module, options, release);
+            setupReleaseStep(b, ziggy_mod, options, release);
         } else {
             release.dependOn(&b.addFail(b.fmt(
                 "error: git tag does not match zon package version (zon: '{s}', git: '{s}')",
@@ -315,18 +316,20 @@ pub fn setupTestStep(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    ansi_mod: *std.Build.Module,
     cli_exe: *std.Build.Step.Compile,
 ) !*std.Build.Step {
     const test_step = b.step("test", "Run unit & snapshot tests");
 
-    const ziggy_module = b.createModule(.{
+    const ziggy_mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
+    ziggy_mod.addImport("ansi_term", ansi_mod);
 
     const unit_tests = b.addTest(.{
-        .root_module = ziggy_module,
+        .root_module = ziggy_mod,
     });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
@@ -426,7 +429,7 @@ pub fn setupTestStep(
                 })),
             });
             test_program.root_module.addImport("test_type", type_module);
-            test_program.root_module.addImport("ziggy", ziggy_module);
+            test_program.root_module.addImport("ziggy", ziggy_mod);
 
             const run_cli = b.addRunArtifact(test_program);
             run_cli.addFileArg(b.path(b.pathJoin(&.{ base_path, entry.name })));
@@ -466,14 +469,14 @@ pub fn setupTestStep(
                 })),
             });
 
-            types.addImport("ziggy", ziggy_module);
+            types.addImport("ziggy", ziggy_mod);
 
             const check = addTypeCheckStepInternal(
                 b,
                 target,
                 optimize,
                 b.path("build/type-checker.zig"),
-                ziggy_module,
+                ziggy_mod,
                 types,
                 b.path(b.pathJoin(&.{
                     base_path,
