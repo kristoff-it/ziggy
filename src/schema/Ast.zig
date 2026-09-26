@@ -1935,7 +1935,7 @@ pub fn validate(
                         switch (expr.tag) {
                             .any_kw => {},
                             .identifier, .opt_identifier => {
-                                const scope = scopes_stack.last().?.*;
+                                const scope = scopes_stack.last().?;
                                 const container_name = expr.loc.slice(schema_src);
                                 const search_name = switch (expr.tag) {
                                     .identifier => container_name,
@@ -2003,7 +2003,7 @@ pub fn validate(
                                 any_ziggy_start = node;
                             },
                             .identifier, .opt_identifier => {
-                                const scope = scopes_stack.last().?.*;
+                                const scope = scopes_stack.last().?;
                                 const container_name = expr.loc.slice(schema_src);
                                 const search_name = switch (expr.tag) {
                                     .identifier => container_name,
@@ -2121,7 +2121,7 @@ pub fn validate(
                                 try seen_fields_stack.append(gpa, .{ .dict = .empty });
                             },
                             .identifier, .opt_identifier => {
-                                const scope = scopes_stack.last().?.*;
+                                const scope = scopes_stack.last().?;
                                 const container_name = expr.loc.slice(schema_src);
                                 const search_name = switch (expr.tag) {
                                     .identifier => container_name,
@@ -2190,7 +2190,7 @@ pub fn validate(
                         switch (seen.*) {
                             .@"struct" => |*bits| {
                                 assert(expr.tag != .any_kw);
-                                const scope = schema_ast.scopes.get(scopes_stack.last().?.*).?;
+                                const scope = schema_ast.scopes.get(scopes_stack.last().?).?;
                                 const field_slot = scope.fields.getIndex(name) orelse {
                                     try errors.append(gpa, .{
                                         .tag = .unknown_field,
