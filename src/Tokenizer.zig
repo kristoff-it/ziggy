@@ -146,6 +146,8 @@ pub const Token = struct {
 
         pub const Line = struct { line: []const u8, start: u32 };
         pub fn line(loc: Loc, src: []const u8) Line {
+            if (src.len < 2) return .{ .line = "", .start = 0 };
+
             var idx = @min(loc.start, src.len - 2);
             const s = while (idx > 0) : (idx -= 1) {
                 if (src[idx] == '\n') break idx + 1;

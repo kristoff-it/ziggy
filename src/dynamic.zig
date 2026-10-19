@@ -307,6 +307,7 @@ pub fn ArrayList(T: type) type {
         list: std.ArrayList(T),
 
         const Self = @This();
+        pub const empty: Self = .{ .list = .empty };
         pub const Child = T;
         pub const ziggy_options: root.Options(Self) = .{
             .roles = .{ .container = .{ .slice = Child } },
