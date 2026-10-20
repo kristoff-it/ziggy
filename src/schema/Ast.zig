@@ -1815,6 +1815,27 @@ pub fn validate(
 
     // load root type expr
     try schema_ast.loadExpr(gpa, schema_src, &type_expr_stack, 2);
+    if (ziggy_ast.nodes.len == 1 and
+        type_expr_stack.items[type_expr_idx].tag == .identifier)
+    {
+        const root_name = type_expr_stack.items[type_expr_idx].loc.slice(schema_src);
+        const root_scope = schema_ast.scopes.get(0).?;
+        if (root_scope.types.get(root_name)) |container_idx| {
+            if (schema_ast.nodes[container_idx].tag == .@"struct") {
+                const scope = schema_ast.scopes.get(container_idx).?;
+                for (scope.fields.values()) |scope_field| {
+                    const offset = schema_ast.nodes[scope_field.idx + 1].loc.start;
+                    switch (schema_src[offset]) {
+                        '?', '{', '[' => {},
+                        else => try errors.append(gpa, .{
+                            .tag = .{ .missing_field = scope_field.loc.slice(schema_src) },
+                            .main_location = .{ .start = 0, .end = 0 },
+                        }),
+                    }
+                }
+            }
+        }
+    }
     if (type_expr_stack.items[type_expr_idx].tag == .any_kw) {
         any_ziggy_start = &ziggy_ast.nodes[0];
     }
@@ -4045,4 +4066,31 @@ test "optionals - dicts" {
         }
         try std.testing.expectEqualStrings(case[1], aw.written());
     }
+}
+
+test "validate required fields when the document is empty" {
+    const schema_src =
+        \\$ = Root
+        \\
+        \\struct Root {
+        \\    a: float,
+        \\    b: ?int,
+        \\}
+    ;
+
+    const ziggy_src: [:0]const u8 = "";
+    const gpa = std.testing.allocator;
+
+    const ziggy_ast: ZiggyAst = try .init(gpa, ziggy_src, .{});
+    defer ziggy_ast.deinit(gpa);
+
+    const schema_ast: Ast = try .init(gpa, schema_src);
+    defer schema_ast.deinit(gpa);
+
+    const errors = try schema_ast.validate(gpa, schema_src, ziggy_ast, ziggy_src);
+    defer gpa.free(errors);
+
+    try std.testing.expectEqual(1, errors.len);
+    try std.testing.expect(errors[0].tag == .missing_field);
+    try std.testing.expectEqualStrings("a", errors[0].tag.missing_field);
 }
