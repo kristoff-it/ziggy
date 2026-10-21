@@ -69,7 +69,7 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
                         };
                         formatFile(io, gpa, cmd.check, try gpa.dupe(u8, path), ft, &any_error);
                     },
-                    else => fatal("unable to open '{s}' as directory: {t}", .{ path, err }),
+                    else => fatal("unable to open '{s}': {t}", .{ path, err }),
                 };
             }
         },

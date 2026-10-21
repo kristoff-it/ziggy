@@ -530,7 +530,7 @@ const Parser = struct {
                 p.cur().loc.end = p.tok.loc.end;
                 p.up();
             },
-            .integer => {
+            .integer_bin, .integer_oct, .integer_dec, .integer_hex => {
                 try p.addChild(.integer);
                 p.cur().loc.end = p.tok.loc.end;
                 p.up();

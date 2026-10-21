@@ -240,7 +240,9 @@ pub fn unexpectedValue(d: *const Deserializer, tok: Token) Error {
         .identifier, .nan,
         .neg_inf,    .pos_inf,
         .null,       .union_case,
-        .integer,    .lb,
+        .integer_bin, .integer_oct,
+        .integer_dec, .integer_hex,
+        .lb,
         // zig fmt: on
         => error.UnexpectedValue,
         else => error.UnexpectedToken,
@@ -400,7 +402,7 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
             else => return d.unexpectedValue(first),
         },
         .comptime_float, .float => switch (first.tag) {
-            .integer => {
+            .integer_bin, .integer_oct, .integer_hex, .integer_dec => {
                 return @floatFromInt(std.fmt.parseInt(i64, first.loc.slice(d.src), 0) catch {
                     // The token was already validated and parsing floats cannot overflow.
                     unreachable;
@@ -418,7 +420,7 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
             else => return d.unexpectedValue(first),
         },
         .comptime_int, .int => switch (first.tag) {
-            .integer => {
+            .integer_bin, .integer_oct, .integer_hex, .integer_dec => {
                 return std.fmt.parseInt(T, first.loc.slice(d.src), 10) catch |err| {
                     switch (err) {
                         error.InvalidCharacter => unreachable,

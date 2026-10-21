@@ -16,8 +16,8 @@ pub const Delimiter = union(enum) {
     /// offset and continue until the specified delimiter is encountered.
     ///
     /// The starting offset must be set to *AFTER* the opening delimiter (which
-    /// might or might not be the same as the closing delimiter, and since it's
-    /// on you to parse it, it makes no difference).
+    /// is considered a semantic construct of the outer language and thus is
+    /// on users to parse).
     ///
     /// The Ziggy tokenizer will start tokenizing from this position and you
     /// won't need to adjust any offset / line count in error messages.
@@ -59,7 +59,10 @@ pub const Token = struct {
         union_case,
         bytes,
         bytes_line,
-        integer,
+        integer_bin,
+        integer_oct,
+        integer_hex,
+        integer_dec,
         float,
         nan,
         pos_inf,
@@ -78,7 +81,10 @@ pub const Token = struct {
                 .eof,
                 .bytes,
                 .bytes_line,
-                .integer,
+                .integer_bin,
+                .integer_oct,
+                .integer_hex,
+                .integer_dec,
                 .float,
                 .union_case,
                 .invalid,
@@ -126,7 +132,7 @@ pub const Token = struct {
                 .comment_line => .comment_line,
                 .bytes => .bytes,
                 .bytes_line => .bytes_line,
-                .integer => .integer,
+                .integer_bin, .integer_oct, .integer_hex, .integer_dec => .integer,
                 .float, .nan, .pos_inf, .neg_inf => .float,
                 .identifier => .identifier,
                 .null => .null,
@@ -200,7 +206,15 @@ const State = enum {
     start,
     builtin,
     identifier,
-    number,
+    integral_start,
+    integral_leading_zero,
+    integral_end,
+    integer_bin,
+    integer_oct,
+    integer_hex,
+    float_fraction,
+    float_exponent_start,
+    float_exponent_end,
     bytes,
     line_bytes_start,
     bytes_line,
@@ -228,6 +242,9 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             .end = undefined,
         },
     };
+
+    // Used to dected misplaced underscores in numeric literals.
+    var last_was_digit = true;
 
     // defer std.debug.print("returning '{s}' {t} \n", .{ tok.loc.slice(src), tok.tag });
     state: switch (State.start) {
@@ -306,10 +323,9 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 tok.loc.end = t.idx;
                 return tok;
             },
-
             '0'...'9' => {
-                t.idx += 1;
-                continue :state .number;
+                // reconsume
+                continue :state .integral_start;
             },
             '"' => {
                 t.idx += 1;
@@ -341,7 +357,17 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                     return tok;
                 }
 
-                continue :state .number;
+                t.idx += 1;
+                switch (src[t.idx]) {
+                    '0'...'9' => {
+                        continue :state .integral_start;
+                    },
+                    else => {
+                        tok.tag = .invalid;
+                        tok.loc.end = t.idx;
+                        return tok;
+                    },
+                }
             },
             '`' => {
                 if (t.delimiter == .backticks and std.mem.startsWith(u8, src[t.idx..], "```")) {
@@ -414,14 +440,235 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 return tok;
             },
         },
-
-        .number => switch (src[t.idx]) {
-            '0'...'9', '.', '_', '-', '+', 'e', 'E' => {
+        .integral_start => switch (src[t.idx]) {
+            '0' => {
                 t.idx += 1;
-                continue :state .number;
+                continue :state .integral_leading_zero;
+            },
+            '1'...'9' => {
+                t.idx += 1;
+                continue :state .integral_end;
+            },
+            else => unreachable, // lookahead is expected before entering this state
+        },
+
+        .integral_leading_zero => switch (src[t.idx]) {
+            'b' => {
+                t.idx += 1;
+                continue :state .integer_bin;
+            },
+            'o' => {
+                t.idx += 1;
+                continue :state .integer_oct;
+            },
+            'x' => {
+                t.idx += 1;
+                continue :state .integer_hex;
+            },
+            '.' => {
+                t.idx += 1;
+                last_was_digit = false;
+                continue :state .float_fraction;
             },
             else => {
-                t.finishNumber(&tok, src);
+                tok.tag = .integer_dec;
+                tok.loc.end = t.idx;
+                return tok;
+            },
+        },
+
+        .integral_end => switch (src[t.idx]) {
+            '.' => {
+                t.idx += 1;
+                last_was_digit = false;
+                continue :state .float_fraction;
+            },
+            '0'...'9' => {
+                t.idx += 1;
+                last_was_digit = true;
+                continue :state .integral_end;
+            },
+            '_' => {
+                if (!last_was_digit) {
+                    t.idx += 1;
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                t.idx += 1;
+                last_was_digit = false;
+                continue :state .integral_end;
+            },
+            else => {
+                if (!last_was_digit) {
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                tok.tag = .integer_dec;
+                tok.loc.end = t.idx;
+                return tok;
+            },
+        },
+
+        .integer_bin => switch (src[t.idx]) {
+            '0'...'1' => {
+                t.idx += 1;
+                last_was_digit = true;
+                continue :state .integer_bin;
+            },
+            '_' => {
+                if (!last_was_digit) {
+                    t.idx += 1;
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                t.idx += 1;
+                last_was_digit = false;
+                continue :state .integer_bin;
+            },
+            else => {
+                if (!last_was_digit) {
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                tok.tag = .integer_bin;
+                tok.loc.end = t.idx;
+                return tok;
+            },
+        },
+
+        .integer_oct => switch (src[t.idx]) {
+            '0'...'7' => {
+                t.idx += 1;
+                last_was_digit = true;
+                continue :state .integer_oct;
+            },
+            '_' => {
+                if (!last_was_digit) {
+                    t.idx += 1;
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                t.idx += 1;
+                last_was_digit = false;
+                continue :state .integer_oct;
+            },
+            else => {
+                if (!last_was_digit) {
+                    t.idx += 1;
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                tok.tag = .integer_oct;
+                tok.loc.end = t.idx;
+                return tok;
+            },
+        },
+
+        .integer_hex => switch (src[t.idx]) {
+            '0'...'9', 'a'...'f', 'A'...'F' => {
+                t.idx += 1;
+                last_was_digit = true;
+                continue :state .integer_hex;
+            },
+            '_' => {
+                if (!last_was_digit) {
+                    t.idx += 1;
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                t.idx += 1;
+                last_was_digit = false;
+                continue :state .integer_hex;
+            },
+            else => {
+                if (!last_was_digit) {
+                    t.idx += 1;
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                tok.tag = .integer_hex;
+                tok.loc.end = t.idx;
+                return tok;
+            },
+        },
+
+        .float_fraction => switch (src[t.idx]) {
+            '0'...'9' => {
+                t.idx += 1;
+                last_was_digit = true;
+                continue :state .float_fraction;
+            },
+            '_' => {
+                if (!last_was_digit) {
+                    t.idx += 1;
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                t.idx += 1;
+                last_was_digit = false;
+                continue :state .float_fraction;
+            },
+            'e', 'E' => {
+                if (!last_was_digit) {
+                    // NOTE: this check should remain even if we delete underscore support!
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+                t.idx += 1;
+                continue :state .float_exponent_start;
+            },
+            else => {
+                if (!last_was_digit) {
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                tok.tag = .float;
+                tok.loc.end = t.idx;
+                return tok;
+            },
+        },
+
+        .float_exponent_start => switch (src[t.idx]) {
+            '-', '+', '0'...'9' => {
+                t.idx += 1;
+                continue :state .float_exponent_end;
+            },
+            else => {
+                t.idx += 1;
+                tok.tag = .invalid;
+                tok.loc.end = t.idx;
+                return tok;
+            },
+        },
+        .float_exponent_end => switch (src[t.idx]) {
+            '0'...'9' => {
+                t.idx += 1;
+                continue :state .float_exponent_end;
+            },
+            else => {
+                tok.tag = .float;
+                tok.loc.end = t.idx;
                 return tok;
             },
         },
@@ -559,23 +806,6 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
     }
 
     comptime unreachable;
-}
-
-fn finishNumber(t: Tokenizer, tok: *Token, src: [:0]const u8) void {
-    tok.loc.end = t.idx;
-    const n = tok.loc.slice(src);
-
-    _ = std.fmt.parseInt(i64, n, 0) catch {
-        _ = std.fmt.parseFloat(f32, n) catch {
-            tok.tag = .invalid;
-            return;
-        };
-
-        tok.tag = .float;
-        return;
-    };
-
-    tok.tag = .integer;
 }
 
 fn evenSlashes(str: []const u8) bool {
@@ -783,6 +1013,41 @@ test "special float values" {
         .identifier, .eql, .pos_inf, .comma,
         .identifier, .eql, .neg_inf, .comma,
         .identifier, .eql, .nan,
+        .eof,
+    }, false, .none);
+    // zig fmt: on
+}
+
+test "numeric literals" {
+    // zig fmt: off
+    try testCase(
+        \\.int1 = 0,
+        \\.int2 = 1,
+        \\.int3 = 1000,
+        \\.int4 = 1_000,
+        \\.int5 = 1_000_000,
+        \\.int6 = 0b0101,
+        \\.int7 = 0o777,
+        \\.int8 = 0xffffff42,
+        \\.float1 = 0.001,
+        \\.float2 = 0.0_0_1,
+        \\.float3 = 0.001e10,
+        \\.float4 = 0.001e+10,
+        \\.float5 = 0.001e-10,
+    , &.{
+        .identifier, .eql, .integer_dec, .comma,
+        .identifier, .eql, .integer_dec, .comma,
+        .identifier, .eql, .integer_dec, .comma,
+        .identifier, .eql, .integer_dec, .comma,
+        .identifier, .eql, .integer_dec, .comma,
+        .identifier, .eql, .integer_bin, .comma,
+        .identifier, .eql, .integer_oct, .comma,
+        .identifier, .eql, .integer_hex, .comma,
+        .identifier, .eql, .float, .comma,
+        .identifier, .eql, .float, .comma,
+        .identifier, .eql, .float, .comma,
+        .identifier, .eql, .float, .comma,
+        .identifier, .eql, .float, .comma,
         .eof,
     }, false, .none);
     // zig fmt: on
