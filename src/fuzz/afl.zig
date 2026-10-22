@@ -22,8 +22,8 @@ pub export fn zig_fuzz_test(buf: [*:0]const u8, len: isize) void {
     const end = std.mem.indexOfScalar(u8, buf[0..@intCast(len)], 0) orelse return;
     const src = buf[0..end :0];
 
-    // testAst(gpa, src);
-    testAstSmith(gpa, src);
+    testAst(gpa, src);
+    // testAstSmith(gpa, src);
     // testDeserializer(gpa, src);
 
     // testSchemaAst(gpa, src);
@@ -91,7 +91,7 @@ fn testSchemaAst(gpa: std.mem.Allocator, src: [:0]const u8) void {
     }
 }
 
-fn testAst(gpa: std.mem.Allocator, src: []const u8) void {
+fn testAst(gpa: std.mem.Allocator, src: [:0]const u8) void {
     const ast = ziggy.Ast.init(gpa, src, .{}) catch unreachable;
     defer ast.deinit(gpa);
 
@@ -99,7 +99,7 @@ fn testAst(gpa: std.mem.Allocator, src: []const u8) void {
         var r1_buf: Io.Writer.Allocating = .init(gpa);
         defer r1_buf.deinit();
 
-        ast.render(src, &r1_buf.writer) catch unreachable;
+        ast.render(src, .plain, &r1_buf.writer) catch unreachable;
         const round1 = r1_buf.toOwnedSliceSentinel(0) catch unreachable;
 
         const no_fixup = for (ast.errors) |err| {
@@ -113,7 +113,7 @@ fn testAst(gpa: std.mem.Allocator, src: []const u8) void {
 
         const ast2 = ziggy.Ast.init(gpa, round1, .{}) catch unreachable;
         defer ast2.deinit(gpa);
-        ast2.render(round1, &r2_buf.writer) catch unreachable;
+        ast2.render(round1, .plain, &r2_buf.writer) catch unreachable;
         const round2 = r2_buf.toOwnedSliceSentinel(0) catch unreachable;
 
         const ok = std.mem.eql(u8, round1, round2);
@@ -319,7 +319,7 @@ pub const doc_smith = struct {
         var idx: u32 = 0;
         while (idx < src.len) : (idx += 1) {
             const c = src[idx];
-            const op: Op = @enumFromInt(c);
+            const op: Op = @fromBackingInt(@intCast(c));
 
             switch (op) {
                 .newline => newlines = 0,
@@ -361,14 +361,14 @@ pub const doc_smith = struct {
                         else => unreachable,
                     };
 
-                    if (stack.last()) |last| switch (last.*) {
+                    if (stack.last()) |last| switch (last) {
                         .lsb => try w.print("{s},", .{elem}),
                         .union_case => {
                             try w.print("{s})", .{elem});
                             _ = stack.pop();
 
                             while (stack.last()) |next| {
-                                if (next.* != .union_case) {
+                                if (next != .union_case) {
                                     try w.writeAll(",");
                                     break;
                                 }
@@ -403,7 +403,7 @@ pub const doc_smith = struct {
                         else => unreachable,
                     };
 
-                    if (stack.last()) |last| switch (last.*) {
+                    if (stack.last()) |last| switch (last) {
                         .lsb, .union_case => try w.writeAll(lexeme),
                         .dotlb => try w.print(".field{} = {s}", .{
                             idx,
@@ -419,7 +419,7 @@ pub const doc_smith = struct {
                 },
 
                 .@"union" => {
-                    if (stack.last()) |last| switch (last.*) {
+                    if (stack.last()) |last| switch (last) {
                         .lsb, .union_case => try w.print(".case{}(", .{idx}),
                         .dotlb => try w.print(".field{} = .case{}(", .{ idx, idx }),
                         .lb => try w.print("\"field{}\": .case{}(", .{ idx, idx }),
@@ -432,7 +432,7 @@ pub const doc_smith = struct {
 
                     var next_idx = idx + 1;
                     const valid = while (next_idx < src.len) {
-                        const next_op: Op = @enumFromInt(src[next_idx]);
+                        const next_op: Op = @fromBackingInt(@intCast(src[next_idx]));
                         switch (next_op) {
                             .null,
                             .bool,
@@ -467,7 +467,7 @@ pub const doc_smith = struct {
                         });
 
                         if (stack.last()) |next| {
-                            if (next.* != .union_case) {
+                            if (next != .union_case) {
                                 try w.writeAll(",");
                                 break;
                             }

@@ -564,7 +564,6 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             },
             else => {
                 if (!last_was_digit) {
-                    t.idx += 1;
                     tok.tag = .invalid;
                     tok.loc.end = t.idx;
                     return tok;
@@ -596,7 +595,6 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             },
             else => {
                 if (!last_was_digit) {
-                    t.idx += 1;
                     tok.tag = .invalid;
                     tok.loc.end = t.idx;
                     return tok;
@@ -655,7 +653,6 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 continue :state .float_exponent_end;
             },
             else => {
-                t.idx += 1;
                 tok.tag = .invalid;
                 tok.loc.end = t.idx;
                 return tok;

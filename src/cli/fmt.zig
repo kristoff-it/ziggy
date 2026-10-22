@@ -29,10 +29,13 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
             _ = try fr.interface.streamRemaining(&aw.writer);
             const in_bytes = try aw.toOwnedSliceSentinel(0);
 
-            const out_bytes = try fmtZiggy(gpa, null, in_bytes);
-
-            var file_writer = Io.File.stdout().writerStreaming(io, &.{});
-            try file_writer.interface.writeAll(out_bytes);
+            if (fmtZiggy(gpa, null, in_bytes)) |out_bytes| {
+                var file_writer = Io.File.stdout().writerStreaming(io, &.{});
+                try file_writer.interface.writeAll(out_bytes);
+            } else |err| switch (err) {
+                error.OutOfMemory => oom(),
+                error.Syntax => any_error.store(true, .unordered),
+            }
         },
         .stdin_supermd => {
             var fr = Io.File.stdin().reader(io, &.{});
@@ -40,10 +43,13 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
             _ = try fr.interface.streamRemaining(&aw.writer);
             const in_bytes = try aw.toOwnedSliceSentinel(0);
 
-            const out_bytes = try fmtSuperMD(gpa, null, in_bytes);
-
-            var file_writer = Io.File.stdout().writerStreaming(io, &.{});
-            try file_writer.interface.writeAll(out_bytes);
+            if (fmtSuperMD(gpa, null, in_bytes)) |out_bytes| {
+                var file_writer = Io.File.stdout().writerStreaming(io, &.{});
+                try file_writer.interface.writeAll(out_bytes);
+            } else |err| switch (err) {
+                error.OutOfMemory => oom(),
+                error.Syntax => any_error.store(true, .unordered),
+            }
         },
         .stdin_schema => {
             var fr = Io.File.stdin().reader(io, &.{});
@@ -51,10 +57,13 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
             _ = try fr.interface.streamRemaining(&aw.writer);
             const in_bytes = try aw.toOwnedSliceSentinel(0);
 
-            const out_bytes = try fmtSchema(gpa, null, in_bytes);
-
-            var file_writer = Io.File.stdout().writerStreaming(io, &.{});
-            try file_writer.interface.writeAll(out_bytes);
+            if (fmtSchema(gpa, null, in_bytes)) |out_bytes| {
+                var file_writer = Io.File.stdout().writerStreaming(io, &.{});
+                try file_writer.interface.writeAll(out_bytes);
+            } else |err| switch (err) {
+                error.OutOfMemory => oom(),
+                error.Syntax => any_error.store(true, .unordered),
+            }
         },
         .paths => |paths| {
             for (paths) |path| {
@@ -243,7 +252,7 @@ pub fn fmtZiggy(
     gpa: Allocator,
     path: ?[]const u8,
     src: [:0]const u8,
-) ![]const u8 {
+) error{ OutOfMemory, Syntax }![]const u8 {
     const ast = try Ast.init(gpa, src, .{});
     defer ast.deinit(gpa);
 
