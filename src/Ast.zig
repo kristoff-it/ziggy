@@ -22,6 +22,7 @@ pub const Error = struct {
     tag: union(enum) {
         unexpected_token,
         missing_token: []const u8,
+        invalid_escape,
         wrong_field_style,
         wrong_field_separator: FieldKind,
         missing_value,
@@ -33,6 +34,9 @@ pub const Error = struct {
                 },
                 .missing_token => |msg| {
                     try w.print("missing token: {s}", .{msg});
+                },
+                .invalid_escape => {
+                    try w.writeAll("invalid escape sequence");
                 },
                 .wrong_field_separator => {
                     try w.writeAll("wrong field separator");
@@ -191,7 +195,7 @@ const Parser = struct {
             .parent_idx = 0,
         });
 
-        p.consume();
+        try p.consume();
         parse: switch (p.cur().tag) {
             .root => if (p.curIsEmpty()) switch (p.tok.tag) {
                 .identifier => switch (p.peek()) {
@@ -234,7 +238,7 @@ const Parser = struct {
                 const peek_tok = if (p.tok.tag == .comma) p.peek() else p.tok.tag;
                 const next_is_field = switch (peek_tok) {
                     .eof, .eod => {
-                        if (p.tok.tag == .comma) p.consume();
+                        if (p.tok.tag == .comma) try p.consume();
                         p.cur().loc.end = p.tok.loc.start;
                         p.up();
                         assert(p.cur().tag == .root);
@@ -245,7 +249,7 @@ const Parser = struct {
                 };
 
                 if (next_is_field) {
-                    if (p.tok.tag == .comma) p.consume() else {
+                    if (p.tok.tag == .comma) try p.consume() else {
                         try p.err(.{
                             .tag = .{ .missing_token = "',' after field value" },
                             .main_location = p.prev_loc,
@@ -254,7 +258,7 @@ const Parser = struct {
                     try p.addChild(.struct_field);
                     continue :parse .struct_field;
                 } else {
-                    if (p.tok.tag == .comma) p.consume();
+                    if (p.tok.tag == .comma) try p.consume();
                     try p.err(.{
                         .tag = .unexpected_token,
                         .main_location = p.tok.loc,
@@ -274,7 +278,7 @@ const Parser = struct {
 
                 const next_is_field = switch (peek_tok) {
                     .rb => {
-                        if (p.tok.tag == .comma) p.consume() else {
+                        if (p.tok.tag == .comma) try p.consume() else {
                             const node = p.cur();
                             node.tag = switch (node.tag) {
                                 .struct_v_fixup => .struct_v_fixup,
@@ -284,12 +288,12 @@ const Parser = struct {
                             };
                         }
                         p.cur().loc.end = p.tok.loc.end;
-                        p.consume();
+                        try p.consume();
                         p.up();
                         continue :parse p.cur().tag;
                     },
                     .eof, .eod => {
-                        if (p.tok.tag == .comma) p.consume();
+                        if (p.tok.tag == .comma) try p.consume();
                         try p.err(.{
                             .tag = .{ .missing_token = "'}'" },
                             .main_location = p.tok.loc,
@@ -307,7 +311,7 @@ const Parser = struct {
                             .main_location = p.prev_loc,
                         });
                     }
-                    if (p.tok.tag == .comma) p.consume();
+                    if (p.tok.tag == .comma) try p.consume();
                     switch (p.cur().tag) {
                         .struct_h, .struct_v, .struct_v_fixup => {
                             try p.addChild(.struct_field);
@@ -320,7 +324,7 @@ const Parser = struct {
                         else => unreachable,
                     }
                 } else {
-                    if (p.tok.tag == .comma) p.consume();
+                    if (p.tok.tag == .comma) try p.consume();
                     try p.err(.{
                         .tag = .unexpected_token,
                         .main_location = p.tok.loc,
@@ -366,7 +370,7 @@ const Parser = struct {
                     }
                 }
 
-                p.consume();
+                try p.consume();
                 switch (p.tok.tag) {
                     .colon, .eql => if (!style_mismatch) {
                         if ((p.cur().tag == .struct_field and p.tok.tag == .colon) or
@@ -407,7 +411,7 @@ const Parser = struct {
                     },
                 }
 
-                p.consume();
+                try p.consume();
                 try p.beginValue();
                 continue :parse p.cur().tag;
             } else {
@@ -425,9 +429,9 @@ const Parser = struct {
                 const peek_token = if (p.tok.tag == .comma) p.peek() else p.tok.tag;
                 switch (peek_token) {
                     .rsb => {
-                        if (p.tok.tag == .comma) p.consume() else p.cur().tag = .array_h;
+                        if (p.tok.tag == .comma) try p.consume() else p.cur().tag = .array_h;
                         p.cur().loc.end = p.tok.loc.end;
-                        p.consume();
+                        try p.consume();
                         p.up();
                         continue :parse p.cur().tag;
                     },
@@ -450,7 +454,7 @@ const Parser = struct {
                     });
                 }
 
-                if (p.tok.tag == .comma) p.consume();
+                if (p.tok.tag == .comma) try p.consume();
                 try p.addChild(.array_element);
                 try p.beginValue();
                 continue :parse p.cur().tag;
@@ -464,11 +468,11 @@ const Parser = struct {
             },
             .@"union" => if (p.curIsEmpty()) {
                 assert(p.tok.tag == .union_case);
-                p.consume();
+                try p.consume();
                 try p.beginValue();
                 continue :parse p.cur().tag;
             } else {
-                if (p.tok.tag == .rp) p.consume() else {
+                if (p.tok.tag == .rp) try p.consume() else {
                     try p.err(.{
                         .tag = .{ .missing_token = "')' after union value" },
                         .main_location = p.prev_loc,
@@ -496,17 +500,17 @@ const Parser = struct {
         switch (p.tok.tag) {
             .dotlb => {
                 try p.addChild(.struct_v);
-                p.consume();
+                try p.consume();
                 return;
             },
             .lb => {
                 try p.addChild(.dict_v);
-                p.consume();
+                try p.consume();
                 return;
             },
             .lsb => {
                 try p.addChild(.array_v);
-                p.consume();
+                try p.consume();
                 return;
             },
             .union_case => {
@@ -515,7 +519,7 @@ const Parser = struct {
             },
             .bytes_line => {
                 try p.addChild(.bytes_multiline);
-                while (p.tok.tag == .bytes_line) p.consume();
+                while (p.tok.tag == .bytes_line) try p.consume();
                 p.cur().loc.end = p.prev_loc.end;
                 p.up();
                 return;
@@ -576,7 +580,7 @@ const Parser = struct {
                 return;
             },
         }
-        p.consume();
+        try p.consume();
     }
 
     fn discardUntilRestart(p: *Parser) !void {
@@ -585,21 +589,21 @@ const Parser = struct {
             .braceless_struct => switch (p.tok.tag) {
                 .identifier, .eof, .eod => return,
                 else => {
-                    p.consume();
+                    try p.consume();
                     continue :discard .braceless_struct;
                 },
             },
             .struct_v => switch (p.tok.tag) {
                 .comma, .identifier, .rb, .eof, .eod => return,
                 else => {
-                    p.consume();
+                    try p.consume();
                     continue :discard .struct_v;
                 },
             },
             .dict_v, .struct_v_fixup => switch (p.tok.tag) {
                 .comma, .bytes, .rb, .eof, .eod => return,
                 else => {
-                    p.consume();
+                    try p.consume();
                     continue :discard .dict_v;
                 },
             },
@@ -618,7 +622,7 @@ const Parser = struct {
                     continue :discard p.cur().tag;
                 },
                 else => {
-                    p.consume();
+                    try p.consume();
                     // it's fine if we forget we were originally
                     // in a dict field as the handling is the same
                     // and p.up() will make us remember again when
@@ -635,7 +639,7 @@ const Parser = struct {
                     continue :discard p.cur().tag;
                 },
                 else => {
-                    p.consume();
+                    try p.consume();
                     continue :discard .array_v;
                 },
             },
@@ -652,7 +656,7 @@ const Parser = struct {
             .@"union" => switch (p.tok.tag) {
                 .rp, .eof, .eod => return,
                 else => {
-                    p.consume();
+                    try p.consume();
                     continue :discard .@"union";
                 },
             },
@@ -679,11 +683,19 @@ const Parser = struct {
         return p.node_idx == p.nodes.items.len - 1;
     }
 
-    fn consume(p: *Parser) void {
+    fn consume(p: *Parser) error{OutOfMemory}!void {
         assert(p.tok.tag != .eof);
         assert(p.tok.tag != .eod);
         p.prev_loc = p.tok.loc;
         p.tok = p.tokenizer.next(p.src, true);
+        if (p.tok.tag == .bytes) {
+            if (p.tokenizer.first_invalid_escape.start != 0) {
+                try p.err(.{
+                    .tag = .invalid_escape,
+                    .main_location = p.tokenizer.first_invalid_escape,
+                });
+            }
+        }
         // log.debug("new tok: [{t}] '{s}'", .{ p.tok.tag, p.tok.loc.slice(p.src) });
     }
 
@@ -726,11 +738,12 @@ const Parser = struct {
         p.node_idx = p.cur().parent_idx;
     }
 
-    fn err(p: *Parser, e: Error) !void {
+    fn err(p: *Parser, e: Error) error{OutOfMemory}!void {
         // log.debug("err: {any}", .{e});
         switch (e.tag) {
             .wrong_field_separator,
             .wrong_field_style,
+            .invalid_escape,
             => {},
             .unexpected_token,
             .missing_token,
@@ -1606,4 +1619,48 @@ test "multiline in union" {
     const ast = try Ast.init(std.testing.allocator, case, .{});
     defer ast.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{f}", .{ast.fmt(case, .plain)});
+}
+
+test "byte escapes" {
+    const case =
+        \\[
+        //   seven invalid escapes
+        \\    "\a",
+        \\    "\xf",
+        \\    "\x",
+        \\    "\ufff",
+        \\    "\uff",
+        \\    "\uf",
+        \\    "\u",
+        // some valid escapes
+        \\    "\u0000",
+        \\    "\uffff",
+        \\    "\u0000zzzz",
+        \\    "\uffffzzzz",
+        \\    "zzz\u0000zzzz",
+        \\    "zzz\uffffzzzz",
+        \\    "\x00",
+        \\    "\xff",
+        \\    "\x00zzzz",
+        \\    "\xffzzzz",
+        \\    "zzz\x00zzzz",
+        \\    "zzz\xffzzzz",
+        \\    "\"",
+        \\    "\b",
+        \\    "\\",
+        \\    "\"x",
+        \\    "\bo",
+        \\    "\\\\",
+        \\]
+        \\
+    ;
+
+    const ast = try Ast.init(std.testing.allocator, case, .{});
+    defer ast.deinit(std.testing.allocator);
+    try std.testing.expectFmt(case, "{f}", .{ast.fmt(case, .plain)});
+
+    try std.testing.expectEqual(7, ast.errors.len);
+    for (ast.errors) |err| {
+        try std.testing.expect(err.tag == .invalid_escape);
+    }
 }

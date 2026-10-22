@@ -3,6 +3,11 @@ const Tokenizer = @This();
 const std = @import("std");
 
 delimiter: std.meta.Tag(Delimiter),
+// Set to a location within a bytes token when an invalid escape
+// sequence is found. Note that the string might contain more than
+// one invalid escape sequence, but the tokenizer will only annotate
+// the first one.
+first_invalid_escape: Token.Loc = .zero,
 lines: u32,
 idx: u32,
 
@@ -146,6 +151,8 @@ pub const Token = struct {
         start: u32,
         end: u32,
 
+        pub const zero: Loc = .{ .start = 0, .end = 0 };
+
         pub fn slice(loc: Loc, src: [:0]const u8) []const u8 {
             return src[loc.start..loc.end];
         }
@@ -216,8 +223,10 @@ const State = enum {
     float_exponent_start,
     float_exponent_end,
     bytes,
-    line_bytes_start,
-    bytes_line,
+    bytes_escape,
+    bytes_escape_hex_digits,
+    bytes_line_start,
+    bytes_line_end,
     comment_start,
     comment,
     invalid,
@@ -234,6 +243,12 @@ pub fn init(delimiter: Delimiter) Tokenizer {
     };
 }
 
+/// When obtaining a 'bytes' token, the caller can inspect 'first_invalid_sequence'
+/// to know if the token contains any invalid sequence. Note that only the first
+/// invalid sequence will be tracked, meaning that if it's meaningful to report
+/// more errors at once, the caller should validate the rest of the string separately.
+/// If 'first_invalid_sequence' is {0, 0} (i.e. `Token.Loc.zero`), then the string
+/// is valid and requires no further validation.
 pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
     var tok: Token = .{
         .tag = undefined,
@@ -245,6 +260,12 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
 
     // Used to dected misplaced underscores in numeric literals.
     var last_was_digit = true;
+
+    // Used to count the number of hex digits in a bytes escape sequence.
+    var bytes_escape_hex_digits: u8 = undefined;
+
+    // Used to track the beginning of a bytes escape sequence.
+    var bytes_escape_start: u32 = undefined;
 
     // defer std.debug.print("returning '{s}' {t} \n", .{ tok.loc.slice(src), tok.tag });
     state: switch (State.start) {
@@ -329,11 +350,12 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             },
             '"' => {
                 t.idx += 1;
+                t.first_invalid_escape = .zero;
                 continue :state .bytes;
             },
             '\\' => {
                 t.idx += 1;
-                continue :state .line_bytes_start;
+                continue :state .bytes_line_start;
             },
             '/' => {
                 t.idx += 1;
@@ -684,24 +706,14 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 return tok;
             },
 
+            '\\' => {
+                t.idx += 1;
+                continue :state .bytes_escape;
+            },
+
             '"' => {
-                {
-                    const slice = src[0..t.idx];
-                    t.idx += 1;
-                    if (!evenSlashes(slice)) continue :state .bytes;
-                }
-
-                const slice = src[tok.loc.start..t.idx];
-                var discard: std.Io.Writer.Discarding = .init(&.{});
-                const tag: Token.Tag = switch (std.zig.string_literal.parseWrite(
-                    &discard.writer,
-                    slice,
-                ) catch std.zig.string_literal.Result{ .failure = .empty_char_literal }) {
-                    .success => .bytes,
-                    .failure => .invalid,
-                };
-
-                tok.tag = tag;
+                t.idx += 1;
+                tok.tag = .bytes;
                 tok.loc.end = t.idx;
                 return tok;
             },
@@ -712,10 +724,58 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             },
         },
 
-        .line_bytes_start => switch (src[t.idx]) {
+        .bytes_escape => switch (src[t.idx]) {
+            '"', '\\', '/', 'b', 'f', 'n', 'r', 't' => {
+                t.idx += 1;
+                continue :state .bytes;
+            },
+            'u' => {
+                t.idx += 1;
+                bytes_escape_start = t.idx - 2;
+                bytes_escape_hex_digits = 4;
+                continue :state .bytes_escape_hex_digits;
+            },
+            'x' => {
+                t.idx += 1;
+                bytes_escape_start = t.idx - 2;
+                bytes_escape_hex_digits = 2;
+                continue :state .bytes_escape_hex_digits;
+            },
+            else => {
+                if (t.first_invalid_escape.start == 0) {
+                    t.first_invalid_escape = .{
+                        .start = t.idx - 1,
+                        .end = t.idx,
+                    };
+                }
+                continue :state .bytes;
+            },
+        },
+
+        .bytes_escape_hex_digits => switch (src[t.idx]) {
+            '0'...'9', 'a'...'f', 'A'...'F' => {
+                t.idx += 1;
+                bytes_escape_hex_digits -= 1;
+                if (bytes_escape_hex_digits == 0) {
+                    continue :state .bytes;
+                }
+                continue :state .bytes_escape_hex_digits;
+            },
+            else => {
+                if (t.first_invalid_escape.start == 0) {
+                    t.first_invalid_escape = .{
+                        .start = bytes_escape_start,
+                        .end = t.idx,
+                    };
+                }
+                continue :state .bytes;
+            },
+        },
+
+        .bytes_line_start => switch (src[t.idx]) {
             '\\' => {
                 t.idx += 1;
-                continue :state .bytes_line;
+                continue :state .bytes_line_end;
             },
             0 => {
                 tok.tag = .invalid;
@@ -727,7 +787,7 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 continue :state .invalid;
             },
         },
-        .bytes_line => switch (src[t.idx]) {
+        .bytes_line_end => switch (src[t.idx]) {
             0 => {
                 tok.tag = .bytes_line;
                 tok.loc.end = t.idx;
@@ -742,7 +802,7 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             },
             else => {
                 t.idx += 1;
-                continue :state .bytes_line;
+                continue :state .bytes_line_end;
             },
         },
 
@@ -1045,6 +1105,27 @@ test "numeric literals" {
         .identifier, .eql, .float, .comma,
         .identifier, .eql, .float, .comma,
         .identifier, .eql, .float, .comma,
+        .eof,
+    }, false, .none);
+    // zig fmt: on
+}
+// NOTE: invalid escape sequences still result in a bytes token
+test "string escapes" {
+    // zig fmt: off
+    try testCase(
+        \\.foo = "this is foo \\",
+        \\.bar = "this \" is bar",
+        \\.baz = "this is \xff \uaabb baz",
+        \\.invalid1 = "this is \xf wrong",
+        \\.invalid2 = "this is also \u123 wrong",
+        \\.invalid3 = "this is also also \z wrong",
+    , &.{
+        .identifier, .eql, .bytes, .comma,
+        .identifier, .eql, .bytes, .comma,
+        .identifier, .eql, .bytes, .comma,
+        .identifier, .eql, .bytes, .comma,
+        .identifier, .eql, .bytes, .comma,
+        .identifier, .eql, .bytes, .comma,
         .eof,
     }, false, .none);
     // zig fmt: on
