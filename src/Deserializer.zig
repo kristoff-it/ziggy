@@ -421,7 +421,7 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
         },
         .comptime_int, .int => switch (first.tag) {
             .integer_bin, .integer_oct, .integer_hex, .integer_dec => {
-                return std.fmt.parseInt(T, first.loc.slice(d.src), 10) catch |err| {
+                return std.fmt.parseInt(T, first.loc.slice(d.src), 0) catch |err| {
                     switch (err) {
                         error.InvalidCharacter => unreachable,
                         error.Overflow => return d.overflow(first),
@@ -1464,4 +1464,42 @@ test "simple deserialization + deserialize" {
 
     try std.testing.expectEqualStrings("bar", result.value.foo);
     try std.testing.expectEqual(true, result.value.bar);
+}
+
+test "numeric literals" {
+    const case =
+        \\.bin = 0b00_11_00_111,
+        \\.oct = 0o0777,
+        \\.hex = 0xffff24,
+        \\.float1 = 0.10214e+10,
+        \\.float2 = 0.10214e-10,
+        \\.float3 = 0.10214E10,
+    ;
+
+    const Case = struct {
+        bin: u32,
+        oct: u32,
+        hex: u32,
+        float1: f32,
+        float2: f32,
+        float3: f32,
+    };
+
+    const opts: Options = .{};
+    var meta: Meta = undefined;
+    const result = deserialize(Case, std.testing.allocator, case, &meta, opts) catch |err| {
+        std.debug.print("\n{f}\n\n", .{
+            meta.reportErrorsFmt(std.testing.allocator, opts, null, case, err),
+        });
+
+        return err;
+    };
+    defer result.deinit();
+
+    try std.testing.expectEqual(0b00_11_00_111, result.value.bin);
+    try std.testing.expectEqual(0o0777, result.value.oct);
+    try std.testing.expectEqual(0xffff24, result.value.hex);
+    try std.testing.expectApproxEqRel(0.10214e+10, result.value.float1, 0.1);
+    try std.testing.expectApproxEqRel(0.10214e-10, result.value.float2, 0.1);
+    try std.testing.expectApproxEqRel(0.10214E10, result.value.float3, 0.1);
 }
