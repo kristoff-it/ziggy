@@ -91,7 +91,7 @@ fn deserializeDynamic(
         .null => return .null,
         .true => return .{ .bool = true },
         .false => return .{ .bool = false },
-        .integer => return .{
+        .integer_bin, .integer_oct, .integer_hex, .integer_dec => return .{
             .integer = try d.deserializeOne(i64, first, false),
         },
         .float, .pos_inf, .neg_inf, .nan => return .{
@@ -541,4 +541,28 @@ test "arraylist basics" {
     try std.testing.expectEqualSlices(u16, &.{ 1, 2, 3 }, result.foo);
     try std.testing.expectEqualSlices(u32, &.{ 4, 5, 6 }, result.bar.list.items);
     try std.testing.expectEqualStrings("banana", result.baz.list.items);
+}
+
+test "roundtrip dynamic" {
+    const case =
+        \\{
+        \\    "foo": [1, 2, 3],
+        \\    "bar": [4, 5, 6],
+        \\    "baz": "banana",
+        \\}
+    ;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var meta: Deserializer.Meta = .init;
+    const result = try deserializeLeaky(Dynamic, arena, case, &meta, .{});
+
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+
+    try root.serialize(result, .{}, &aw.writer);
+
+    try std.testing.expectEqualStrings(case, aw.written());
 }
