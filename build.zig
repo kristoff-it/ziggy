@@ -501,6 +501,28 @@ pub fn setupTestStep(
         }
     }
 
+    // JSONTestSuite
+    const jsontestsuite = b.option(bool, "jsontestsuite", "Include JSONTestSuite in tests") orelse false;
+    if (jsontestsuite) if (b.lazyDependency("jsontestsuite", .{})) |jsontestsuite_dep| {
+        const jsontestsuite_exe = b.addExecutable(.{
+            .name = "jsontestsuite",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tests/jsontestsuite.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "ziggy", .module = ziggy_mod },
+                },
+            }),
+        });
+
+        for (jsontestsuite_files) |file| {
+            const jsontestsuite_cmd = b.addRunArtifact(jsontestsuite_exe);
+            jsontestsuite_cmd.addFileArg(jsontestsuite_dep.path(b.fmt("test_parsing/{s}", .{file})));
+            test_step.dependOn(&jsontestsuite_cmd.step);
+        }
+    };
+
     return test_step;
 }
 
@@ -657,3 +679,101 @@ fn addTypeCheckStepInternal(
 
     return run;
 }
+
+const jsontestsuite_files: []const []const u8 = &.{
+    "y_array_arraysWithSpaces.json",
+    "y_array_empty-string.json",
+    "y_array_empty.json",
+    "y_array_ending_with_newline.json",
+    "y_array_false.json",
+    "y_array_heterogeneous.json",
+    "y_array_null.json",
+    "y_array_with_1_and_newline.json",
+    "y_array_with_leading_space.json",
+    "y_array_with_several_null.json",
+    "y_array_with_trailing_space.json",
+    // "y_number.json",
+    // "y_number_0e+1.json",
+    // "y_number_0e1.json",
+    "y_number_after_space.json",
+    "y_number_double_close_to_zero.json",
+    // "y_number_int_with_exp.json",
+    "y_number_minus_zero.json",
+    "y_number_negative_int.json",
+    "y_number_negative_one.json",
+    "y_number_negative_zero.json",
+    // "y_number_real_capital_e.json",
+    // "y_number_real_capital_e_neg_exp.json",
+    // "y_number_real_capital_e_pos_exp.json",
+    // "y_number_real_exponent.json",
+    "y_number_real_fraction_exponent.json",
+    // "y_number_real_neg_exp.json",
+    // "y_number_real_pos_exponent.json",
+    "y_number_simple_int.json",
+    "y_number_simple_real.json",
+    "y_object.json",
+    "y_object_basic.json",
+    // "y_object_duplicated_key.json",
+    // "y_object_duplicated_key_and_value.json",
+    "y_object_empty.json",
+    "y_object_empty_key.json",
+    "y_object_escaped_null_in_key.json",
+    "y_object_extreme_numbers.json",
+    "y_object_long_strings.json",
+    "y_object_simple.json",
+    // "y_object_string_unicode.json",
+    "y_object_with_newlines.json",
+    // "y_string_1_2_3_bytes_UTF-8_sequences.json",
+    // "y_string_accepted_surrogate_pair.json",
+    // "y_string_accepted_surrogate_pairs.json",
+    // "y_string_allowed_escapes.json",
+    "y_string_backslash_and_u_escaped_zero.json",
+    "y_string_backslash_doublequotes.json",
+    "y_string_comments.json",
+    "y_string_double_escape_a.json",
+    "y_string_double_escape_n.json",
+    // "y_string_escaped_control_character.json",
+    // "y_string_escaped_noncharacter.json",
+    "y_string_in_array.json",
+    "y_string_in_array_with_leading_space.json",
+    // "y_string_last_surrogates_1_and_2.json",
+    // "y_string_nbsp_uescaped.json",
+    "y_string_nonCharacterInUTF-8_U+10FFFF.json",
+    "y_string_nonCharacterInUTF-8_U+FFFF.json",
+    // "y_string_null_escape.json",
+    // "y_string_one-byte-utf-8.json",
+    "y_string_pi.json",
+    "y_string_reservedCharacterInUTF-8_U+1BFFF.json",
+    "y_string_simple_ascii.json",
+    "y_string_space.json",
+    // "y_string_surrogates_U+1D11E_MUSICAL_SYMBOL_G_CLEF.json",
+    // "y_string_three-byte-utf-8.json",
+    // "y_string_two-byte-utf-8.json",
+    "y_string_u+2028_line_sep.json",
+    "y_string_u+2029_par_sep.json",
+    // "y_string_uEscape.json",
+    // "y_string_uescaped_newline.json",
+    "y_string_unescaped_char_delete.json",
+    // "y_string_unicode.json",
+    // "y_string_unicodeEscapedBackslash.json",
+    "y_string_unicode_2.json",
+    // "y_string_unicode_U+1FFFE_nonchar.json",
+    // "y_string_unicode_U+10FFFE_nonchar.json",
+    // "y_string_unicode_U+200B_ZERO_WIDTH_SPACE.json",
+    // "y_string_unicode_U+2064_invisible_plus.json",
+    // "y_string_unicode_U+FDD0_nonchar.json",
+    // "y_string_unicode_U+FFFE_nonchar.json",
+    // "y_string_unicode_escaped_double_quote.json",
+    "y_string_utf8.json",
+    "y_string_with_del_character.json",
+    "y_structure_lonely_false.json",
+    "y_structure_lonely_int.json",
+    "y_structure_lonely_negative_real.json",
+    "y_structure_lonely_null.json",
+    "y_structure_lonely_string.json",
+    "y_structure_lonely_true.json",
+    "y_structure_string_empty.json",
+    "y_structure_trailing_newline.json",
+    "y_structure_true_in_array.json",
+    "y_structure_whitespace_array.json",
+};

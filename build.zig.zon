@@ -24,6 +24,13 @@
             .url = "git+https://github.com/kristoff-it/ansi_term?ref=fixes#c4679e859bd61259754bd312e59b54dd03957e90",
             .hash = "ansi_term-0.3.0-_baAyzFoAACjFHF9VpZSo71Q7QUclZQlpYqZZShaNwYg",
         },
+
+        // A JSON corpus for testing
+        .jsontestsuite = .{
+            .url = "git+https://github.com/nst/JSONTestSuite.git#1ef36fa01286573e846ac449e8683f8833c5b26a",
+            .hash = "N-V-__8AACKCIQq5YBgot81O7KqoMbfczyMVV_SIjV4tIjXi",
+            .lazy = true,
+        },
     },
     .paths = .{
         "build",
