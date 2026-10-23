@@ -12,24 +12,14 @@ pub fn main(init: std.process.Init) !void {
 
     const json_path = args.next() orelse return error.ExpectedJsonFilePath;
 
-    const json_src = try Io.Dir.cwd().readFileAllocOptions(io, json_path, arena, .unlimited, .of(u8), 0);
-
-    const ast: ziggy.Ast = try .init(arena, json_src, .{});
-
-    if (ast.errors.len > 0) {
-        for (ast.errors) |err| {
-            const sel = err.main_location.getSelection(json_src);
-            const lp = ziggy.Deserializer.linePreview(json_src, err.main_location);
-            std.debug.print("{s}:{}:{} {f}\n{f}\n", .{
-                json_path,
-                sel.start.line,
-                sel.start.col,
-                err.tag,
-                lp,
-            });
-        }
-        return error.AstParseFailure;
-    }
+    const json_src = try Io.Dir.cwd().readFileAllocOptions(
+        io,
+        json_path,
+        arena,
+        .unlimited,
+        .of(u8),
+        0,
+    );
 
     var meta: ziggy.Deserializer.Meta = .init;
     _ = ziggy.deserializeLeaky(ziggy.Dynamic, arena, json_src, &meta, .{}) catch |err| switch (err) {

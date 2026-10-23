@@ -6,11 +6,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Change if you need git info
+          fetch-depth: 0 # Change if you need git info
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
 
       - name: Build
-        run: zig build test 
-          
+        run: zig build test -Djsontestsuite
