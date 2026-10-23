@@ -18,10 +18,7 @@ pub fn main(init: std.process.Init) !void {
     _ = ziggy.deserializeLeaky(ziggy.Dynamic, arena, json_data, &meta, .{}) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => |e| {
-            var stderr_buf: [1024]u8 = undefined;
-            const stderr = std.debug.lockStderr(&stderr_buf);
-            defer std.debug.unlockStderr();
-            try meta.reportErrors(arena, .{}, json_path, json_data, e, &stderr.file_writer.interface);
+            std.debug.print("{f}", .{meta.reportErrorsFmt(arena, .{}, json_path, json_data, e)});
             return e;
         },
     };
