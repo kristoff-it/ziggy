@@ -21,16 +21,19 @@ pub const FieldKind = enum { @"struct", dict };
 pub const Error = struct {
     tag: union(enum) {
         unexpected_token,
+        unexpected_control: u8,
         missing_token: []const u8,
         invalid_escape,
         wrong_field_style,
         wrong_field_separator: FieldKind,
         missing_value,
-        empty_dict_key,
         pub fn format(t: @This(), w: *Writer) !void {
             switch (t) {
                 .unexpected_token => {
                     try w.writeAll("unexpected token");
+                },
+                .unexpected_control => |cc| {
+                    try w.print("unexpected control character 0x{x}", .{cc});
                 },
                 .missing_token => |msg| {
                     try w.print("missing token: {s}", .{msg});
@@ -46,9 +49,6 @@ pub const Error = struct {
                 },
                 .missing_value => {
                     try w.writeAll("missing following value");
-                },
-                .empty_dict_key => {
-                    try w.writeAll("dict keys cannot be empty");
                 },
             }
         }
@@ -338,12 +338,7 @@ const Parser = struct {
             .struct_field, .dict_field => if (p.curIsEmpty()) {
                 switch (p.tok.tag) {
                     .identifier => {},
-                    .bytes_no_escapes, .bytes_with_escapes => {
-                        if (p.tok.loc.end - p.tok.loc.start < 3) try p.err(.{
-                            .tag = .empty_dict_key,
-                            .main_location = p.tok.loc,
-                        });
-                    },
+                    .bytes_no_escapes, .bytes_with_escapes => {},
                     .eof, .eod => {
                         // we should not be able to get here without errors
                         assert(p.errors.items.len > 0);
@@ -572,7 +567,7 @@ const Parser = struct {
                 p.up();
             },
             else => {
-                if (p.tok.tag == .invalid) {
+                if (p.tok.tag == .invalid or p.tok.tag == .invalid_control) {
                     try p.err(.{
                         .tag = .unexpected_token,
                         .main_location = p.tok.loc,
@@ -701,13 +696,25 @@ const Parser = struct {
         assert(p.tok.tag != .eod);
         p.prev_loc = p.tok.loc;
         p.tok = p.tokenizer.next(p.src, true);
-        if (p.tok.tag == .bytes_with_escapes) {
-            if (p.tokenizer.first_invalid_escape.start != 0) {
+        retry: switch (p.tok.tag) {
+            else => {},
+            .invalid_control => {
                 try p.err(.{
-                    .tag = .invalid_escape,
-                    .main_location = p.tokenizer.first_invalid_escape,
+                    .tag = .{ .unexpected_control = p.src[p.tok.loc.end - 1] },
+                    .main_location = p.tok.loc,
                 });
-            }
+
+                p.tok = p.tokenizer.next(p.src, true);
+                continue :retry p.tok.tag;
+            },
+            .bytes_with_escapes => {
+                if (p.tokenizer.first_invalid_escape.start != 0) {
+                    try p.err(.{
+                        .tag = .invalid_escape,
+                        .main_location = p.tokenizer.first_invalid_escape,
+                    });
+                }
+            },
         }
         // log.debug("new tok: [{t}] '{s}'", .{ p.tok.tag, p.tok.loc.slice(p.src) });
     }
@@ -759,9 +766,9 @@ const Parser = struct {
             .invalid_escape,
             => {},
             .unexpected_token,
+            .unexpected_control,
             .missing_token,
             .missing_value,
-            .empty_dict_key,
             => p.has_syntax_errors = true,
         }
         try p.errors.append(p.gpa, e);

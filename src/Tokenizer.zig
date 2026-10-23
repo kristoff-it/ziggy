@@ -53,6 +53,7 @@ pub const Token = struct {
 
     pub const Tag = enum {
         invalid,
+        invalid_control,
         comma,
         eql,
         colon,
@@ -97,6 +98,7 @@ pub const Token = struct {
                 .float,
                 .union_case,
                 .invalid,
+                .invalid_control,
                 .identifier,
                 => unreachable,
                 .comma => ",",
@@ -135,6 +137,7 @@ pub const Token = struct {
             return switch (t) {
                 .eof,
                 .invalid,
+                .invalid_control,
                 .union_case, // we always split it
                 => unreachable,
                 .comma, .eql, .colon, .rp, .dotlb, .lb, .rb, .lsb, .rsb => .punctuation,
@@ -363,19 +366,34 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
     state: switch (State.start) {
         .start => switch (src[t.idx]) {
             0 => {
-                tok.tag = .eof;
-                tok.loc.start = @intCast(src.len); // code.len may == 0
-                tok.loc.end = @intCast(src.len);
+                tok.loc.start = t.idx;
+                tok.loc.end = t.idx;
+
+                if (t.idx < src.len) {
+                    t.idx += 1;
+                    tok.tag = .invalid_control;
+                } else {
+                    tok.tag = .eof;
+                }
+
                 return tok;
             },
-            ' ', '\t', '\r' => {
+
+            0x1...'\t' - 1,
+            '\n' + 1...'\r' - 1,
+            '\r' + 1...0x1f,
+            => {
+                if (src[t.idx] == '\n') t.lines += 1;
+                tok.tag = .invalid_control;
+                tok.loc.end = t.idx;
                 t.idx += 1;
-                tok.loc.start += 1;
-                continue :state .start;
+                return tok;
             },
-            '\n' => {
+
+            ' ', '\t', '\n', '\r' => {
+                if (src[t.idx] == '\n') t.lines += 1;
+
                 t.idx += 1;
-                t.lines += 1;
                 tok.loc.start += 1;
                 continue :state .start;
             },
@@ -429,12 +447,21 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             },
             '.' => {
                 t.idx += 1;
-                if (src[t.idx] != '{') continue :state .identifier;
-
-                t.idx += 1;
-                tok.tag = .dotlb;
-                tok.loc.end = t.idx;
-                return tok;
+                switch (src[t.idx]) {
+                    '{' => {
+                        t.idx += 1;
+                        tok.tag = .dotlb;
+                        tok.loc.end = t.idx;
+                        return tok;
+                    },
+                    '0'...'9' => {
+                        t.idx += 1;
+                        tok.tag = .invalid;
+                        tok.loc.end = t.idx;
+                        return tok;
+                    },
+                    else => continue :state .identifier,
+                }
             },
             '0'...'9' => {
                 // reconsume
@@ -584,6 +611,10 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 last_was_digit = false;
                 continue :state .float_fraction;
             },
+            'e', 'E' => {
+                t.idx += 1;
+                continue :state .float_exponent_start;
+            },
             else => {
                 tok.tag = .integer_dec;
                 tok.loc.end = t.idx;
@@ -613,6 +644,16 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 t.idx += 1;
                 last_was_digit = false;
                 continue :state .integral_end;
+            },
+            'e', 'E' => {
+                if (!last_was_digit) {
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
+                t.idx += 1;
+                continue :state .float_exponent_start;
             },
             else => {
                 if (!last_was_digit) {
@@ -762,8 +803,14 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
         },
 
         .float_exponent_start => switch (src[t.idx]) {
-            '-', '+', '0'...'9' => {
+            '-', '+' => {
                 t.idx += 1;
+                last_was_digit = false;
+                continue :state .float_exponent_end;
+            },
+            '0'...'9' => {
+                t.idx += 1;
+                // (unnecessary) last_was_digit = true;
                 continue :state .float_exponent_end;
             },
             else => {
@@ -775,9 +822,16 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
         .float_exponent_end => switch (src[t.idx]) {
             '0'...'9' => {
                 t.idx += 1;
+                last_was_digit = true;
                 continue :state .float_exponent_end;
             },
             else => {
+                if (!last_was_digit) {
+                    tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
+                }
+
                 tok.tag = .float;
                 tok.loc.end = t.idx;
                 return tok;
@@ -786,13 +840,19 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
 
         .bytes => switch (src[t.idx]) {
             0 => {
-                tok.tag = .invalid;
+                if (t.idx < src.len) {
+                    t.idx += 1;
+                    tok.tag = .invalid_control;
+                } else {
+                    tok.tag = .invalid;
+                }
                 tok.loc.end = t.idx;
                 return tok;
             },
-            '\n' => {
-                t.lines += 1;
-                tok.tag = .invalid;
+
+            0x1...0x1f => {
+                if (src[t.idx] == '\n') t.lines += 1;
+                tok.tag = .invalid_control;
                 tok.loc.end = t.idx;
                 t.idx += 1;
                 return tok;
@@ -872,7 +932,12 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 continue :state .bytes_line_end;
             },
             0 => {
-                tok.tag = .invalid;
+                if (t.idx < src.len) {
+                    t.idx += 1;
+                    tok.tag = .invalid_control;
+                } else {
+                    tok.tag = .invalid;
+                }
                 tok.loc.end = t.idx;
                 return tok;
             },
@@ -883,7 +948,12 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
         },
         .bytes_line_end => switch (src[t.idx]) {
             0 => {
-                tok.tag = .bytes_line;
+                if (t.idx < src.len) {
+                    tok.tag = .invalid_control;
+                    t.idx += 1;
+                } else {
+                    tok.tag = .bytes_line;
+                }
                 tok.loc.end = t.idx;
                 return tok;
             },
@@ -903,7 +973,12 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
         .comment_start => switch (src[t.idx]) {
             '/' => continue :state .comment,
             0 => {
-                tok.tag = .invalid;
+                if (t.idx < src.len) {
+                    t.idx += 1;
+                    tok.tag = .invalid_control;
+                } else {
+                    tok.tag = .invalid;
+                }
                 tok.loc.end = t.idx;
                 return tok;
             },
@@ -914,6 +989,12 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
         },
         .comment => switch (src[t.idx]) {
             0 => {
+                if (t.idx < src.len) {
+                    tok.tag = .invalid_control;
+                    t.idx += 1;
+                    return tok;
+                }
+
                 if (!skip_comments) {
                     tok.loc.end = t.idx;
                     tok.tag = .comment_line;
@@ -1185,6 +1266,8 @@ test "numeric literals" {
         \\.float3 = 0.001e10,
         \\.float4 = 0.001e+10,
         \\.float5 = 0.001e-10,
+        \\.float6 = 0e10,
+        \\.float7 = 10e10,
     , &.{
         .identifier, .eql, .integer_dec, .comma,
         .identifier, .eql, .integer_dec, .comma,
@@ -1194,6 +1277,8 @@ test "numeric literals" {
         .identifier, .eql, .integer_bin, .comma,
         .identifier, .eql, .integer_oct, .comma,
         .identifier, .eql, .integer_hex, .comma,
+        .identifier, .eql, .float, .comma,
+        .identifier, .eql, .float, .comma,
         .identifier, .eql, .float, .comma,
         .identifier, .eql, .float, .comma,
         .identifier, .eql, .float, .comma,

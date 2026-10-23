@@ -1499,18 +1499,24 @@ test "numeric literals" {
         \\.bin = 0b00_11_00_111,
         \\.oct = 0o0777,
         \\.hex = 0xffff24,
+        \\.hex1 = 0x1,
         \\.float1 = 0.10214e+10,
         \\.float2 = 0.10214e-10,
         \\.float3 = 0.10214E10,
+        \\.float4 = 0e10,
+        \\.float5 = 10e10,
     ;
 
     const Case = struct {
         bin: u32,
         oct: u32,
         hex: u32,
+        hex1: u32,
         float1: f32,
         float2: f32,
         float3: f32,
+        float4: f32,
+        float5: f32,
     };
 
     const opts: Options = .{};
@@ -1527,9 +1533,12 @@ test "numeric literals" {
     try std.testing.expectEqual(0b00_11_00_111, result.value.bin);
     try std.testing.expectEqual(0o0777, result.value.oct);
     try std.testing.expectEqual(0xffff24, result.value.hex);
+    try std.testing.expectEqual(0x1, result.value.hex1);
     try std.testing.expectApproxEqRel(0.10214e+10, result.value.float1, 0.1);
     try std.testing.expectApproxEqRel(0.10214e-10, result.value.float2, 0.1);
     try std.testing.expectApproxEqRel(0.10214E10, result.value.float3, 0.1);
+    try std.testing.expectApproxEqRel(0e10, result.value.float4, 0.1);
+    try std.testing.expectApproxEqRel(10e10, result.value.float5, 0.1);
 }
 
 test "invalid escapes" {
