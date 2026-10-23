@@ -1753,7 +1753,8 @@ pub const ValidationError = struct {
                     try w.print("schema: expected {s} found {s}", .{
                         sm.expected,
                         switch (sm.found) {
-                            .root, .missing_value => unreachable,
+                            .missing_value => unreachable,
+                            .root => "(empty document)",
                             .braceless_struct => "braceless struct",
                             .struct_h, .struct_v, .struct_v_fixup, .struct_field => "struct",
                             .dict_h, .dict_v, .dict_field => "{:}",
@@ -2353,7 +2354,77 @@ pub fn validate(
                     .array_h, .array_v => {},
                 }
             },
-            .done => return errors.toOwnedSlice(gpa),
+            .done => {
+                if (ziggy_ast.nodes.len == 1) switch (expr.tag) {
+                    else => unreachable,
+                    .root_sigil, .any_kw => {
+                        // Empty file is ok
+                    },
+                    .slice_sigil,
+                    .dict_sigil,
+                    .bytes_kw,
+                    .bool_kw,
+                    .int_kw,
+                    .float_kw,
+                    .opt_slice_sigil,
+                    .opt_dict_sigil,
+                    .opt_bytes_kw,
+                    .opt_bool_kw,
+                    .opt_int_kw,
+                    .opt_float_kw,
+                    => {
+                        try errors.append(gpa, .{
+                            .tag = .{
+                                .mismatch = .{
+                                    .expected = expr.tag.lexeme(),
+                                    .found = .root,
+                                },
+                            },
+                            .main_location = .{ .start = 0, .end = 0 },
+                        });
+                    },
+                    .opt_identifier, .identifier => {
+                        const expr_src = expr.loc.slice(schema_src);
+                        const container_name = switch (expr.tag) {
+                            else => unreachable,
+                            .identifier => expr_src,
+                            .opt_identifier => expr_src[1..],
+                        };
+
+                        const container_scope = schema_ast.scopes.get(0).?;
+                        if (container_scope.types.get(container_name)) |container_idx| {
+                            switch (schema_ast.nodes[container_idx].tag) {
+                                else => unreachable,
+                                .@"struct" => {
+                                    const scope = schema_ast.scopes.get(container_idx).?;
+                                    for (scope.fields.values()) |scope_field| {
+                                        const offset = schema_ast.nodes[scope_field.idx + 1].loc.start;
+                                        switch (schema_src[offset]) {
+                                            '?', '{', '[' => {},
+                                            else => try errors.append(gpa, .{
+                                                .tag = .{ .missing_field = scope_field.loc.slice(schema_src) },
+                                                .main_location = .{ .start = 0, .end = 0 },
+                                            }),
+                                        }
+                                    }
+                                },
+                                .@"union" => {
+                                    try errors.append(gpa, .{
+                                        .tag = .{
+                                            .mismatch = .{
+                                                .expected = container_name,
+                                                .found = .root,
+                                            },
+                                        },
+                                        .main_location = .{ .start = 0, .end = 0 },
+                                    });
+                                },
+                            }
+                        }
+                    },
+                };
+                return errors.toOwnedSlice(gpa);
+            },
         }
     }
 }
@@ -3704,11 +3775,6 @@ test "optionals - basics" {
         .{ "true", "" },
         .{ "false", "" },
         .{
-            "",
-            \\
-            ,
-        },
-        .{
             "20",
             \\0:2 schema: expected ?bool found int
             \\
@@ -3764,6 +3830,7 @@ test "optionals - structs" {
 
     const cases: []const [2][:0]const u8 = &.{
         .{ "null", "" },
+        .{ "", "" }, // optional has payload, but struct is default struct
         .{
             \\.bar = null,
             \\.baz = null,
@@ -4046,4 +4113,31 @@ test "optionals - dicts" {
         }
         try std.testing.expectEqualStrings(case[1], aw.written());
     }
+}
+
+test "validate required fields when the document is empty" {
+    const schema_src =
+        \\$ = Root
+        \\
+        \\struct Root {
+        \\    a: float,
+        \\    b: ?int,
+        \\}
+    ;
+
+    const ziggy_src: [:0]const u8 = "";
+    const gpa = std.testing.allocator;
+
+    const ziggy_ast: ZiggyAst = try .init(gpa, ziggy_src, .{});
+    defer ziggy_ast.deinit(gpa);
+
+    const schema_ast: Ast = try .init(gpa, schema_src);
+    defer schema_ast.deinit(gpa);
+
+    const errors = try schema_ast.validate(gpa, schema_src, ziggy_ast, ziggy_src);
+    defer gpa.free(errors);
+
+    try std.testing.expectEqual(1, errors.len);
+    try std.testing.expect(errors[0].tag == .missing_field);
+    try std.testing.expectEqualStrings("a", errors[0].tag.missing_field);
 }
