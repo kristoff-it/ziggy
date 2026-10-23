@@ -16,8 +16,12 @@ pub export fn zig_fuzz_test(buf: [*:0]const u8, len: isize) void {
     defer arena_state.deinit();
     const gpa = arena_state.allocator();
 
-    _ = len;
-    const src = std.mem.span(buf);
+    if (buf[@intCast(len)] != 0) return;
+
+    const src = buf[0..@intCast(len) :0];
+
+    // _ = len;
+    // const src = std.mem.span(buf);
 
     testAst(gpa, src);
     // testAstSmith(gpa, src);

@@ -463,7 +463,13 @@ const Parser = struct {
             .array_element => {
                 assert(!p.curIsEmpty());
                 // missing commas are handled by the container
-                p.cur().loc.end = if (p.tok.tag == .comma) p.tok.loc.end else p.prev_loc.end;
+                p.cur().loc.end = if (p.tok.tag == .comma)
+                    p.tok.loc.end
+                else if (p.prev_loc.end < p.tok.loc.start)
+                    p.tok.loc.end
+                else
+                    p.prev_loc.end;
+
                 p.up();
                 continue :parse p.cur().tag;
             },

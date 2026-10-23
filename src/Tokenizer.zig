@@ -367,7 +367,6 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
         .start => switch (src[t.idx]) {
             0 => {
                 tok.loc.start = t.idx;
-                tok.loc.end = t.idx;
 
                 if (t.idx < src.len) {
                     t.idx += 1;
@@ -375,6 +374,8 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 } else {
                     tok.tag = .eof;
                 }
+
+                tok.loc.end = t.idx;
 
                 return tok;
             },
@@ -384,9 +385,10 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             '\r' + 1...0x1f,
             => {
                 if (src[t.idx] == '\n') t.lines += 1;
+
+                t.idx += 1;
                 tok.tag = .invalid_control;
                 tok.loc.end = t.idx;
-                t.idx += 1;
                 return tok;
             },
 
@@ -852,9 +854,10 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
 
             0x1...0x1f => {
                 if (src[t.idx] == '\n') t.lines += 1;
+
+                t.idx += 1;
                 tok.tag = .invalid_control;
                 tok.loc.end = t.idx;
-                t.idx += 1;
                 return tok;
             },
 
@@ -990,8 +993,9 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
         .comment => switch (src[t.idx]) {
             0 => {
                 if (t.idx < src.len) {
-                    tok.tag = .invalid_control;
                     t.idx += 1;
+                    tok.tag = .invalid_control;
+                    tok.loc.end = t.idx;
                     return tok;
                 }
 
