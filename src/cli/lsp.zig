@@ -278,7 +278,7 @@ pub fn @"textDocument/completion"(
 
     outer: switch (ziggy_node.tag) {
         else => unreachable,
-        .root, .null, .integer, .float, .bytes, .bytes_multiline, .bool => return null,
+        .root, .null, .integer, .float, .bytes_no_escapes, .bytes_with_escapes, .bytes_multiline, .bool => return null,
         .array_h, .array_v, .array_element => continue :outer .missing_value,
         .struct_field, .dict_field => {
             // TODO: value-side resolution
@@ -309,7 +309,7 @@ pub fn @"textDocument/completion"(
                     .identifier => {
                         try existing_fields.put(arena, tok.loc.slice(tok_src)[1..], {});
                     },
-                    .bytes => {
+                    .bytes_no_escapes, .bytes_with_escapes => {
                         const key = tok.loc.slice(tok_src);
                         try existing_fields.put(arena, key[1 .. key.len - 1], {});
                     },

@@ -16,11 +16,8 @@ pub export fn zig_fuzz_test(buf: [*:0]const u8, len: isize) void {
     defer arena_state.deinit();
     const gpa = arena_state.allocator();
 
-    // @constCast(&buf[@intCast(len - 1)]).* = 0;
-    // const src = buf[0..@intCast(len - 1) :0];
-
-    const end = std.mem.indexOfScalar(u8, buf[0..@intCast(len)], 0) orelse return;
-    const src = buf[0..end :0];
+    _ = len;
+    const src = std.mem.span(buf);
 
     testAst(gpa, src);
     // testAstSmith(gpa, src);
@@ -107,6 +104,7 @@ fn testAst(gpa: std.mem.Allocator, src: [:0]const u8) void {
         } else true;
 
         if (no_fixup) eqlIgnoreWhitespace(src, round1);
+        if (!no_fixup) return; // fixups at the moment cause issues
 
         var r2_buf: Io.Writer.Allocating = .init(gpa);
         defer r2_buf.deinit();

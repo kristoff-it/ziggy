@@ -1,6 +1,8 @@
 const Tokenizer = @This();
 
 const std = @import("std");
+const assert = std.debug.assert;
+const Writer = std.Io.Writer;
 
 delimiter: std.meta.Tag(Delimiter),
 // Set to a location within a bytes token when an invalid escape
@@ -62,7 +64,8 @@ pub const Token = struct {
         rsb,
         identifier,
         union_case,
-        bytes,
+        bytes_no_escapes,
+        bytes_with_escapes,
         bytes_line,
         integer_bin,
         integer_oct,
@@ -84,7 +87,8 @@ pub const Token = struct {
                 .comment_line,
                 .eod,
                 .eof,
-                .bytes,
+                .bytes_no_escapes,
+                .bytes_with_escapes,
                 .bytes_line,
                 .integer_bin,
                 .integer_oct,
@@ -135,7 +139,7 @@ pub const Token = struct {
                 => unreachable,
                 .comma, .eql, .colon, .rp, .dotlb, .lb, .rb, .lsb, .rsb => .punctuation,
                 .comment_line => .comment_line,
-                .bytes => .bytes,
+                .bytes_no_escapes, .bytes_with_escapes => .bytes,
                 .bytes_line => .bytes_line,
                 .integer_bin, .integer_oct, .integer_hex, .integer_dec => .integer,
                 .float, .nan, .pos_inf, .neg_inf => .float,
@@ -169,7 +173,7 @@ pub const Token = struct {
             idx = loc.end;
             const e = while (idx < src.len) : (idx += 1) {
                 if (src[idx] == '\n') break idx;
-            } else src.len - 1;
+            } else src.len;
 
             return .{ .line = src[s..e], .start = s };
         }
@@ -232,6 +236,94 @@ const State = enum {
     invalid,
 };
 
+/// Asserts that the token is valid (including all escape sequences).
+pub fn parseValidBytesWithEscapes(full_src: []const u8, w: *Writer) Writer.Error!void {
+    // std.debug.print("escaping \n[{s}]\n\n", .{full_src});
+    assert(full_src.len >= 4);
+    assert(full_src[0] == '"');
+    assert(full_src[full_src.len - 1] == '"');
+
+    const src = full_src[1 .. full_src.len - 1];
+
+    var last_slash_idx: usize = 0;
+    while (true) {
+        const slash_idx = std.mem.indexOfScalarPos(u8, src, last_slash_idx, '\\') orelse {
+            assert(last_slash_idx != 0); // call only on bytes_with_escapes!
+            try w.writeAll(src[last_slash_idx..]);
+            return;
+        };
+
+        try w.writeAll(src[last_slash_idx..slash_idx]);
+        last_slash_idx = slash_idx + 2;
+        switch (src[slash_idx + 1]) {
+            else => unreachable,
+            '"' => try w.writeByte('"'),
+            '\\' => try w.writeByte('\\'),
+            '/' => try w.writeByte('/'),
+            'b' => try w.writeByte(0x08),
+            'f' => try w.writeByte(0x0c),
+            'r' => try w.writeByte('\r'),
+            'n' => try w.writeByte('\n'),
+            't' => try w.writeByte('\t'),
+            'x' => {
+                var value: u8 = 0;
+
+                last_slash_idx += 2;
+                for (src[slash_idx + 2 .. last_slash_idx]) |digit| switch (digit) {
+                    '0'...'9' => {
+                        value *= 16;
+                        value += digit - '0';
+                    },
+                    'a'...'f' => {
+                        value *= 16;
+                        value += digit - 'a' + 10;
+                    },
+                    'A'...'F' => {
+                        value *= 16;
+                        value += digit - 'A' + 10;
+                    },
+                    else => unreachable,
+                };
+
+                try w.writeByte(value);
+            },
+            'u' => {
+                var value: u32 = 0;
+
+                last_slash_idx += 4;
+                for (src[slash_idx + 2 .. last_slash_idx]) |digit| switch (digit) {
+                    '0'...'9' => {
+                        value *= 16;
+                        value += digit - '0';
+                    },
+                    'a'...'f' => {
+                        value *= 16;
+                        value += digit - 'a' + 10;
+                    },
+                    'A'...'F' => {
+                        value *= 16;
+                        value += digit - 'A' + 10;
+                    },
+                    else => unreachable,
+                };
+
+                if (value > 0x10ffff) {
+                    try w.writeAll("�");
+                    continue;
+                }
+
+                var buf: [4]u8 = undefined;
+                const len = std.unicode.utf8Encode(@intCast(value), &buf) catch {
+                    try w.writeAll("�");
+                    continue;
+                };
+
+                try w.writeAll(buf[0..len]);
+            },
+        }
+    }
+}
+
 pub fn init(delimiter: Delimiter) Tokenizer {
     return .{
         .delimiter = delimiter,
@@ -258,14 +350,14 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
         },
     };
 
-    // Used to dected misplaced underscores in numeric literals.
+    // Used to detect misplaced underscores in numeric literals.
     var last_was_digit = true;
 
     // Used to count the number of hex digits in a bytes escape sequence.
     var bytes_escape_hex_digits: u8 = undefined;
 
     // Used to track the beginning of a bytes escape sequence.
-    var bytes_escape_start: u32 = undefined;
+    var bytes_escape_start: u32 = 0;
 
     // defer std.debug.print("returning '{s}' {t} \n", .{ tok.loc.slice(src), tok.tag });
     state: switch (State.start) {
@@ -707,13 +799,17 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             },
 
             '\\' => {
+                bytes_escape_start = t.idx;
                 t.idx += 1;
                 continue :state .bytes_escape;
             },
 
             '"' => {
                 t.idx += 1;
-                tok.tag = .bytes;
+                tok.tag = if (bytes_escape_start == 0)
+                    .bytes_no_escapes
+                else
+                    .bytes_with_escapes;
                 tok.loc.end = t.idx;
                 return tok;
             },
@@ -731,13 +827,11 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             },
             'u' => {
                 t.idx += 1;
-                bytes_escape_start = t.idx - 2;
                 bytes_escape_hex_digits = 4;
                 continue :state .bytes_escape_hex_digits;
             },
             'x' => {
                 t.idx += 1;
-                bytes_escape_start = t.idx - 2;
                 bytes_escape_hex_digits = 2;
                 continue :state .bytes_escape_hex_digits;
             },
@@ -924,7 +1018,7 @@ test "basics" {
         \\.bar = false,
         \\.baz = { .bax = null },
     , &.{
-        .identifier, .eql, .bytes, .comma,
+        .identifier, .eql, .bytes_no_escapes, .comma,
         .identifier, .eql, .false, .comma,
         .identifier, .eql, .lb, .identifier, .eql, .null, .rb, .comma,
         .eof,
@@ -947,7 +1041,7 @@ test "comments are skipped" {
         \\// or even two
     ,
      &.{
-        .identifier, .eql, .bytes, .comma,
+        .identifier, .eql, .bytes_no_escapes, .comma,
         .identifier, .eql, .false, .comma,
         .identifier, .eql, .lb, .identifier, .eql, .null, .rb, .comma,
         .eof,
@@ -964,9 +1058,9 @@ test "invalid comments" {
         \\.baz = { "bax" : null },
     , &.{
         .invalid,
-        .identifier, .eql, .bytes, .comma,
+        .identifier, .eql, .bytes_no_escapes, .comma,
         .identifier, .eql, .false, .comma,
-        .identifier, .eql, .lb, .bytes, .colon, .null, .rb, .comma,
+        .identifier, .eql, .lb, .bytes_no_escapes, .colon, .null, .rb, .comma,
         .eof,
     }, true, .none);
     // zig fmt: on
@@ -976,7 +1070,7 @@ test "invalid comments" {
 test "invalid bytes" {
     try testCase(
         \\["a "b"]
-    , &.{ .lsb, .bytes, .invalid, .invalid, .eof }, true, .none);
+    , &.{ .lsb, .bytes_no_escapes, .invalid, .invalid, .eof }, true, .none);
 }
 
 test "want comments + trailing" {
@@ -1003,7 +1097,7 @@ test "frontmatter" {
         \\.baz = .{ .bax = null },
         \\---
     , &.{
-        .identifier, .eql, .bytes, .comma,
+        .identifier, .eql, .bytes_no_escapes, .comma,
         .identifier, .eql, .false, .comma,
         .identifier, .eql, .dotlb, .identifier, .eql, .null, .rb, .comma,
         .eod,
@@ -1022,7 +1116,7 @@ test "frontmatter newline" {
         \\.baz = .{ .bax = null },
         \\---
     , &.{
-        .identifier, .eql, .bytes, .comma,
+        .identifier, .eql, .bytes_no_escapes, .comma,
         .identifier, .eql, .false, .comma,
         .identifier, .eql, .dotlb, .identifier, .eql, .null, .rb, .comma,
         .eod,
@@ -1045,14 +1139,14 @@ test "comment in array" {
         \\],
     , &.{
         .identifier, .eql, .lsb,
-        .bytes, .comma,
+        .bytes_no_escapes, .comma,
         .comment_line,
-        .bytes, .comma,
-        .bytes, .comma,
+        .bytes_no_escapes, .comma,
+        .bytes_no_escapes, .comma,
         .comment_line,
         .comment_line,
         .comment_line,
-        .bytes, .comma,
+        .bytes_no_escapes, .comma,
         .rsb, .comma,
         .eof,
     }, false, .none);
@@ -1120,12 +1214,12 @@ test "string escapes" {
         \\.invalid2 = "this is also \u123 wrong",
         \\.invalid3 = "this is also also \z wrong",
     , &.{
-        .identifier, .eql, .bytes, .comma,
-        .identifier, .eql, .bytes, .comma,
-        .identifier, .eql, .bytes, .comma,
-        .identifier, .eql, .bytes, .comma,
-        .identifier, .eql, .bytes, .comma,
-        .identifier, .eql, .bytes, .comma,
+        .identifier, .eql, .bytes_with_escapes, .comma,
+        .identifier, .eql, .bytes_with_escapes, .comma,
+        .identifier, .eql, .bytes_with_escapes, .comma,
+        .identifier, .eql, .bytes_with_escapes, .comma,
+        .identifier, .eql, .bytes_with_escapes, .comma,
+        .identifier, .eql, .bytes_with_escapes, .comma,
         .eof,
     }, false, .none);
     // zig fmt: on

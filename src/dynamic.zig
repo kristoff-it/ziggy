@@ -97,7 +97,7 @@ fn deserializeDynamic(
         .float, .pos_inf, .neg_inf, .nan => return .{
             .float = try d.deserializeOne(f64, first, false),
         },
-        .bytes, .bytes_line => return .{
+        .bytes_no_escapes, .bytes_with_escapes, .bytes_line => return .{
             .bytes = try d.deserializeOne([]const u8, first, false),
         },
         .union_case => return .{
@@ -107,8 +107,8 @@ fn deserializeDynamic(
                     break :blk raw[0 .. raw.len - 1]; // skip '('
                 },
                 .value = blk: {
-                    const value = try d.deserializeOne(*Dynamic, d.next(), false);
-                    const close = d.next();
+                    const value = try d.deserializeOne(*Dynamic, try d.next(), false);
+                    const close = try d.next();
                     switch (close.tag) {
                         .rp => break :blk value,
                         else => return d.unexpected(close),
@@ -225,7 +225,7 @@ pub fn Dictionary(comptime T: type) type {
                 },
                 .lb => return deserializeDict(d, first),
                 .dotlb => blk: {
-                    const tok = d.next();
+                    const tok = try d.next();
                     if (tok.tag != .identifier) return d.unexpected(tok);
                     break :blk tok;
                 },
@@ -255,14 +255,14 @@ pub fn Dictionary(comptime T: type) type {
                 }
                 const name = field_token.loc.slice(d.src)[1..]; // skip '.'
 
-                const eql = d.next();
+                const eql = try d.next();
                 if (eql.tag != .eql) return d.unexpected(eql);
 
                 const gop = try result.fields.getOrPut(d.gpa, name);
                 if (gop.found_existing) return d.duplicateField(field_token);
-                gop.value_ptr.* = try d.deserializeOne(T, d.next(), false);
-                if (d.peek() == .comma) _ = d.next();
-                field_token = d.next();
+                gop.value_ptr.* = try d.deserializeOne(T, try d.next(), false);
+                if (d.peek() == .comma) _ = try d.next();
+                field_token = try d.next();
                 continue;
             }
             comptime unreachable;
@@ -274,10 +274,10 @@ pub fn Dictionary(comptime T: type) type {
         ) Deserializer.Error!Self {
             assert(first.tag == .lb);
             var result: Self = .{ .container_kind = .dict };
-            var field_token = d.next();
+            var field_token = try d.next();
             while (true) {
                 switch (field_token.tag) {
-                    .bytes => {},
+                    .bytes_no_escapes, .bytes_with_escapes => {},
                     .rb => return result,
                     else => return d.unexpected(field_token),
                 }
@@ -287,14 +287,14 @@ pub fn Dictionary(comptime T: type) type {
                     break :blk raw[0 .. raw.len - 1]; // skip second '"'
                 };
 
-                const colon = d.next();
+                const colon = try d.next();
                 if (colon.tag != .colon) return d.unexpected(colon);
 
                 const gop = try result.fields.getOrPut(d.gpa, name);
                 if (gop.found_existing) return d.duplicateField(field_token);
-                gop.value_ptr.* = try d.deserializeOne(T, d.next(), false);
-                if (d.peek() == .comma) _ = d.next();
-                field_token = d.next();
+                gop.value_ptr.* = try d.deserializeOne(T, try d.next(), false);
+                if (d.peek() == .comma) _ = try d.next();
+                field_token = try d.next();
                 continue;
             }
             comptime unreachable;

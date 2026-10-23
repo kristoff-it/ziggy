@@ -14,6 +14,9 @@ gpa: Allocator,
 src: [:0]const u8,
 meta: *Meta,
 opts: Options,
+/// Don't access directly to consume tokens, use `Deserializer.next` as
+/// that function will report byte strings with invalid escape sequences
+/// automatically.
 tokenizer: *Tokenizer,
 
 pub const Options = struct {
@@ -109,6 +112,9 @@ pub const Meta = struct {
             error.DuplicateField => "duplicate field",
             error.UnknownField => "unknown field",
             error.MissingField => "missing field",
+
+            // Invalid escape sequences are always caught byt the parser.
+            error.InvalidEscapeSequence => unreachable,
         };
 
         const sel = meta.error_loc.getSelection(src);
@@ -120,7 +126,8 @@ pub const Meta = struct {
         });
 
         switch (e) {
-            error.OutOfMemory => unreachable, // handle elsewhere
+            error.OutOfMemory => unreachable, // must be handled manually
+            error.InvalidEscapeSequence => unreachable, // handled above
             error.Overflow => {},
             error.UnexpectedToken,
             error.UnexpectedValue,
@@ -199,17 +206,25 @@ pub const Error = error{
     UnexpectedValue,
 
     Overflow,
+    InvalidEscapeSequence,
     DuplicateField,
     UnknownField,
     MissingField,
 };
 
-/// Returns the next token, consuming it
-pub fn next(d: *const Deserializer) Token {
-    return d.tokenizer.next(d.src, true);
+/// Returns the next token, consuming it.
+/// When encountering a byte literal that contains invalid escape sequences,
+/// sets the correct fields in `d.meta` and returns `error.InvalidEscapeSequence`.
+pub fn next(d: *const Deserializer) error{InvalidEscapeSequence}!Token {
+    const tok = d.tokenizer.next(d.src, true);
+    if (tok.tag == .bytes_with_escapes and d.tokenizer.first_invalid_escape.start != 0) {
+        d.meta.error_loc = d.tokenizer.first_invalid_escape;
+        return error.InvalidEscapeSequence;
+    }
+    return tok;
 }
 
-/// Returns the next token tag, without consuming it
+/// Returns the next token tag, without consuming it.
 pub fn peek(d: *const Deserializer) Token.Tag {
     var copy = d.tokenizer.*;
     return copy.next(d.src, true).tag;
@@ -234,7 +249,7 @@ pub fn unexpectedValue(d: *const Deserializer, tok: Token) Error {
     d.meta.error_loc = tok.loc;
     return switch (tok.tag) {
         // zig fmt: off
-        .bytes,      .bytes_line,
+        .bytes_no_escapes, .bytes_with_escapes, .bytes_line,
         .dotlb,      .true,
         .false,      .float,
         .identifier, .nan,
@@ -327,7 +342,7 @@ pub fn deserializeLeaky(
         .tokenizer = &tokenizer,
     };
 
-    const result = try d.deserializeOne(T, tokenizer.next(src, true), true);
+    const result = try d.deserializeOne(T, try d.next(), true);
     const end = tokenizer.next(src, true);
     switch (end.tag) {
         .eof => {},
@@ -475,12 +490,12 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                                 f_name,
                                 try d.deserializeOne(
                                     f_type,
-                                    d.next(),
+                                    try d.next(),
                                     top_lvl,
                                 ),
                             );
 
-                            const tok = d.next();
+                            const tok = try d.next();
                             if (tok.tag != .rp) return d.unexpected(tok);
                             return value;
                         }
@@ -494,29 +509,29 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
 
             if (first.tag != .lsb) return d.unexpectedValue(first);
             if (arr.len == 0) {
-                const maybe_rsb = d.next();
+                const maybe_rsb = try d.next();
                 return if (maybe_rsb.tag == .rsb) arr else d.lengthMismatch(maybe_rsb);
             }
 
             for (&arr, 0..) |*elem, idx| {
-                const tok = d.next();
+                const tok = try d.next();
                 if (tok.tag == .rsb) {
                     return if (idx == arr.len - 1) arr else d.lengthMismatch(tok);
                 }
 
                 elem.* = try d.deserializeOne(
                     info.child,
-                    d.next(),
+                    try d.next(),
                     false,
                 );
 
                 switch (d.peek()) {
                     .comma => {
-                        _ = d.next();
+                        _ = try d.next();
                         continue;
                     },
                     .rsb => return if (idx == arr.len - 1) arr else d.lengthMismatch(next),
-                    else => return d.unexpected(d.next()),
+                    else => return d.unexpected(try d.next()),
                 }
             }
             comptime unreachable;
@@ -547,7 +562,7 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                 },
                 .lb => return try d.deserializeDict(T, &result, info, &seen, first),
                 .dotlb => blk: {
-                    const tok = d.next();
+                    const tok = try d.next();
                     if (tok.tag != .identifier) return d.unexpected(tok);
                     break :blk tok;
                 },
@@ -596,12 +611,12 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
 
                     // We skip seen fields to optimize the happy path
                     if (!seen.isSet(idx) and std.mem.eql(u8, f_name, name)) {
-                        const eql = d.next();
+                        const eql = try d.next();
                         if (eql.tag != .eql) return d.unexpected(eql);
 
                         // Non-optional fields with a default value
                         // can decode null as the default value.
-                        const first_value_tok = d.next();
+                        const first_value_tok = try d.next();
                         if (f_attrs.default_value_ptr != null and
                             @typeInfo(f_type) != .optional and first_value_tok.tag == .null)
                         {
@@ -618,8 +633,8 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                         seen.set(idx);
 
                         const has_comma = d.peek() == .comma;
-                        if (has_comma) _ = d.next();
-                        field_token = d.next();
+                        if (has_comma) _ = try d.next();
+                        field_token = try d.next();
                         if (!has_comma and field_token.tag == .identifier) {
                             return d.unexpected(field_token);
                         }
@@ -652,7 +667,10 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
             .slice => switch (info.child) {
                 u8 => {
                     switch (first.tag) {
-                        .bytes, .bytes_line => return d.parseBytes(T, first),
+                        .bytes_no_escapes,
+                        .bytes_with_escapes,
+                        .bytes_line,
+                        => return d.parseBytes(T, first),
                         else => return d.unexpectedValue(first),
                     }
                 },
@@ -663,7 +681,7 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                     errdefer buf.deinit(d.gpa);
 
                     while (true) {
-                        const tok = d.next();
+                        const tok = try d.next();
                         if (tok.tag == .rsb) break;
 
                         try buf.append(d.gpa, try d.deserializeOne(
@@ -674,7 +692,7 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
 
                         switch (d.peek()) {
                             .comma => {
-                                _ = d.next();
+                                _ = try d.next();
                                 continue;
                             },
                             .rsb => continue,
@@ -739,10 +757,10 @@ inline fn deserializeDict(
     assert(first.tag == .lb);
     const skip_fields = if (root.getOptions(T)) |opts| opts.skip_fields else &.{};
 
-    var field_token = d.next();
+    var field_token = try d.next();
     outer: while (true) {
         switch (field_token.tag) {
-            .bytes => {},
+            .bytes_no_escapes, .bytes_with_escapes => {},
             .rb => {
                 try d.finalizeStruct(result, info, seen, field_token);
                 return result.*;
@@ -766,19 +784,19 @@ inline fn deserializeDict(
 
             // We skip seen fields to optimize the happy path
             if (!seen.isSet(idx) and std.mem.eql(u8, f_name, name)) {
-                const colon = d.next();
+                const colon = try d.next();
                 if (colon.tag != .colon) return d.unexpected(colon);
 
                 @field(result, f_name) = try d.deserializeOne(
                     f_type,
-                    d.next(),
+                    try d.next(),
                     false,
                 );
                 seen.set(idx);
 
                 const has_comma = d.peek() == .comma;
-                if (has_comma) _ = d.next();
-                field_token = d.next();
+                if (has_comma) _ = try d.next();
+                field_token = try d.next();
                 if (!has_comma and field_token.tag == .identifier) {
                     return d.unexpected(field_token);
                 }
@@ -803,29 +821,37 @@ fn parseBytes(
     T: type,
     first_token: Token,
 ) Error!T {
-    // TODO: unescape support!
     const info = @typeInfo(T).pointer;
     assert(info.child == u8);
     assert(info.size == .slice);
+
+    const src = first_token.loc.slice(d.src);
     switch (first_token.tag) {
-        .bytes => {
-            // TODO: avoid unnecessary copies
-            const str = first_token.loc.slice(d.src);
-            const bytes = std.zig.string_literal.parseAlloc(
-                d.gpa,
-                str,
-            ) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.InvalidLiteral => unreachable,
+        .bytes_no_escapes => {
+            const bytes = src[1 .. src.len - 1];
+            const sentinel = info.sentinel() orelse {
+                switch (d.opts.copy_strings) {
+                    .to_unescape => if (info.attrs.@"const")
+                        return bytes
+                    else
+                        return d.gpa.dupe(u8, bytes),
+                    .always => return d.gpa.dupe(u8, bytes),
+                }
             };
-            if (info.sentinel()) |s| {
-                defer d.gpa.free(bytes);
-                const new_buf = try d.gpa.allocSentinel(info.child, bytes.len, s);
-                @memcpy(new_buf, bytes);
-                return new_buf;
-            } else switch (d.opts.copy_strings) {
-                .always => return bytes,
-                .to_unescape => return bytes,
+            return d.gpa.dupeSentinel(u8, bytes, sentinel);
+        },
+        .bytes_with_escapes => {
+            var aw: Io.Writer.Allocating = .init(d.gpa);
+            errdefer aw.deinit();
+
+            Tokenizer.parseValidBytesWithEscapes(src, &aw.writer) catch {
+                return error.OutOfMemory;
+            };
+
+            if (info.sentinel()) |sentinel| {
+                return aw.toOwnedSliceSentinel(sentinel);
+            } else {
+                return aw.toOwnedSlice();
             }
         },
         .bytes_line => {
@@ -837,7 +863,7 @@ fn parseBytes(
                 try result.appendSlice(d.gpa, current.loc.slice(d.src)[2..]);
                 if (d.peek() != .bytes_line) break;
                 try result.append(d.gpa, '\n');
-                current = d.next();
+                current = try d.next();
             }
 
             if (info.sentinel()) |s| {
@@ -866,6 +892,8 @@ pub const LinePreview = struct {
 
 pub fn linePreview(src: [:0]const u8, loc: Tokenizer.Token.Loc) LinePreview {
     const line_off = loc.line(src);
+    // std.debug.print("line off = [{s}]\n", .{line_off.line});
+
     const line_trim_left = std.mem.trimStart(u8, line_off.line, &std.ascii.whitespace);
     const start_trim_left = line_off.start + line_off.line.len - line_trim_left.len;
 
@@ -1502,4 +1530,71 @@ test "numeric literals" {
     try std.testing.expectApproxEqRel(0.10214e+10, result.value.float1, 0.1);
     try std.testing.expectApproxEqRel(0.10214e-10, result.value.float2, 0.1);
     try std.testing.expectApproxEqRel(0.10214E10, result.value.float3, 0.1);
+}
+
+test "invalid escapes" {
+    const case =
+        \\.foo = "bar\z",
+    ;
+
+    const Case = struct {
+        foo: []const u8,
+    };
+
+    var meta: Meta = undefined;
+    const opts: Options = .{};
+
+    try std.testing.expectError(
+        error.InvalidEscapeSequence,
+        deserialize(Case, std.testing.allocator, case, &meta, opts),
+    );
+
+    try std.testing.expectFmt(
+        \\<stdin>:1:12 invalid escape sequence
+        \\|   .foo = "bar\z",
+        \\|              ^
+        \\
+        \\
+    , "{f}", .{meta.reportErrorsFmt(
+        std.testing.allocator,
+        opts,
+        null,
+        case,
+        error.InvalidEscapeSequence,
+    )});
+}
+test "invalid escapes in dict key" {
+    const case =
+        \\{"foo\x0z": 1},
+    ;
+
+    const Case = struct {
+        foo: []const u8,
+    };
+
+    var meta: Meta = undefined;
+    const opts: Options = .{};
+
+    try std.testing.expectError(
+        error.InvalidEscapeSequence,
+        deserialize(Case, std.testing.allocator, case, &meta, opts),
+    );
+
+    try std.testing.expectFmt(
+        \\<stdin>:1:6 invalid escape sequence
+        \\|   {"foo\x0z": 1},
+        \\|        ^^^
+        \\
+        \\<stdin>:1:15 unexpected token
+        \\|   {"foo\x0z": 1},
+        \\|                 ^
+        \\
+        \\
+    , "{f}", .{meta.reportErrorsFmt(
+        std.testing.allocator,
+        opts,
+        null,
+        case,
+        error.InvalidEscapeSequence,
+    )});
 }
