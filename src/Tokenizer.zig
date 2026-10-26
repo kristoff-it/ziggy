@@ -9,7 +9,7 @@ delimiter: std.meta.Tag(Delimiter),
 // sequence is found. Note that the string might contain more than
 // one invalid escape sequence, but the tokenizer will only annotate
 // the first one.
-first_invalid_escape: Token.Loc = .zero,
+first_invalid: Token.Loc = .zero,
 lines: u32,
 idx: u32,
 
@@ -68,6 +68,7 @@ pub const Token = struct {
         bytes_no_escapes,
         bytes_with_escapes,
         bytes_line,
+        bytes_line_invalid,
         integer_bin,
         integer_oct,
         integer_hex,
@@ -91,6 +92,7 @@ pub const Token = struct {
                 .bytes_no_escapes,
                 .bytes_with_escapes,
                 .bytes_line,
+                .bytes_line_invalid,
                 .integer_bin,
                 .integer_oct,
                 .integer_hex,
@@ -143,7 +145,7 @@ pub const Token = struct {
                 .comma, .eql, .colon, .rp, .dotlb, .lb, .rb, .lsb, .rsb => .punctuation,
                 .comment_line => .comment_line,
                 .bytes_no_escapes, .bytes_with_escapes => .bytes,
-                .bytes_line => .bytes_line,
+                .bytes_line, .bytes_line_invalid => .bytes_line,
                 .integer_bin, .integer_oct, .integer_hex, .integer_dec => .integer,
                 .float, .nan, .pos_inf, .neg_inf => .float,
                 .identifier => .identifier,
@@ -214,6 +216,94 @@ pub const Token = struct {
             return selection;
         }
     };
+
+    /// Must be called on a .bytes_with_escapes token. Asserts that all
+    /// escape sequences are valid.
+    pub fn parseBytesWithEscapes(t: Token, src: [:0]const u8, w: *Writer) Writer.Error!void {
+        const quoted_slice = t.loc.slice(src);
+
+        assert(t.tag == .bytes_with_escapes);
+        assert(quoted_slice.len >= 4);
+        assert(quoted_slice[0] == '"');
+        assert(quoted_slice[quoted_slice.len - 1] == '"');
+
+        const slice = quoted_slice[1 .. quoted_slice.len - 1];
+
+        var last_slash_idx: usize = 0;
+        while (std.mem.indexOfScalarPos(u8, slice, last_slash_idx, '\\')) |slash_idx| {
+            try w.writeAll(slice[last_slash_idx..slash_idx]);
+            last_slash_idx = slash_idx + 2;
+            switch (slice[slash_idx + 1]) {
+                else => unreachable,
+                '"' => try w.writeByte('"'),
+                '\\' => try w.writeByte('\\'),
+                '/' => try w.writeByte('/'),
+                'b' => try w.writeByte(0x08),
+                'f' => try w.writeByte(0x0c),
+                'r' => try w.writeByte('\r'),
+                'n' => try w.writeByte('\n'),
+                't' => try w.writeByte('\t'),
+                'x' => {
+                    var value: u8 = 0;
+
+                    last_slash_idx += 2;
+                    for (slice[slash_idx + 2 .. last_slash_idx]) |digit| switch (digit) {
+                        '0'...'9' => {
+                            value *= 16;
+                            value += digit - '0';
+                        },
+                        'a'...'f' => {
+                            value *= 16;
+                            value += digit - 'a' + 10;
+                        },
+                        'A'...'F' => {
+                            value *= 16;
+                            value += digit - 'A' + 10;
+                        },
+                        else => unreachable,
+                    };
+
+                    try w.writeByte(value);
+                },
+                'u' => {
+                    var value: u32 = 0;
+
+                    last_slash_idx += 4;
+                    for (slice[slash_idx + 2 .. last_slash_idx]) |digit| switch (digit) {
+                        '0'...'9' => {
+                            value *= 16;
+                            value += digit - '0';
+                        },
+                        'a'...'f' => {
+                            value *= 16;
+                            value += digit - 'a' + 10;
+                        },
+                        'A'...'F' => {
+                            value *= 16;
+                            value += digit - 'A' + 10;
+                        },
+                        else => unreachable,
+                    };
+
+                    if (value > 0x10ffff) {
+                        try w.writeAll("�");
+                        continue;
+                    }
+
+                    var buf: [4]u8 = undefined;
+                    const len = std.unicode.utf8Encode(@intCast(value), &buf) catch {
+                        try w.writeAll("�");
+                        continue;
+                    };
+
+                    try w.writeAll(buf[0..len]);
+                },
+            }
+        }
+
+        assert(last_slash_idx != 0); // call only on bytes_with_escapes!
+        try w.writeAll(slice[last_slash_idx..]);
+    }
 };
 
 const State = enum {
@@ -235,97 +325,9 @@ const State = enum {
     bytes_line_start,
     bytes_line_end,
     comment_start,
-    comment,
+    comment_end,
     invalid,
 };
-
-/// Asserts that the token is valid (including all escape sequences).
-pub fn parseValidBytesWithEscapes(full_src: []const u8, w: *Writer) Writer.Error!void {
-    // std.debug.print("escaping \n[{s}]\n\n", .{full_src});
-    assert(full_src.len >= 4);
-    assert(full_src[0] == '"');
-    assert(full_src[full_src.len - 1] == '"');
-
-    const src = full_src[1 .. full_src.len - 1];
-
-    var last_slash_idx: usize = 0;
-    while (true) {
-        const slash_idx = std.mem.indexOfScalarPos(u8, src, last_slash_idx, '\\') orelse {
-            assert(last_slash_idx != 0); // call only on bytes_with_escapes!
-            try w.writeAll(src[last_slash_idx..]);
-            return;
-        };
-
-        try w.writeAll(src[last_slash_idx..slash_idx]);
-        last_slash_idx = slash_idx + 2;
-        switch (src[slash_idx + 1]) {
-            else => unreachable,
-            '"' => try w.writeByte('"'),
-            '\\' => try w.writeByte('\\'),
-            '/' => try w.writeByte('/'),
-            'b' => try w.writeByte(0x08),
-            'f' => try w.writeByte(0x0c),
-            'r' => try w.writeByte('\r'),
-            'n' => try w.writeByte('\n'),
-            't' => try w.writeByte('\t'),
-            'x' => {
-                var value: u8 = 0;
-
-                last_slash_idx += 2;
-                for (src[slash_idx + 2 .. last_slash_idx]) |digit| switch (digit) {
-                    '0'...'9' => {
-                        value *= 16;
-                        value += digit - '0';
-                    },
-                    'a'...'f' => {
-                        value *= 16;
-                        value += digit - 'a' + 10;
-                    },
-                    'A'...'F' => {
-                        value *= 16;
-                        value += digit - 'A' + 10;
-                    },
-                    else => unreachable,
-                };
-
-                try w.writeByte(value);
-            },
-            'u' => {
-                var value: u32 = 0;
-
-                last_slash_idx += 4;
-                for (src[slash_idx + 2 .. last_slash_idx]) |digit| switch (digit) {
-                    '0'...'9' => {
-                        value *= 16;
-                        value += digit - '0';
-                    },
-                    'a'...'f' => {
-                        value *= 16;
-                        value += digit - 'a' + 10;
-                    },
-                    'A'...'F' => {
-                        value *= 16;
-                        value += digit - 'A' + 10;
-                    },
-                    else => unreachable,
-                };
-
-                if (value > 0x10ffff) {
-                    try w.writeAll("�");
-                    continue;
-                }
-
-                var buf: [4]u8 = undefined;
-                const len = std.unicode.utf8Encode(@intCast(value), &buf) catch {
-                    try w.writeAll("�");
-                    continue;
-                };
-
-                try w.writeAll(buf[0..len]);
-            },
-        }
-    }
-}
 
 pub fn init(delimiter: Delimiter) Tokenizer {
     return .{
@@ -338,12 +340,12 @@ pub fn init(delimiter: Delimiter) Tokenizer {
     };
 }
 
-/// When obtaining a 'bytes' token, the caller can inspect 'first_invalid_sequence'
-/// to know if the token contains any invalid sequence. Note that only the first
-/// invalid sequence will be tracked, meaning that if it's meaningful to report
-/// more errors at once, the caller should validate the rest of the string separately.
-/// If 'first_invalid_sequence' is {0, 0} (i.e. `Token.Loc.zero`), then the string
-/// is valid and requires no further validation.
+/// When obtaining a 'bytes_with_escapes' or a 'bytes_line_invalid' token,
+/// the caller can inspect 'first_invalid' to know if the token contains
+/// any invalid sequence or any invalid control byte.Note that only the
+/// first invalid sequence / control byte will be tracked. If
+/// 'first_invalid.start' is 0 then the string is valid and requires no
+/// further validation.
 pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
     var tok: Token = .{
         .tag = undefined,
@@ -367,32 +369,24 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
         .start => switch (src[t.idx]) {
             0 => {
                 tok.loc.start = t.idx;
-
                 if (t.idx < src.len) {
                     t.idx += 1;
                     tok.tag = .invalid_control;
                 } else {
                     tok.tag = .eof;
                 }
-
                 tok.loc.end = t.idx;
-
                 return tok;
             },
 
-            0x1...'\t' - 1,
-            '\n' + 1...'\r' - 1,
-            '\r' + 1...0x1f,
-            => {
-                if (src[t.idx] == '\n') t.lines += 1;
-
+            0x1...'\t' - 1, '\n' + 1...0x1f => {
                 t.idx += 1;
                 tok.tag = .invalid_control;
                 tok.loc.end = t.idx;
                 return tok;
             },
 
-            ' ', '\t', '\n', '\r' => {
+            ' ', '\t', '\n' => {
                 if (src[t.idx] == '\n') t.lines += 1;
 
                 t.idx += 1;
@@ -471,7 +465,7 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             },
             '"' => {
                 t.idx += 1;
-                t.first_invalid_escape = .zero;
+                t.first_invalid = .zero;
                 continue :state .bytes;
             },
             '\\' => {
@@ -843,22 +837,36 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
         .bytes => switch (src[t.idx]) {
             0 => {
                 if (t.idx < src.len) {
+                    if (t.first_invalid.start == 0) {
+                        t.first_invalid = .{
+                            .start = t.idx,
+                            .end = t.idx + 1,
+                        };
+                    }
                     t.idx += 1;
-                    tok.tag = .invalid_control;
+                    continue :state .bytes;
                 } else {
                     tok.tag = .invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
                 }
+            },
+            '\n' => {
+                t.lines += 1;
+                tok.tag = .invalid;
                 tok.loc.end = t.idx;
                 return tok;
             },
 
-            0x1...0x1f => {
-                if (src[t.idx] == '\n') t.lines += 1;
-
+            0x1...'\t', '\n' + 1...0x1f => {
+                if (t.first_invalid.start == 0) {
+                    t.first_invalid = .{
+                        .start = t.idx,
+                        .end = t.idx + 1,
+                    };
+                }
                 t.idx += 1;
-                tok.tag = .invalid_control;
-                tok.loc.end = t.idx;
-                return tok;
+                continue :state .bytes;
             },
 
             '\\' => {
@@ -869,7 +877,7 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
 
             '"' => {
                 t.idx += 1;
-                tok.tag = if (bytes_escape_start == 0)
+                tok.tag = if (bytes_escape_start == 0 and t.first_invalid.start == 0)
                     .bytes_no_escapes
                 else
                     .bytes_with_escapes;
@@ -878,7 +886,30 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
             },
 
             else => {
-                t.idx += 1;
+                const len = if (src[t.idx] > 127) blk: {
+                    const len = std.unicode.utf8ByteSequenceLength(src[t.idx]) catch {
+                        if (t.first_invalid.start == 0) {
+                            t.first_invalid = .{
+                                .start = t.idx,
+                                .end = t.idx + 1,
+                            };
+                        }
+
+                        break :blk 1;
+                    };
+                    if (!std.unicode.utf8ValidateSlice(src[t.idx..][0..len])) {
+                        if (t.first_invalid.start == 0) {
+                            t.first_invalid = .{
+                                .start = t.idx,
+                                .end = t.idx + len,
+                            };
+                        }
+                    }
+
+                    break :blk len;
+                } else 1;
+
+                t.idx += len;
                 continue :state .bytes;
             },
         },
@@ -899,8 +930,8 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 continue :state .bytes_escape_hex_digits;
             },
             else => {
-                if (t.first_invalid_escape.start == 0) {
-                    t.first_invalid_escape = .{
+                if (t.first_invalid.start == 0) {
+                    t.first_invalid = .{
                         .start = t.idx - 1,
                         .end = t.idx,
                     };
@@ -919,8 +950,8 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 continue :state .bytes_escape_hex_digits;
             },
             else => {
-                if (t.first_invalid_escape.start == 0) {
-                    t.first_invalid_escape = .{
+                if (t.first_invalid.start == 0) {
+                    t.first_invalid = .{
                         .start = bytes_escape_start,
                         .end = t.idx,
                     };
@@ -952,29 +983,77 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
         .bytes_line_end => switch (src[t.idx]) {
             0 => {
                 if (t.idx < src.len) {
-                    tok.tag = .invalid_control;
+                    if (t.first_invalid.start == 0) {
+                        t.first_invalid = .{
+                            .start = t.idx,
+                            .end = t.idx + 1,
+                        };
+                    }
                     t.idx += 1;
+                    continue :state .bytes_line_end;
                 } else {
-                    tok.tag = .bytes_line;
+                    tok.tag = if (t.first_invalid.start == 0)
+                        .bytes_line
+                    else
+                        .bytes_line_invalid;
+                    tok.loc.end = t.idx;
+                    return tok;
                 }
-                tok.loc.end = t.idx;
-                return tok;
             },
+            // All control bytes except [\t\n].
+            0x1...'\t' - 1, '\n' + 1...0x1f => {
+                if (t.first_invalid.start == 0) {
+                    t.first_invalid = .{
+                        .start = t.idx,
+                        .end = t.idx + 1,
+                    };
+                }
+                t.idx += 1;
+                continue :state .bytes_line_end;
+            },
+
             '\n' => {
-                tok.tag = .bytes_line;
+                tok.tag = if (t.first_invalid.start == 0)
+                    .bytes_line
+                else
+                    .bytes_line_invalid;
                 tok.loc.end = t.idx;
                 t.lines += 1;
                 t.idx += 1;
                 return tok;
             },
             else => {
-                t.idx += 1;
+                // Includes '\t'
+
+                const len = if (src[t.idx] > 127) blk: {
+                    const len = std.unicode.utf8ByteSequenceLength(src[t.idx]) catch {
+                        if (t.first_invalid.start == 0) {
+                            t.first_invalid = .{
+                                .start = t.idx,
+                                .end = t.idx + 1,
+                            };
+                        }
+                        break :blk 1;
+                    };
+                    if (!std.unicode.utf8ValidateSlice(src[t.idx..][0..len])) {
+                        if (t.first_invalid.start == 0) {
+                            t.first_invalid = .{
+                                .start = t.idx,
+                                .end = t.idx + len,
+                            };
+                        }
+                    }
+
+                    break :blk len;
+                } else 1;
+
+                t.idx += len;
                 continue :state .bytes_line_end;
             },
         },
 
         .comment_start => switch (src[t.idx]) {
-            '/' => continue :state .comment,
+            '/' => continue :state .comment_end,
             0 => {
                 if (t.idx < src.len) {
                     t.idx += 1;
@@ -990,13 +1069,17 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 continue :state .invalid;
             },
         },
-        .comment => switch (src[t.idx]) {
+        .comment_end => switch (src[t.idx]) {
             0 => {
                 if (t.idx < src.len) {
+                    if (t.first_invalid.start == 0) {
+                        t.first_invalid = .{
+                            .start = t.idx,
+                            .end = t.idx + 1,
+                        };
+                    }
                     t.idx += 1;
-                    tok.tag = .invalid_control;
-                    tok.loc.end = t.idx;
-                    return tok;
+                    continue :state .comment_end;
                 }
 
                 if (!skip_comments) {
@@ -1007,6 +1090,13 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
 
                 tok.tag = .eof;
                 tok.loc.start = t.idx - 1;
+                tok.loc.end = t.idx;
+                return tok;
+            },
+            // All control bytes except [\t\n].
+            0x1...'\t' - 1, '\n' + 1...0x1f => {
+                t.idx += 1;
+                tok.tag = .invalid_control;
                 tok.loc.end = t.idx;
                 return tok;
             },
@@ -1023,8 +1113,29 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 continue :state .start;
             },
             else => {
-                t.idx += 1;
-                continue :state .comment;
+                const len = if (src[t.idx] > 127) blk: {
+                    const len = std.unicode.utf8ByteSequenceLength(src[t.idx]) catch {
+                        if (t.first_invalid.start == 0) {
+                            t.first_invalid = .{
+                                .start = t.idx,
+                                .end = t.idx + 1,
+                            };
+                        }
+                        break :blk 1;
+                    };
+                    if (!std.unicode.utf8ValidateSlice(src[t.idx..][0..len])) {
+                        if (t.first_invalid.start == 0) {
+                            t.first_invalid = .{
+                                .start = t.idx,
+                                .end = t.idx + len,
+                            };
+                        }
+                    }
+
+                    break :blk len;
+                } else 1;
+                t.idx += len;
+                continue :state .comment_end;
             },
         },
         .invalid => switch (src[t.idx]) {

@@ -21,9 +21,10 @@ pub const FieldKind = enum { @"struct", dict };
 pub const Error = struct {
     tag: union(enum) {
         unexpected_token,
-        unexpected_control: u8,
         missing_token: []const u8,
         invalid_escape,
+        invalid_control,
+        invalid_utf8,
         wrong_field_style,
         wrong_field_separator: FieldKind,
         missing_value,
@@ -32,14 +33,17 @@ pub const Error = struct {
                 .unexpected_token => {
                     try w.writeAll("unexpected token");
                 },
-                .unexpected_control => |cc| {
-                    try w.print("unexpected control character 0x{x}", .{cc});
-                },
                 .missing_token => |msg| {
                     try w.print("missing token: {s}", .{msg});
                 },
                 .invalid_escape => {
                     try w.writeAll("invalid escape sequence");
+                },
+                .invalid_control => {
+                    try w.writeAll("invalid control byte");
+                },
+                .invalid_utf8 => {
+                    try w.writeAll("invalid utf8");
                 },
                 .wrong_field_separator => {
                     try w.writeAll("wrong field separator");
@@ -525,9 +529,9 @@ const Parser = struct {
                 try p.addChild(.@"union");
                 return;
             },
-            .bytes_line => {
+            .bytes_line, .bytes_line_invalid => {
                 try p.addChild(.bytes_multiline);
-                while (p.tok.tag == .bytes_line) try p.consume();
+                while (p.tok.tag == .bytes_line or p.tok.tag == .bytes_line_invalid) try p.consume();
                 p.cur().loc.end = p.prev_loc.end;
                 p.up();
                 return;
@@ -705,19 +709,19 @@ const Parser = struct {
         retry: switch (p.tok.tag) {
             else => {},
             .invalid_control => {
-                try p.err(.{
-                    .tag = .{ .unexpected_control = p.src[p.tok.loc.end - 1] },
-                    .main_location = p.tok.loc,
-                });
-
+                try p.err(.{ .tag = .invalid_control, .main_location = p.tok.loc });
                 p.tok = p.tokenizer.next(p.src, true);
                 continue :retry p.tok.tag;
             },
-            .bytes_with_escapes => {
-                if (p.tokenizer.first_invalid_escape.start != 0) {
+            .bytes_with_escapes, .bytes_line_invalid, .comment_line => {
+                if (p.tokenizer.first_invalid.start != 0) {
                     try p.err(.{
-                        .tag = .invalid_escape,
-                        .main_location = p.tokenizer.first_invalid_escape,
+                        .tag = switch (p.src[p.tokenizer.first_invalid.start]) {
+                            '\\' => .invalid_escape,
+                            0...0x1f => .invalid_control,
+                            else => .invalid_utf8,
+                        },
+                        .main_location = p.tokenizer.first_invalid,
                     });
                 }
             },
@@ -770,9 +774,10 @@ const Parser = struct {
             .wrong_field_separator,
             .wrong_field_style,
             .invalid_escape,
+            .invalid_control,
+            .invalid_utf8,
             => {},
             .unexpected_token,
-            .unexpected_control,
             .missing_token,
             .missing_value,
             => p.has_syntax_errors = true,

@@ -113,8 +113,11 @@ pub const Meta = struct {
             error.UnknownField => "unknown field",
             error.MissingField => "missing field",
 
-            // Invalid escape sequences are always caught byt the parser.
-            error.InvalidEscapeSequence => unreachable,
+            // Invalid escape sequences, etc. are always caught by the parser.
+            error.InvalidEscapeSequence,
+            error.InvalidControlByte,
+            error.InvalidUtf8,
+            => unreachable,
         };
 
         const sel = meta.error_loc.getSelection(src);
@@ -127,7 +130,10 @@ pub const Meta = struct {
 
         switch (e) {
             error.OutOfMemory => unreachable, // must be handled manually
-            error.InvalidEscapeSequence => unreachable, // handled above
+            error.InvalidEscapeSequence,
+            error.InvalidControlByte,
+            error.InvalidUtf8,
+            => unreachable, // handled above
             error.Overflow => {},
             error.UnexpectedToken,
             error.UnexpectedValue,
@@ -206,20 +212,30 @@ pub const Error = error{
     UnexpectedValue,
 
     Overflow,
-    InvalidEscapeSequence,
     DuplicateField,
     UnknownField,
     MissingField,
-};
+} || NextError;
+
+const NextError = error{ InvalidEscapeSequence, InvalidControlByte, InvalidUtf8 };
 
 /// Returns the next token, consuming it.
 /// When encountering a byte literal that contains invalid escape sequences,
 /// sets the correct fields in `d.meta` and returns `error.InvalidEscapeSequence`.
-pub fn next(d: *const Deserializer) error{InvalidEscapeSequence}!Token {
+pub fn next(d: *const Deserializer) NextError!Token {
     const tok = d.tokenizer.next(d.src, true);
-    if (tok.tag == .bytes_with_escapes and d.tokenizer.first_invalid_escape.start != 0) {
-        d.meta.error_loc = d.tokenizer.first_invalid_escape;
-        return error.InvalidEscapeSequence;
+    switch (tok.tag) {
+        .bytes_with_escapes, .bytes_line_invalid, .comment_line => {
+            if (d.tokenizer.first_invalid.start != 0) {
+                d.meta.error_loc = d.tokenizer.first_invalid;
+                return switch (d.src[d.tokenizer.first_invalid.start]) {
+                    '\\' => error.InvalidEscapeSequence,
+                    0...0x1f => error.InvalidControlByte,
+                    else => error.InvalidUtf8,
+                };
+            }
+        },
+        else => {},
     }
     return tok;
 }
@@ -249,14 +265,15 @@ pub fn unexpectedValue(d: *const Deserializer, tok: Token) Error {
     d.meta.error_loc = tok.loc;
     return switch (tok.tag) {
         // zig fmt: off
-        .bytes_no_escapes, .bytes_with_escapes, .bytes_line,
-        .dotlb,      .true,
-        .false,      .float,
-        .identifier, .nan,
-        .neg_inf,    .pos_inf,
-        .null,       .union_case,
-        .integer_bin, .integer_oct,
-        .integer_dec, .integer_hex,
+        .bytes_no_escapes, .bytes_with_escapes,
+        .bytes_line,       .bytes_line_invalid,
+        .dotlb,            .true,
+        .false,            .float,
+        .identifier,       .nan,
+        .neg_inf,          .pos_inf,
+        .null,             .union_case,
+        .integer_bin,      .integer_oct,
+        .integer_dec,      .integer_hex,
         .lb,
         // zig fmt: on
         => error.UnexpectedValue,
@@ -670,6 +687,7 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                         .bytes_no_escapes,
                         .bytes_with_escapes,
                         .bytes_line,
+                        .bytes_line_invalid,
                         => return d.parseBytes(T, first),
                         else => return d.unexpectedValue(first),
                     }
@@ -844,7 +862,7 @@ fn parseBytes(
             var aw: Io.Writer.Allocating = .init(d.gpa);
             errdefer aw.deinit();
 
-            Tokenizer.parseValidBytesWithEscapes(src, &aw.writer) catch {
+            first_token.parseBytesWithEscapes(d.src, &aw.writer) catch {
                 return error.OutOfMemory;
             };
 
@@ -861,7 +879,7 @@ fn parseBytes(
             var current = first_token;
             while (current.tag == .bytes_line) {
                 try result.appendSlice(d.gpa, current.loc.slice(d.src)[2..]);
-                if (d.peek() != .bytes_line) break;
+                if (d.peek() != .bytes_line and d.peek() != .bytes_line_invalid) break;
                 try result.append(d.gpa, '\n');
                 current = try d.next();
             }

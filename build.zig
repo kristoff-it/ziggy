@@ -812,26 +812,29 @@ const json_accept_files: []const []const u8 = &.{
     "i_string_incomplete_surrogates_escape_valid.json",
     "i_string_invalid_lonely_surrogate.json",
     "i_string_invalid_surrogate.json",
-    "i_string_invalid_utf-8.json",
     "i_string_inverted_surrogates_U+1D11E.json",
-    "i_string_iso_latin_1.json",
     "i_string_lone_second_surrogate.json",
-    "i_string_lone_utf8_continuation_byte.json",
+    "i_structure_500_nested_arrays.json",
+};
+
+const json_reject_files: []const []const u8 = &.{
+    // Discretionary test cases
+    "i_string_iso_latin_1.json",
+    "i_string_invalid_utf-8.json",
     "i_string_not_in_unicode_range.json",
+    "i_string_lone_utf8_continuation_byte.json",
     "i_string_overlong_sequence_2_bytes.json",
     "i_string_overlong_sequence_6_bytes_null.json",
     "i_string_overlong_sequence_6_bytes.json",
     "i_string_truncated-utf-8.json",
-    // "i_string_UTF-16LE_with_BOM.json",
+    "i_string_UTF-16LE_with_BOM.json",
+    "i_string_utf16BE_no_BOM.json",
+    "i_string_utf16LE_no_BOM.json",
     "i_string_UTF-8_invalid_sequence.json",
-    // "i_string_utf16BE_no_BOM.json",
-    // "i_string_utf16LE_no_BOM.json",
+    "i_structure_UTF-8_BOM_empty_object.json",
     "i_string_UTF8_surrogate_U+D800.json",
-    "i_structure_500_nested_arrays.json",
-    // "i_structure_UTF-8_BOM_empty_object.json",
-};
 
-const json_reject_files: []const []const u8 = &.{
+    // Must reject test cases
     "n_array_1_true_without_comma.json",
     "n_array_a_invalid_utf8.json",
     "n_array_colon_instead_of_comma.json",
