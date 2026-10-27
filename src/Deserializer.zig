@@ -225,7 +225,7 @@ const NextError = error{ InvalidEscapeSequence, InvalidControlByte, InvalidUtf8 
 pub fn next(d: *const Deserializer) NextError!Token {
     const tok = d.tokenizer.next(d.src, true);
     switch (tok.tag) {
-        .bytes_with_escapes, .bytes_line_invalid, .comment_line => {
+        .bytes_escapes_or_invalid, .bytes_line_invalid, .comment_line => {
             if (d.tokenizer.first_invalid.start != 0) {
                 d.meta.error_loc = d.tokenizer.first_invalid;
                 return switch (d.src[d.tokenizer.first_invalid.start]) {
@@ -265,7 +265,7 @@ pub fn unexpectedValue(d: *const Deserializer, tok: Token) Error {
     d.meta.error_loc = tok.loc;
     return switch (tok.tag) {
         // zig fmt: off
-        .bytes_no_escapes, .bytes_with_escapes,
+        .bytes_no_escapes, .bytes_escapes_or_invalid,
         .bytes_line,       .bytes_line_invalid,
         .dotlb,            .true,
         .false,            .float,
@@ -685,7 +685,7 @@ pub fn deserializeOne(d: *const Deserializer, T: type, first: Token, top_lvl: bo
                 u8 => {
                     switch (first.tag) {
                         .bytes_no_escapes,
-                        .bytes_with_escapes,
+                        .bytes_escapes_or_invalid,
                         .bytes_line,
                         .bytes_line_invalid,
                         => return d.parseBytes(T, first),
@@ -778,7 +778,7 @@ inline fn deserializeDict(
     var field_token = try d.next();
     outer: while (true) {
         switch (field_token.tag) {
-            .bytes_no_escapes, .bytes_with_escapes => {},
+            .bytes_no_escapes, .bytes_escapes_or_invalid => {},
             .rb => {
                 try d.finalizeStruct(result, info, seen, field_token);
                 return result.*;
@@ -858,7 +858,7 @@ fn parseBytes(
             };
             return d.gpa.dupeSentinel(u8, bytes, sentinel);
         },
-        .bytes_with_escapes => {
+        .bytes_escapes_or_invalid => {
             var aw: Io.Writer.Allocating = .init(d.gpa);
             errdefer aw.deinit();
 

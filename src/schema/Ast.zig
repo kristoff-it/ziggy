@@ -1761,7 +1761,7 @@ pub const ValidationError = struct {
                             .array_h, .array_v, .array_element => "[]",
                             .@"union" => "union",
                             .@"enum" => "enum",
-                            .bytes_no_escapes, .bytes_with_escapes, .bytes_multiline => "bytes",
+                            .bytes_no_escapes, .bytes_escapes_or_invalid, .bytes_multiline => "bytes",
                             .integer => "int",
                             .float => "float",
                             .bool => "bool",
@@ -1915,7 +1915,7 @@ pub fn validate(
                             },
                         }
                     },
-                    .bytes_no_escapes, .bytes_with_escapes, .bytes_multiline => {
+                    .bytes_no_escapes, .bytes_escapes_or_invalid, .bytes_multiline => {
                         switch (expr.tag) {
                             .any_kw, .bytes_kw, .opt_bytes_kw => {},
                             else => {
@@ -2184,7 +2184,7 @@ pub fn validate(
                         const name_raw = name_tok.loc.slice(ziggy_src);
                         const name = switch (name_tok.tag) {
                             .identifier => name_raw[1..], // skip '.'
-                            .bytes_no_escapes, .bytes_with_escapes => name_raw[1 .. name_raw.len - 1], // skip quotes
+                            .bytes_no_escapes, .bytes_escapes_or_invalid => name_raw[1 .. name_raw.len - 1], // skip quotes
                             else => unreachable,
                         };
                         const seen = &seen_fields_stack.items[seen_fields_stack.items.len - 1];
@@ -2276,7 +2276,7 @@ pub fn validate(
                     .float,
                     .bool,
                     .bytes_no_escapes,
-                    .bytes_with_escapes,
+                    .bytes_escapes_or_invalid,
                     .bytes_multiline,
                     .@"enum",
                     => unreachable,
@@ -2612,7 +2612,7 @@ pub fn resolveZiggyOffset(
                                             assert(name_tok.tag == .identifier);
                                             switch (name_tok.tag) {
                                                 .identifier => break :blk name_tok.loc.slice(ziggy_src)[1..], // skip the leading dot
-                                                .bytes_no_escapes, .bytes_with_escapes => {
+                                                .bytes_no_escapes, .bytes_escapes_or_invalid => {
                                                     const raw = name_tok.loc.slice(ziggy_src);
                                                     break :blk raw[1 .. raw.len - 1]; // skip the quotes
                                                 },

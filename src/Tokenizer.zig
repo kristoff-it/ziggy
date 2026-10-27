@@ -5,10 +5,10 @@ const assert = std.debug.assert;
 const Writer = std.Io.Writer;
 
 delimiter: std.meta.Tag(Delimiter),
-// Set to a location within a bytes token when an invalid escape
-// sequence is found. Note that the string might contain more than
-// one invalid escape sequence, but the tokenizer will only annotate
-// the first one.
+// Set to a location within a bytes token when an invalid escape sequence /
+// invalid control byte / invalid utf8 is found. Note that the string might
+// contain more than one invalid byte sequence, but the tokenizer will only
+// annotate the first one.
 first_invalid: Token.Loc = .zero,
 lines: u32,
 idx: u32,
@@ -66,7 +66,7 @@ pub const Token = struct {
         identifier,
         union_case,
         bytes_no_escapes,
-        bytes_with_escapes,
+        bytes_escapes_or_invalid,
         bytes_line,
         bytes_line_invalid,
         integer_bin,
@@ -90,7 +90,7 @@ pub const Token = struct {
                 .eod,
                 .eof,
                 .bytes_no_escapes,
-                .bytes_with_escapes,
+                .bytes_escapes_or_invalid,
                 .bytes_line,
                 .bytes_line_invalid,
                 .integer_bin,
@@ -144,7 +144,7 @@ pub const Token = struct {
                 => unreachable,
                 .comma, .eql, .colon, .rp, .dotlb, .lb, .rb, .lsb, .rsb => .punctuation,
                 .comment_line => .comment_line,
-                .bytes_no_escapes, .bytes_with_escapes => .bytes,
+                .bytes_no_escapes, .bytes_escapes_or_invalid => .bytes,
                 .bytes_line, .bytes_line_invalid => .bytes_line,
                 .integer_bin, .integer_oct, .integer_hex, .integer_dec => .integer,
                 .float, .nan, .pos_inf, .neg_inf => .float,
@@ -217,12 +217,12 @@ pub const Token = struct {
         }
     };
 
-    /// Must be called on a .bytes_with_escapes token. Asserts that all
+    /// Must be called on a .bytes_escapes_or_invalid token. Asserts that all
     /// escape sequences are valid.
     pub fn parseBytesWithEscapes(t: Token, src: [:0]const u8, w: *Writer) Writer.Error!void {
         const quoted_slice = t.loc.slice(src);
 
-        assert(t.tag == .bytes_with_escapes);
+        assert(t.tag == .bytes_escapes_or_invalid);
         assert(quoted_slice.len >= 4);
         assert(quoted_slice[0] == '"');
         assert(quoted_slice[quoted_slice.len - 1] == '"');
@@ -301,7 +301,7 @@ pub const Token = struct {
             }
         }
 
-        assert(last_slash_idx != 0); // call only on bytes_with_escapes!
+        assert(last_slash_idx != 0); // call only on bytes_escapes_or_invalid!
         try w.writeAll(slice[last_slash_idx..]);
     }
 };
@@ -340,7 +340,7 @@ pub fn init(delimiter: Delimiter) Tokenizer {
     };
 }
 
-/// When obtaining a 'bytes_with_escapes' or a 'bytes_line_invalid' token,
+/// When obtaining a 'bytes_escapes_or_invalid' or a 'bytes_line_invalid' token,
 /// the caller can inspect 'first_invalid' to know if the token contains
 /// any invalid sequence or any invalid control byte.Note that only the
 /// first invalid sequence / control byte will be tracked. If
@@ -880,7 +880,7 @@ pub fn next(t: *Tokenizer, src: [:0]const u8, skip_comments: bool) Token {
                 tok.tag = if (bytes_escape_start == 0 and t.first_invalid.start == 0)
                     .bytes_no_escapes
                 else
-                    .bytes_with_escapes;
+                    .bytes_escapes_or_invalid;
                 tok.loc.end = t.idx;
                 return tok;
             },
@@ -1414,12 +1414,12 @@ test "string escapes" {
         \\.invalid2 = "this is also \u123 wrong",
         \\.invalid3 = "this is also also \z wrong",
     , &.{
-        .identifier, .eql, .bytes_with_escapes, .comma,
-        .identifier, .eql, .bytes_with_escapes, .comma,
-        .identifier, .eql, .bytes_with_escapes, .comma,
-        .identifier, .eql, .bytes_with_escapes, .comma,
-        .identifier, .eql, .bytes_with_escapes, .comma,
-        .identifier, .eql, .bytes_with_escapes, .comma,
+        .identifier, .eql, .bytes_escapes_or_invalid, .comma,
+        .identifier, .eql, .bytes_escapes_or_invalid, .comma,
+        .identifier, .eql, .bytes_escapes_or_invalid, .comma,
+        .identifier, .eql, .bytes_escapes_or_invalid, .comma,
+        .identifier, .eql, .bytes_escapes_or_invalid, .comma,
+        .identifier, .eql, .bytes_escapes_or_invalid, .comma,
         .eof,
     }, false, .none);
     // zig fmt: on

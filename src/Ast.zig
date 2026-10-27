@@ -80,7 +80,7 @@ pub const Node = struct {
         @"union",
         @"enum",
         bytes_no_escapes,
-        bytes_with_escapes,
+        bytes_escapes_or_invalid,
         bytes_multiline,
         integer,
         float,
@@ -112,7 +112,7 @@ pub const Node = struct {
                 => unreachable,
 
                 .@"enum" => .@"enum",
-                .bytes_no_escapes, .bytes_with_escapes => .bytes,
+                .bytes_no_escapes, .bytes_escapes_or_invalid => .bytes,
                 .integer => .integer,
                 .float => .float,
                 .bool => .bool,
@@ -157,7 +157,7 @@ pub fn fieldName(ast: *const Ast, src: [:0]const u8, node_idx: u32) []const u8 {
     const txt = name_tok.loc.slice(src);
     return switch (name_tok.tag) {
         .identifier => txt[1..],
-        .bytes_no_escapes, .bytes_with_escapes => txt[1 .. txt.len - 1],
+        .bytes_no_escapes, .bytes_escapes_or_invalid => txt[1 .. txt.len - 1],
         else => unreachable,
     };
 }
@@ -306,7 +306,7 @@ const Parser = struct {
                         });
                         return p.finalize();
                     },
-                    .identifier, .bytes_no_escapes, .bytes_with_escapes => true,
+                    .identifier, .bytes_no_escapes, .bytes_escapes_or_invalid => true,
                     else => false,
                 };
 
@@ -342,7 +342,7 @@ const Parser = struct {
             .struct_field, .dict_field => if (p.curIsEmpty()) {
                 switch (p.tok.tag) {
                     .identifier => {},
-                    .bytes_no_escapes, .bytes_with_escapes => {},
+                    .bytes_no_escapes, .bytes_escapes_or_invalid => {},
                     .eof, .eod => {
                         // we should not be able to get here without errors
                         assert(p.errors.items.len > 0);
@@ -356,7 +356,7 @@ const Parser = struct {
 
                 const style_mismatch = switch (p.cur().tag) {
                     .struct_field => switch (p.tok.tag) {
-                        .bytes_no_escapes, .bytes_with_escapes => true,
+                        .bytes_no_escapes, .bytes_escapes_or_invalid => true,
                         .identifier => false,
                         else => unreachable,
                     },
@@ -494,7 +494,7 @@ const Parser = struct {
                 continue :parse p.cur().tag;
             },
             .bytes_no_escapes,
-            .bytes_with_escapes,
+            .bytes_escapes_or_invalid,
             .bytes_multiline,
             .integer,
             .float,
@@ -541,8 +541,8 @@ const Parser = struct {
                 p.cur().loc.end = p.tok.loc.end;
                 p.up();
             },
-            .bytes_with_escapes => {
-                try p.addChild(.bytes_with_escapes);
+            .bytes_escapes_or_invalid => {
+                try p.addChild(.bytes_escapes_or_invalid);
                 p.cur().loc.end = p.tok.loc.end;
                 p.up();
             },
@@ -618,7 +618,7 @@ const Parser = struct {
                 },
             },
             .dict_v, .struct_v_fixup => switch (p.tok.tag) {
-                .comma, .bytes_no_escapes, .bytes_with_escapes, .rb, .eof, .eod => return,
+                .comma, .bytes_no_escapes, .bytes_escapes_or_invalid, .rb, .eof, .eod => return,
                 else => {
                     try p.consume();
                     continue :discard .dict_v;
@@ -633,7 +633,7 @@ const Parser = struct {
                     p.up();
                     continue :discard p.cur().tag;
                 },
-                .identifier, .bytes_no_escapes, .bytes_with_escapes, .rb => {
+                .identifier, .bytes_no_escapes, .bytes_escapes_or_invalid, .rb => {
                     p.cur().loc.end = p.tok.loc.start;
                     p.up();
                     continue :discard p.cur().tag;
@@ -680,7 +680,7 @@ const Parser = struct {
             .struct_h, .dict_h, .array_h => unreachable,
             .@"enum",
             .bytes_no_escapes,
-            .bytes_with_escapes,
+            .bytes_escapes_or_invalid,
             .bytes_multiline,
             .integer,
             .float,
@@ -713,7 +713,7 @@ const Parser = struct {
                 p.tok = p.tokenizer.next(p.src, true);
                 continue :retry p.tok.tag;
             },
-            .bytes_with_escapes, .bytes_line_invalid, .comment_line => {
+            .bytes_escapes_or_invalid, .bytes_line_invalid, .comment_line => {
                 if (p.tokenizer.first_invalid.start != 0) {
                     try p.err(.{
                         .tag = switch (p.src[p.tokenizer.first_invalid.start]) {
@@ -840,7 +840,7 @@ pub const Iterator = struct {
                     .bytes_multiline,
                     .@"enum",
                     .bytes_no_escapes,
-                    .bytes_with_escapes,
+                    .bytes_escapes_or_invalid,
                     .integer,
                     .float,
                     .bool,
@@ -880,7 +880,7 @@ pub const Iterator = struct {
                     .bytes_multiline,
                     .@"enum",
                     .bytes_no_escapes,
-                    .bytes_with_escapes,
+                    .bytes_escapes_or_invalid,
                     .integer,
                     .float,
                     .bool,
@@ -1306,7 +1306,7 @@ pub fn render(ast: Ast, src: [:0]const u8, mode: root.RenderMode, w: *Writer) Wr
                                 .struct_v,
                                 .struct_v_fixup,
                                 => switch (field_name.tag) {
-                                    .bytes_no_escapes, .bytes_with_escapes => true,
+                                    .bytes_no_escapes, .bytes_escapes_or_invalid => true,
                                     else => unreachable,
                                 },
                                 .dict_v, .dict_h => field_name.tag == Token.Tag.identifier,
@@ -1341,7 +1341,7 @@ pub fn render(ast: Ast, src: [:0]const u8, mode: root.RenderMode, w: *Writer) Wr
                                 .struct_v_fixup,
                                 => field_name.tag == Token.Tag.identifier,
                                 .dict_v, .dict_h => switch (field_name.tag) {
-                                    .bytes_no_escapes, .bytes_with_escapes => true,
+                                    .bytes_no_escapes, .bytes_escapes_or_invalid => true,
                                     else => unreachable,
                                 },
                                 else => unreachable,
@@ -1408,7 +1408,7 @@ pub fn render(ast: Ast, src: [:0]const u8, mode: root.RenderMode, w: *Writer) Wr
                     },
                     .@"enum",
                     .bytes_no_escapes,
-                    .bytes_with_escapes,
+                    .bytes_escapes_or_invalid,
                     .integer,
                     .float,
                     .bool,
@@ -1488,7 +1488,7 @@ pub fn render(ast: Ast, src: [:0]const u8, mode: root.RenderMode, w: *Writer) Wr
                 .bytes_multiline,
                 .@"enum",
                 .bytes_no_escapes,
-                .bytes_with_escapes,
+                .bytes_escapes_or_invalid,
                 .integer,
                 .float,
                 .bool,

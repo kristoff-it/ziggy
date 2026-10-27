@@ -97,7 +97,7 @@ fn deserializeDynamic(
         .float, .pos_inf, .neg_inf, .nan => return .{
             .float = try d.deserializeOne(f64, first, false),
         },
-        .bytes_no_escapes, .bytes_with_escapes, .bytes_line => return .{
+        .bytes_no_escapes, .bytes_escapes_or_invalid, .bytes_line => return .{
             .bytes = try d.deserializeOne([]const u8, first, false),
         },
         .union_case => return .{
@@ -277,7 +277,7 @@ pub fn Dictionary(comptime T: type) type {
             var field_token = try d.next();
             while (true) {
                 switch (field_token.tag) {
-                    .bytes_no_escapes, .bytes_with_escapes => {},
+                    .bytes_no_escapes, .bytes_escapes_or_invalid => {},
                     .rb => return result,
                     else => return d.unexpected(field_token),
                 }
