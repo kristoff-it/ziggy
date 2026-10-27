@@ -6,127 +6,110 @@
 //@ts-check
 
 module.exports = grammar({
-  name: 'ziggy',
+  name: "ziggy",
 
-  extras: $ => [
-    /\s/,
-    $.comment,
-  ],
+  extras: ($) => [/\s/, $.comment],
 
-  supertypes: $ => [
-    $.value,
-  ],
+  supertypes: ($) => [$.value],
 
-  word: $ => $.identifier,
+  word: ($) => $.identifier,
 
   rules: {
-    document: $ => seq(
-        optional(choice(
-          $.top_level_struct,
-          $.value,
-        )),
+    document: ($) => seq(optional(choice($.top_level_struct, $.value))),
+
+    value: ($) =>
+      choice(
+        $.union,
+        $.struct,
+        $.dict,
+        $.array,
+        $.enum,
+        $.string,
+        $.line_string,
+        $.number,
+        $.true,
+        $.false,
+        $.null,
       ),
 
-    value: $ => choice(
-      $.union,
-      $.struct,
-      $.dict,
-      $.array,
-      $.enum,
-      $.string,
-      $.line_string,
-      $.number,
-      $.true,
-      $.false,
-      $.null,
-    ),
+    top_level_struct: ($) => seq(commaSep1($.struct_field)),
 
-    top_level_struct: $ => seq(commaSep1($.struct_field)),
+    struct: ($) =>
+      seq(seq(".", token.immediate("{")), commaSep($.struct_field), "}"),
 
-    struct: $ =>  seq(
-      seq('.', token.immediate('{')), 
-        commaSep($.struct_field), 
-      '}',
-    ),
-    
-    struct_field: $ => seq(
-      '.',
-      field('key', $.identifier),
-      '=',
-      field('value', $.value),
-    ),
+    struct_field: ($) =>
+      seq(".", field("key", $.identifier), "=", field("value", $.value)),
 
-    dict: $ => seq(
-      '{', 
-        commaSep($.dict_field), 
-      '}',
-    ),
+    dict: ($) => seq("{", commaSep($.dict_field), "}"),
 
-    dict_field: $ => seq(
-      field('key', $.string),
-      ':',
-      field('value', $.value),
-    ),
+    dict_field: ($) =>
+      seq(field("key", $.string), ":", field("value", $.value)),
 
-    array: $ => seq('[', commaSep($.array_elem),']'),
+    array: ($) => seq("[", commaSep($.array_elem), "]"),
 
-    array_elem: $ => seq(
-      $.value,
-    ),
+    array_elem: ($) => seq($.value),
 
-    union: $ => seq($.enum, '(', $.value, ')'),
-    enum: $ => seq('.', alias($.identifier, "_enum_name")),
- 
-    line_string: _ => repeat1(seq("\\\\", /[^\n]*/)),
-          
-            
+    union: ($) => seq($.enum, "(", $.value, ")"),
+    enum: ($) => seq(".", alias($.identifier, "_enum_name")),
+
+    line_string: (_) => repeat1(seq("\\\\", /[^\n]*/)),
+
     identifier: (_) => {
       const identifier_start = /[a-zA-Z_]/;
       const identifier_part = choice(identifier_start, /[0-9]/);
       return token(seq(identifier_start, repeat(identifier_part)));
     },
-    string: $ => choice(
-      seq('"', '"'),
-      seq('"', $._string_content, '"'),
-    ),
-    _string_content: $ => repeat1(choice(
-      $.string_content,
-      $.escape_sequence,
-    )),
-    string_content: _ => token.immediate(prec(1, /[^\\"\n]+/)),
-    escape_sequence: _ => token.immediate(seq(
-      '\\',
-      /(\"|\\|\/|b|f|n|r|t|u)/,
-    )),    
+    string: ($) => choice(seq('"', '"'), seq('"', $._string_content, '"')),
+    _string_content: ($) =>
+      repeat1(choice($.string_content, $.escape_sequence)),
+    string_content: (_) => token.immediate(prec(1, /[^\\"\n]+/)),
+    escape_sequence: (_) =>
+      token.immediate(
+        seq("\\", /(\"|\\|\/|b|f|n|r|t|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})/),
+      ),
 
-    number: _ => {
-      const decimalDigits = /\d+/;
-      const signedInteger = seq(optional('-'), decimalDigits);
-      const exponentPart = seq(choice('e', 'E'), signedInteger);
+    number: (_) => {
+      const decimalDigits = /[_0-9]+/;
+      const signedInteger = seq(optional("-"), decimalDigits);
+      const exponentPart = seq(choice("e", "E"), signedInteger);
 
       const decimalIntegerLiteral = seq(
-        optional('-'),
-        choice(
-          '0',
-          seq(/[1-9]/, optional(decimalDigits)),
-        ),
+        optional("-"),
+        choice("0", seq(/[1-9]/, optional(decimalDigits))),
       );
 
       const decimalLiteral = choice(
-        seq(decimalIntegerLiteral, '.', optional(decimalDigits), optional(exponentPart)),
+        seq(
+          decimalIntegerLiteral,
+          ".",
+          optional(decimalDigits),
+          optional(exponentPart),
+        ),
         seq(decimalIntegerLiteral, optional(exponentPart)),
       );
 
-      return token(decimalLiteral);
-    },
-    
-    true: _ => 'true',
-    false: _ => 'false',
-    null: _ => 'null',
+      const binLiteral = seq("0b", /[_01]+/);
+      const octLiteral = seq("0o", /[_0-7]+/);
+      const hexLiteral = seq("0x", /[_0-9a-fA-F]+/);
 
-    // comment: _ => token(seq('//', token.immediate(/[^!]/), /.*/)),    
-    comment: _ => token(seq('//', /.*/, '\n')),    
-  }
+      return choice(
+        "nan",
+        "inf",
+        "-inf",
+        token(binLiteral),
+        token(octLiteral),
+        token(decimalLiteral),
+        token(hexLiteral),
+      );
+    },
+
+    true: (_) => "true",
+    false: (_) => "false",
+    null: (_) => "null",
+
+    // comment: _ => token(seq('//', token.immediate(/[^!]/), /.*/)),
+    comment: (_) => token(seq("//", /.*/, "\n")),
+  },
 });
 
 /**

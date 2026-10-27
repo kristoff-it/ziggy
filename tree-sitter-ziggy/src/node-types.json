@@ -151,6 +151,11 @@
     "fields": {}
   },
   {
+    "type": "number",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "string",
     "named": true,
     "fields": {},
@@ -257,6 +262,10 @@
     "named": false
   },
   {
+    "type": "-inf",
+    "named": false
+  },
+  {
     "type": ".",
     "named": false
   },
@@ -302,11 +311,15 @@
     "named": true
   },
   {
-    "type": "null",
-    "named": true
+    "type": "inf",
+    "named": false
   },
   {
-    "type": "number",
+    "type": "nan",
+    "named": false
+  },
+  {
+    "type": "null",
     "named": true
   },
   {
