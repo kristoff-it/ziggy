@@ -1,25 +1,37 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const ziggy = @import("ziggy");
+const json = std.json;
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const Writer = std.Io.Writer;
-const Diagnostic = ziggy.Diagnostic;
+const Schema = @import("../convert.zig").Command.Schema;
+const ziggy = @import("ziggy");
+const Token = ziggy.Tokenizer.Token;
 const Ast = ziggy.Ast;
 const Node = Ast.Node;
-const Token = ziggy.Tokenizer.Token;
+
+pub const Error = struct {
+    loc: ziggy.Tokenizer.Token.Loc, // loc into the json document
+    kind: Kind,
+
+    pub const Kind = union(enum) {
+        syntax,
+        unexpected_end,
+        type_mismatch: []const u8, // expected type from schema
+        unknown_field,
+        missing_field: struct {
+            name: []const u8,
+            type: []const u8,
+        },
+    };
+};
 
 pub fn toZiggy(
-    gpa: std.mem.Allocator,
-    schema: ziggy.schema.Schema,
-    diag: ?*ziggy.Diagnostic,
-    file: std.fs.File,
-) ![]const u8 {
-    var fr = file.reader(&.{});
-    var aw: std.Io.Writer.Allocating = .init(gpa);
-    defer aw.deinit();
-
-    _ = try fr.interface.streamRemaining(&aw.writer);
-    const in_bytes = try aw.toOwnedSliceSentinel(0);
-
+    gpa: Allocator,
+    schema: Schema,
+    errors: *std.ArrayListUnmanaged(Error),
+    in_bytes: [:0]const u8,
+) error{OutOfMemory}![]const u8 {
     var js_diag: std.json.Diagnostics = .{};
     var scanner = std.json.Scanner.initCompleteInput(gpa, in_bytes);
     scanner.enableDiagnostics(&js_diag);
@@ -32,12 +44,26 @@ pub fn toZiggy(
         .code = in_bytes,
         .tokenizer = &scanner,
         .json_diag = &js_diag,
-        .diagnostic = diag,
+        .errors = errors,
         .schema = schema,
         .out = &out.writer,
     };
 
-    try c.convertJsonValue(try c.next(), schema.root);
+    const first_token = c.next() catch |err| switch (err) {
+        error.OutOfMemory, error.WriteFailed => return error.OutOfMemory,
+        error.Json => {
+            assert(errors.items.len > 0);
+            return;
+        },
+    };
+
+    c.convertJsonValue(first_token, schema.root) catch |err| switch (err) {
+        error.OutOfMemory, error.WriteFailed => return error.OutOfMemory,
+        error.Json => {
+            assert(errors.items.len > 0);
+            return;
+        },
+    };
 
     return try out.toOwnedSlice();
 }
@@ -47,44 +73,11 @@ const Converter = struct {
     code: [:0]const u8,
     tokenizer: *std.json.Scanner,
     json_diag: *std.json.Diagnostics,
-    // diagnostic: ?*Diagnostic,
-    schema: ziggy.schema.Schema,
+    errors: *std.ArrayListUnmanaged(Error),
+    schema: Schema,
     out: *Writer,
 
-    fn jsonSel(p: Converter) Token.Loc.Selection {
-        const start: Token.Loc.Selection.Position = .{
-            .line = @intCast(p.json_diag.getLine()),
-            .col = @intCast(p.json_diag.getColumn()),
-        };
-
-        const end: Token.Loc.Selection.Position = .{
-            .line = start.line,
-            .col = start.col + 1,
-        };
-        return .{ .start = start, .end = end };
-    }
-
-    fn next(p: *Converter) !std.json.Token {
-        return p.tokenizer.next() catch |err| {
-            return p.addError(.{
-                .syntax = .{ .name = @errorName(err), .sel = p.jsonSel() },
-            });
-        };
-    }
-
-    pub fn addError(p: *Converter, err: Diagnostic.Error) Diagnostic.Error.ZigError {
-        if (p.diagnostic) |d| {
-            try d.errors.append(p.gpa, err);
-        }
-        return err.zigError();
-    }
-
-    fn convertJsonValue(
-        c: *Converter,
-        token: std.json.Token,
-        rule: ziggy.schema.Schema.Rule,
-    ) anyerror!void {
-        if (true) @panic("TODO: json conversion regressed");
+    fn convertJsonValue(c: *Converter, token: json.Token, rule: Schema.Rule) !void {
         var sub_rule = rule;
         const r = c.schema.nodes[rule.node];
         if (r.tag == .optional) {
@@ -104,13 +97,7 @@ const Converter = struct {
             .true, .false => try c.convertJsonBool(token, sub_rule),
             .null => {
                 const rule_src = c.schema.nodes[r.first_child_id].loc.src(c.schema.code);
-                return c.addError(.{
-                    .type_mismatch = .{
-                        .name = "json_null",
-                        .sel = c.jsonSel(),
-                        .expected = rule_src,
-                    },
-                });
+                try c.err(.{ .type_mismatch = rule_src });
             },
         }
     }
@@ -125,13 +112,8 @@ const Converter = struct {
                 try c.out.writeAll("{");
                 var token = try c.next();
                 while (token != .object_end) : (token = try c.next()) {
-                    try c.out.print("\"{f}\":", .{
-                        std.zig.fmtString(token.string),
-                    });
-                    try c.convertJsonValue(
-                        try c.next(),
-                        .{ .node = child_rule_id },
-                    );
+                    try c.out.writeAll(token.string);
+                    try c.convertJsonValue(try c.next(), .{ .node = child_rule_id });
                     try c.out.writeAll(",");
                 }
                 try c.out.writeAll("}");
@@ -140,27 +122,18 @@ const Converter = struct {
                 const struct_rule = c.schema.structs.get(rule_src).?; // must be present
 
                 // Duplicates are checked by the JSON parser, so only
-                // missing non-optional fields remain to check.
+                // missing mandatory fields remain to check.
                 var seen_fields = std.StringHashMap(void).init(c.gpa);
                 defer seen_fields.deinit();
 
-                try c.out.writeAll("{");
+                try c.out.writeAll(".{");
                 var token = try c.next();
                 while (token != .object_end) : (token = try c.next()) {
-                    // TODO: would be nice to output the unescaped string
-                    //       directly into our output buffer.
-                    // const k = try std.json.parseFromSliceLeaky([]const u8, c.gpa, token.string, .{});
                     const k = token.string;
-
-                    // TODO: we actually want to frist re-escape the string
-                    //       using our syntax before checking for it.
                     const field = struct_rule.fields.get(k) orelse {
-                        return c.addError(.{
-                            .unknown_field = .{
-                                .name = k,
-                                .sel = c.jsonSel(),
-                            },
-                        });
+                        try c.addError(.unknown_field);
+                        try c.discardOne();
+                        continue;
                     };
 
                     try seen_fields.putNoClobber(k, {});
@@ -170,22 +143,22 @@ const Converter = struct {
                     try c.out.writeAll(",");
                 }
 
-                // ensure all missing keys are optional
+                // ensure all missing keys are omissible
                 for (struct_rule.fields.keys(), struct_rule.fields.values()) |k, v| {
                     if (seen_fields.contains(k)) continue;
-                    if (c.schema.nodes[v.rule.node].tag != .optional) {
-                        return c.addError(.{
-                            .missing_field = .{
-                                .name = k,
-                                .sel = c.jsonSel(),
-                            },
-                        });
+                    switch (c.schema.nodes[v.rule.node].tag) {
+                        .optional, .map, .array => {},
+                        else => {
+                            return c.addError(.{ .missing_field = k });
+                        },
                     }
                 }
+
                 try c.out.writeAll("}");
             },
             .struct_union => {
                 // TODO: implement more strategies
+                if (true) @panic("TODO");
 
                 //Tag-is-only-field strategy.
                 //Example layout (remote and local are tag names):
@@ -240,21 +213,12 @@ const Converter = struct {
                 }
             },
             else => {
-                return c.addError(.{
-                    .type_mismatch = .{
-                        .name = "json_object",
-                        .sel = c.jsonSel(),
-                        .expected = rule_src,
-                    },
-                });
+                return c.addError(.{ .type_mismatch = rule_src });
             },
         }
     }
 
-    fn convertJsonArray(
-        c: *Converter,
-        rule: ziggy.schema.Schema.Rule,
-    ) !void {
+    fn convertJsonArray(c: *Converter, rule: Schema.Rule) !void {
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
@@ -270,341 +234,80 @@ const Converter = struct {
                 try c.out.writeAll("]");
             },
             else => {
-                return c.addError(.{
-                    .type_mismatch = .{
-                        .name = "json_array",
-                        .sel = c.jsonSel(),
-                        .expected = rule_src,
-                    },
-                });
+                return c.addError(.{ .type_mismatch = rule_src });
             },
         }
     }
 
-    fn convertJsonString(
-        c: *Converter,
-        str: []const u8,
-        rule: ziggy.schema.Schema.Rule,
-    ) !void {
+    fn convertJsonString(c: *Converter, str: []const u8, rule: Schema.Rule) !void {
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         switch (r.tag) {
             .optional => unreachable,
             .bytes, .any, .unknown => {
-                try c.out.print("\"{f}\"", .{std.zig.fmtString(str)});
-            },
-            .tag => {
-                try c.out.print("{s}(\"{f}\")", .{
-                    rule_src,
-                    std.zig.fmtString(str),
-                });
+                try c.out.writeAll(str);
             },
             else => {
-                return c.addError(.{
-                    .type_mismatch = .{
-                        .name = "json_string",
-                        .sel = c.jsonSel(),
-                        .expected = rule_src,
-                    },
-                });
+                return c.addError(.{ .type_mismatch = rule_src });
             },
         }
     }
 
-    fn convertJsonNumberString(
-        c: *Converter,
-        ns: []const u8,
-        rule: ziggy.schema.Schema.Rule,
-    ) !void {
+    fn convertJsonNumber(c: *Converter, num: []const u8, rule: Schema.Rule) !void {
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         switch (r.tag) {
             .optional => unreachable,
             .int, .float, .any, .unknown => {
-                try c.out.print("{s}", .{ns});
+                try c.out.writeAll(num);
             },
             else => {
-                return c.addError(.{
-                    .type_mismatch = .{
-                        .name = "json_number_string",
-                        .loc = c.jsonSel(),
-                        .expected = rule_src,
-                    },
-                });
+                return c.err(.{ .type_mismatch = rule_src });
             },
         }
     }
 
-    fn convertJsonNumber(
-        c: *Converter,
-        num: []const u8,
-        rule: ziggy.schema.Schema.Rule,
-    ) !void {
-        const r = c.schema.nodes[rule.node];
-        const rule_src = r.loc.src(c.schema.code);
-        switch (r.tag) {
-            .optional => unreachable,
-            .int, .float, .any, .unknown => {
-                try c.out.print("{s}", .{num});
-            },
-            else => {
-                return c.addError(.{
-                    .type_mismatch = .{
-                        .name = "json_number",
-                        .sel = c.jsonSel(),
-                        .expected = rule_src,
-                    },
-                });
-            },
-        }
-    }
-
-    fn convertJsonBool(
-        c: *Converter,
-        token: std.json.Token,
-        rule: ziggy.schema.Schema.Rule,
-    ) !void {
+    fn convertJsonBool(c: *Converter, token: json.Token, rule: Schema.Rule) !void {
         assert(token == .true or token == .false);
+
         const r = c.schema.nodes[rule.node];
         const rule_src = r.loc.src(c.schema.code);
         switch (r.tag) {
             .optional => unreachable,
             .bool, .any, .unknown => {
-                try c.out.print("{t}", .{token});
+                try c.out.writeAll(if (token == .true) "true" else "false");
             },
             else => {
-                return c.addError(.{
-                    .type_mismatch = .{
-                        .name = "json_bool",
-                        .sel = c.jsonSel(),
-                        .expected = rule_src,
-                    },
-                });
+                return c.err(.{ .type_mismatch = rule_src });
             },
         }
     }
+
+    fn next(c: *Converter) error{ OutOfMemory, Json }!std.json.Token {
+        return c.tokenizer.next() catch |_err| switch (_err) {
+            error.BufferUnderrun => unreachable, // we use initCompleteInput
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Syntax => {
+                try c.errors.append(c.gpa, .{
+                    .loc = c.json_diag.getByteOffset(),
+                    .kind = .syntax,
+                });
+                return error.Json;
+            },
+            error.UnexpectedEndOfInput => {
+                try c.errors.append(c.gpa, .{
+                    .loc = c.json_diag.getByteOffset(),
+                    .kind = .unexpected_end,
+                });
+                return error.Json;
+            },
+        };
+    }
+
+    fn err(c: *Converter, kind: Error.Kind) error{OutOfMemory}!void {
+        try c.errors.append(c.gpa, .{
+            .loc = c.json_diag.getByteOffset(),
+            .kind = kind,
+        });
+    }
 };
-
-fn renderJsonValue(
-    value: json.Value,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) anyerror!void {
-    var sub_rule = rule;
-    const r = schema.nodes[rule.node];
-    if (r.tag == .optional) {
-        if (value == null) {
-            try w.writeAll("null");
-            return;
-        }
-        sub_rule = .{ .node = r.first_child_id };
-    }
-    switch (value) {
-        .object => |o| try renderJsonObject(o, sub_rule, schema, w),
-        .array => |a| try renderJsonArray(a, sub_rule, schema, w),
-        .string => |s| try renderJsonString(s, sub_rule, schema, w),
-        .number_string => |ns| try renderJsonNumberString(ns, sub_rule, schema, w),
-        .float => |f| try renderJsonFloat(f, sub_rule, schema, w),
-        .integer => |i| try renderJsonInteger(i, sub_rule, schema, w),
-        .bool => |b| try renderJsonBool(b, sub_rule, schema, w),
-        .null => {
-            const rule_src = schema.nodes[r.first_child_id].loc.src(schema.code);
-            std.debug.print("error: type mismatch, expected '{s}', found 'null'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonObject(
-    obj: json.ObjectMap,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
-    switch (r.tag) {
-        .optional => unreachable,
-        .map, .any => {
-            try w.writeAll("{");
-            for (obj.keys(), obj.values()) |k, v| {
-                try w.print("\"{}\":", .{std.zig.fmtEscapes(k)});
-                try renderJsonValue(v, .{ .node = child_rule_id }, schema, w);
-                try w.writeAll(",");
-            }
-            try w.writeAll("}");
-        },
-        .identifier => {
-            const struct_rule = schema.structs.get(rule_src).?; // must be present
-
-            try w.writeAll("{");
-            for (obj.keys(), obj.values()) |k, v| {
-                const field = struct_rule.fields.get(k) orelse {
-                    std.debug.print("error: unknown field '{s}'\n", .{k});
-                    std.process.exit(1);
-                };
-                try w.print(".{} = ", .{std.zig.fmtId(k)});
-                try renderJsonValue(v, field.rule, schema, w);
-                try w.writeAll(",");
-            }
-
-            // ensure all missing keys are optional
-            for (struct_rule.fields.keys(), struct_rule.fields.values()) |k, v| {
-                if (obj.contains(k)) continue;
-                if (schema.nodes[v.rule.node].tag != .optional) {
-                    std.debug.print("error: missing field '{s}'\n", .{k});
-                    std.process.exit(1);
-                }
-            }
-            try w.writeAll("}");
-        },
-        .struct_union => @panic("TODO: struct union for json objects"),
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'object'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonArray(
-    array: json.Array,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    const child_rule_id = if (r.tag == .any) rule.node else r.first_child_id;
-    switch (r.tag) {
-        .optional => unreachable,
-        .array, .any => {
-            try w.writeAll("[");
-            for (array.items) |v| {
-                try renderJsonValue(v, .{ .node = child_rule_id }, schema, w);
-            }
-            try w.writeAll("]");
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'array'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonString(
-    str: []const u8,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    switch (r.tag) {
-        .optional => unreachable,
-        .bytes, .any => {
-            try w.print("\"{}\"", .{std.zig.fmtEscapes(str)});
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'string'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonNumberString(
-    ns: []const u8,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    switch (r.tag) {
-        .optional => unreachable,
-        .int, .float, .any => {
-            try w.print("{s}", .{ns});
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'number_string'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonFloat(
-    num: f64,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    switch (r.tag) {
-        .optional => unreachable,
-        .float, .any => {
-            try w.print("{}", .{num});
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'float'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonInteger(
-    num: i64,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    switch (r.tag) {
-        .optional => unreachable,
-        .int, .float, .any => {
-            try w.print("{}", .{num});
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'integer'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}
-
-fn renderJsonBool(
-    b: bool,
-    rule: ziggy.schema.Schema.Rule,
-    schema: ziggy.schema.Schema,
-    w: *Writer,
-) !void {
-    const r = schema.nodes[rule.node];
-    const rule_src = r.loc.src(schema.code);
-    switch (r.tag) {
-        .optional => unreachable,
-        .bool, .any => {
-            try w.print("{}", .{b});
-        },
-        else => {
-            std.debug.print("error: type mismatch, expected '{s}', found 'bool'\n", .{
-                rule_src,
-            });
-            std.process.exit(1);
-        },
-    }
-}

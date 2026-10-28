@@ -5,12 +5,14 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const ziggy = @import("ziggy");
 const yaml = @import("convert/yaml.zig");
-// const json = @import("convert/json.zig");
+const json = @import("convert/json.zig");
 const Ast = ziggy.Ast;
 const Writer = std.Io.Writer;
 
 pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
     var cmd = try Command.parse(gpa, args);
+    if (true) @panic("ziggy convert is currently disabled");
+
     if (cmd.schema) |*schema| {
         const src = Io.Dir.cwd().readFileAllocOptions(
             io,
@@ -36,6 +38,12 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
         }
         schema.src = src;
         schema.ast = ast;
+    } else {
+        cmd.schema = .{
+            .ast = ziggy.schema.Ast.default,
+            .src = ziggy.schema.Ast.default_src,
+            .path = "(default schema)",
+        };
     }
 
     switch (cmd.mode) {
@@ -45,6 +53,20 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
             _ = try fr.interface.streamRemaining(&aw.writer);
             const in_bytes = try aw.toOwnedSliceSentinel(0);
             switch (lang) {
+                .json => {
+                    var errors: std.ArrayListUnmanaged(json.Error) = .empty;
+                    const out_bytes = try json.toZiggy(gpa, cmd.schema, &errors, in_bytes);
+                    if (errors.items.len > 0) {
+                        for (errors.items) |err| {
+                            // todo print items
+                            _ = err;
+                        }
+
+                        std.process.exit(1);
+                    }
+
+                    try Io.File.stdout().writeStreamingAll(io, out_bytes);
+                },
                 .yaml => {
                     const out_bytes = try yaml.convert(gpa, in_bytes, cmd.schema);
                     try Io.File.stdout().writeStreamingAll(io, out_bytes);
@@ -54,6 +76,7 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) !void {
         },
         .paths => |paths| {
             _ = paths;
+            @panic("TODO");
         },
     }
 
