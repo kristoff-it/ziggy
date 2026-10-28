@@ -9,8 +9,8 @@
             .hash = "known_folders-0.0.0-Fy-PJsbKAACbDh9bBxR0MMThxZSS6A9RH4apWphNHY70",
         },
         .lsp_kit = .{
-            .url = "git+https://github.com/zigtools/lsp-kit#d148676ace1eaecf3c703ce7d350d0e94e502ed7",
-            .hash = "lsp_kit-0.1.0-bi_PLwc2DACoR7VTz_qKFXUvtx7veHvWcTQvP9pDFLpk",
+            .url = "git+https://github.com/zigtools/lsp-kit#3e1058db66079911fdde82f833fdce6856e0a706",
+            .hash = "lsp_kit-0.1.0-bi_PL9o2DADHS1PDra3MGz1MXnsboN_ewNvrc419z7Fb",
         },
         // .yaml = .{
         //     .url = "git+https://github.com/dotcarmen/zig-yaml.git?ref=0.16-io-interface#695e62bb080028fdd0b33145a1dd6d1d7879ac42",

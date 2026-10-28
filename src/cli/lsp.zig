@@ -48,6 +48,12 @@ dir: Io.Dir,
 docs: std.StringArrayHashMapUnmanaged(Document) = .{},
 schemas: std.StringHashMapUnmanaged(Schema) = .{},
 
+markdown_support: struct {
+    hover: bool = false,
+    completion: bool = false,
+    signature: bool = false,
+    diagnostics: bool = false,
+} = .{},
 offset_encoding: offsets.Encoding = .@"utf-16",
 
 fn deinit(self: *Handler) void {
@@ -76,6 +82,53 @@ pub fn initialize(
             clientInfo.name,
             clientInfo.version orelse "<no version>",
         });
+    }
+
+    if (request.capabilities.textDocument) |textDocument| {
+        if (textDocument.hover) |hover| {
+            if (hover.contentFormat) |content_format| {
+                for (content_format) |format| {
+                    if (format == .plaintext) {
+                        break;
+                    }
+                    if (format == .markdown) {
+                        self.markdown_support.hover = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (textDocument.completion) |completion| {
+            if (completion.completionItem) |completionItem| {
+                if (completionItem.documentationFormat) |documentation_format| {
+                    for (documentation_format) |format| {
+                        if (format == .plaintext) {
+                            break;
+                        }
+                        if (format == .markdown) {
+                            self.markdown_support.completion = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (textDocument.signatureHelp) |signature_help_capabilities| {
+            if (signature_help_capabilities.signatureInformation) |signature_information| {
+                if (signature_information.documentationFormat) |content_format| {
+                    for (content_format) |format| {
+                        if (format == .plaintext) {
+                            break;
+                        }
+                        if (format == .markdown) {
+                            self.markdown_support.signature = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (request.capabilities.general) |general| {
@@ -343,7 +396,7 @@ pub fn @"textDocument/completion"(
 
                     completions[c_idx].documentation = .{
                         .markup_content = .{
-                            .kind = .markdown,
+                            .kind = if (self.markdown_support.completion) .markdown else .plaintext,
                             .value = docs.written(),
                         },
                     };
@@ -362,7 +415,7 @@ pub fn @"textDocument/completion"(
                         .kind = .Field,
                         .documentation = .{
                             .markup_content = .{
-                                .kind = .markdown,
+                                .kind = if (self.markdown_support.completion) .markdown else .plaintext,
                                 .value = "any value",
                             },
                         },
@@ -428,7 +481,7 @@ pub fn @"textDocument/completion"(
 
                                     c.documentation = .{
                                         .markup_content = .{
-                                            .kind = .markdown,
+                                            .kind = if (self.markdown_support.completion) .markdown else .plaintext,
                                             .value = docs.written(),
                                         },
                                     };
@@ -692,7 +745,7 @@ pub fn @"textDocument/hover"(
     return .{
         .contents = .{
             .markup_content = .{
-                .kind = .markdown,
+                .kind = if (self.markdown_support.hover) .markdown else .plaintext,
                 .value = out.written(),
             },
         },
